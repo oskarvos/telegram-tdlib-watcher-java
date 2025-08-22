@@ -211,6 +211,11 @@ public class Main {
 
         JsonNode m = u.path("message");
         long chatId = m.path("chat_id").asLong();
+        Set<Long> targetChats = resolveGroups(client, config.groups);
+
+        if (!targetChats.contains(chatId)) {
+            return; // Игнорируем сообщения не из целевых чатов
+        }
         long mid = m.path("id").asLong();
         JsonNode c = m.path("content");
 
