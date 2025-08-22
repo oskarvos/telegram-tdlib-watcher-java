@@ -1,0 +1,19 @@
+{
+  "tdlib": {
+    "api_id": 20381407,
+    "api_hash": "0362bc360583fff1a6e35bbdf2083c6f",
+    "lib_path": "/home/oleg/td/build/libtdjson.so",
+    "database_directory": "tdlib",
+    "files_directory": "tdlib/files"
+  },
+  "groups": [
+    "https://t.me/groop1234554321"
+  ],
+  "patterns": [
+    {
+      "name": "greeting",
+      "regex": "tiger"
+    }
+  ],
+  "case_insensitive": true
+}
