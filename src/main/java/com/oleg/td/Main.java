@@ -18,7 +18,6 @@ import java.util.stream.Collectors;
 import static com.oleg.td.Utils.obj;
 
 public class Main {
-
     private static final java.util.concurrent.ConcurrentHashMap<Long, String> chatTitles = new java.util.concurrent.ConcurrentHashMap<>();
     private static FileChannel appLockCh;
     private static FileLock appLock;
@@ -68,7 +67,6 @@ public class Main {
             return;
         }
 
-// освободим лок и корректно закроем клиента при завершении/сигнале
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
                 if (appLock != null) appLock.release();
@@ -132,16 +130,13 @@ public class Main {
     private static volatile boolean authorized = false;
 
     private static void authorize(TdJsonClient client, Config cfg) {
-        // текущее состояние авторизации, обновляется handler'ом
         final java.util.concurrent.atomic.AtomicReference<String> stateRef = new java.util.concurrent.atomic.AtomicReference<>(null);
 
         client.addUpdateHandler(n -> {
             String type = n.path("@type").asText();
 
-            // ЛОГ — что прилетает во время авторизации
             System.out.println("AUTH DEBUG: received node type = " + type);
 
-            // Приводим к единому виду: либо updateAuthorizationState, либо "прямой" authorizationState*
             if ("updateAuthorizationState".equals(type)) {
                 String s = n.path("authorization_state").path("@type").asText();
                 System.out.println("AUTH DEBUG: state = " + s);
@@ -162,13 +157,10 @@ public class Main {
             }
         });
 
-        // Запросим текущее состояние ПОСЛЕ регистрации handler'а
         client.send(Utils.obj("getAuthorizationState"));
 
-        // Чтобы не дёргать действия повторно, запомним, какое состояние уже обработали
         String lastHandledState = null;
 
-        // Главный цикл авторизации в ГЛАВНОЙ нити
         while (!authorized) {
             String s = stateRef.get();
             if (s == null || s.equals(lastHandledState)) {
@@ -181,7 +173,6 @@ public class Main {
 
             switch (s) {
                 case "authorizationStateWaitTdlibParameters": {
-                    // TDLib 1.8.52 — параметры ИНЛАЙНОМ (не через "parameters": {...})
                     com.fasterxml.jackson.databind.node.ObjectNode p = Utils.obj("setTdlibParameters");
                     p.put("use_test_dc", false);
                     p.put("database_directory", cfg.tdlib.database_directory);
@@ -265,7 +256,6 @@ public class Main {
                     break;
                 }
                 default:
-                    // игнор
             }
 
             lastHandledState = s;
@@ -327,7 +317,7 @@ public class Main {
     }
 
     private static String readValue(String prompt, boolean secret, String... keys) {
-        // 1) пробуем системные свойства/переменные окружения
+
         for (String k : keys) {
             String v = System.getProperty(k);
             if (v != null && !v.isBlank()) {
@@ -341,14 +331,12 @@ public class Main {
             }
         }
 
-        // 2) пробуем Console
         Console cons = System.console();
         if (cons != null) {
             return secret ? new String(cons.readPassword(prompt))
                     : cons.readLine(prompt);
         }
 
-        // 3) последний шанс — STDIN (но аккуратно обрабатываем EOF)
         System.out.print(prompt);
         try {
             java.util.Scanner sc = new java.util.Scanner(System.in);
@@ -361,5 +349,4 @@ public class Main {
                     "Provide value via env/system property or run in a real terminal (e.g. `--console=plain`).", e);
         }
     }
-
 }
