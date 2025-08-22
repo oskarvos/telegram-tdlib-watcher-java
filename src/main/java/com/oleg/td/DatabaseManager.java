@@ -4,8 +4,12 @@ import java.sql.*;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class DatabaseManager {
+    private static final Logger log = LoggerFactory.getLogger(DatabaseManager.class);
+
     private static final String CREATE_CHATS_TABLE = """
         CREATE TABLE IF NOT EXISTS chats (
             id INTEGER PRIMARY KEY,
