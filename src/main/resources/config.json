@@ -6,6 +6,9 @@
     "database_directory": "tdlib",
     "files_directory": "tdlib/files"
   },
+  "auth": {
+    "phone": "+375292223399"
+  },
   "groups": [
     "https://t.me/groop1234554321"
   ],

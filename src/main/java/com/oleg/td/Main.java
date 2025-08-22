@@ -6,6 +6,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.Console;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.*;
 import java.time.Instant;
 import java.util.*;
@@ -17,6 +20,8 @@ import static com.oleg.td.Utils.obj;
 public class Main {
 
     private static final java.util.concurrent.ConcurrentHashMap<Long, String> chatTitles = new java.util.concurrent.ConcurrentHashMap<>();
+    private static FileChannel appLockCh;
+    private static FileLock appLock;
 
     static {
         System.setProperty("jna.encoding", "UTF-8");
@@ -51,7 +56,38 @@ public class Main {
         }
         Files.createDirectories(Path.of(cfg.tdlib.database_directory));
         Files.createDirectories(Path.of(cfg.tdlib.files_directory));
+        Path lockFile = Path.of(cfg.tdlib.database_directory, ".app.lock");
+        appLockCh = FileChannel.open(lockFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+        try {
+            appLock = appLockCh.tryLock();
+        } catch (OverlappingFileLockException e) {
+            appLock = null;
+        }
+        if (appLock == null) {
+            log.error("Another instance is already running (lock file: {})", lockFile.toAbsolutePath());
+            return;
+        }
+
+// освободим лок и корректно закроем клиента при завершении/сигнале
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                if (appLock != null) appLock.release();
+            } catch (Exception ignored) {
+            }
+            try {
+                if (appLockCh != null) appLockCh.close();
+            } catch (Exception ignored) {
+            }
+        }, "shutdown-hook"));
         try (TdJsonClient client = new TdJsonClient(lib)) {
+            client.addUpdateHandler(n -> {
+                if ("error".equals(n.path("@type").asText())) {
+                    int code = n.path("code").asInt();
+                    String msg = n.path("message").asText();
+                    System.err.println("TDLIB ERROR: code=" + code + " message=" + msg);
+                }
+            });
+
             client.addUpdateHandler(n -> {
                 if ("updateNewChat".equals(n.path("@type").asText())) {
                     long id = n.path("chat").path("id").asLong();
@@ -169,10 +205,17 @@ public class Main {
                     break;
                 }
                 case "authorizationStateWaitPhoneNumber": {
-                    String phone = readValue("Enter phone number (+xxxxxxxxxxx): ",
-                            false, "TG_PHONE", "TELEGRAM_PHONE", "telegram.phone");
+                    String phone = null;
+                    if (cfg.auth != null && cfg.auth.phone != null && !cfg.auth.phone.isBlank()) {
+                        phone = cfg.auth.phone.trim();
+                        System.out.println("Enter phone number (+xxxxxxxxxxx): [value from config.auth.phone]");
+                    } else {
+                        phone = readValue("Enter phone number (+xxxxxxxxxxx): ",
+                                false, "TG_PHONE", "TELEGRAM_PHONE", "telegram.phone");
+                    }
+
                     ObjectNode r = Utils.obj("setAuthenticationPhoneNumber");
-                    r.put("phone_number", phone.trim());
+                    r.put("phone_number", phone);
                     r.put("allow_flash_call", false);
                     r.put("is_current_phone_number", false);
                     client.send(r);
@@ -181,24 +224,37 @@ public class Main {
                 }
 
                 case "authorizationStateWaitCode": {
-                    String code = readValue("Enter code from Telegram: ",
-                            false, "TG_CODE", "TELEGRAM_CODE", "telegram.code");
+                    String code = null;
+                    if (cfg.auth != null && cfg.auth.code != null && !cfg.auth.code.isBlank()) {
+                        code = cfg.auth.code.trim();
+                        System.out.println("Enter code from Telegram: [value from config.auth.code]");
+                    } else {
+                        code = readValue("Enter code from Telegram: ",
+                                false, "TG_CODE", "TELEGRAM_CODE", "telegram.code");
+                    }
                     ObjectNode r = Utils.obj("checkAuthenticationCode");
-                    r.put("code", code.trim());
+                    r.put("code", code);
                     client.send(r);
                     System.out.println("AUTH DEBUG: code submitted");
                     break;
                 }
 
                 case "authorizationStateWaitPassword": {
-                    String pass = readValue("Enter 2FA password: ",
-                            true, "TG_PASS", "TELEGRAM_PASS", "telegram.pass");
+                    String pass = null;
+                    if (cfg.auth != null && cfg.auth.pass != null && !cfg.auth.pass.isBlank()) {
+                        pass = cfg.auth.pass;
+                        System.out.println("Enter 2FA password: [value from config.auth.pass]");
+                    } else {
+                        pass = readValue("Enter 2FA password: ",
+                                true, "TG_PASS", "TELEGRAM_PASS", "telegram.pass");
+                    }
                     ObjectNode r = Utils.obj("checkAuthenticationPassword");
                     r.put("password", pass);
                     client.send(r);
                     System.out.println("AUTH DEBUG: 2FA password submitted");
                     break;
                 }
+
                 case "authorizationStateReady": {
                     authorized = true;
                     System.out.println("Authorization completed.");
