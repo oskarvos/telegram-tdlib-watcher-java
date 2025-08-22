@@ -173,7 +173,38 @@ public class Main {
     }
 
     private static void handleUserUpdate(JsonNode u, TdJsonClient client) {
+
         String type = u.path("@type").asText();
+        if ("updateUser".equals(type)) {
+            JsonNode user = u.path("user");
+            long userId = user.path("id").asLong();
+
+            // Проверяем, находится ли пользователь в целевых чатах
+            boolean userInTargetChats = false;
+            for (Long chatId : chatExportStatus.keySet()) {
+                try {
+                    if (dbManager.isUserInChat(chatId, userId)) {
+                        userInTargetChats = true;
+                        break;
+                    }
+                } catch (Exception e) {
+                    log.error("Failed to check if user {} is in chat {}", userId, chatId, e);
+                }
+            }
+
+            if (userInTargetChats) {
+                String firstName = user.path("first_name").asText("");
+                String lastName = user.path("last_name").asText("");
+                String username = user.path("username").asText("");
+                String phoneNumber = user.path("phone_number").asText("");
+
+                try {
+                    dbManager.updateUserInfo(userId, firstName, lastName, username, phoneNumber);
+                } catch (Exception e) {
+                    log.error("Failed to update user info in database", e);
+                }
+            }
+        }
         if ("updateUser".equals(type)) {
             JsonNode user = u.path("user");
             long userId = user.path("id").asLong();
@@ -296,7 +327,6 @@ public class Main {
 
     private static void exportChat(TdJsonClient client, long chatId) {
         try {
-            // Get chat info
             ObjectNode getChat = obj("getChat");
             getChat.put("chat_id", chatId);
             JsonNode chatInfo = client.request(getChat).get();
@@ -305,7 +335,6 @@ public class Main {
             String type = chatInfo.path("type").path("@type").asText("");
             dbManager.saveChat(chatId, title, type);
 
-            // Get chat members
             ObjectNode getMembers = obj("getChatMembers");
             getMembers.put("chat_id", chatId);
             getMembers.put("limit", 200);
@@ -317,17 +346,17 @@ public class Main {
                     Instant joinedAt = Instant.ofEpochSecond(member.path("joined_chat_date").asLong());
                     dbManager.addChatUser(chatId, userId, joinedAt);
 
-                    // Get user info
-                    ObjectNode getUser = obj("getUser");
-                    getUser.put("user_id", userId);
-                    JsonNode userInfo = client.request(getUser).get();
-
-                    String firstName = userInfo.path("first_name").asText("");
-                    String lastName = userInfo.path("last_name").asText("");
-                    String username = userInfo.path("username").asText("");
-                    String phoneNumber = userInfo.path("phone_number").asText("");
-
-                    dbManager.saveUser(userId, firstName, lastName, username, phoneNumber);
+                    // Сохраняем только базовую информацию о пользователе
+                    // Полную информацию будем получать только при необходимости
+                    String memberType = member.path("@type").asText();
+                    if ("chatMember".equals(memberType)) {
+                        JsonNode userNode = member.path("user_id");
+                        if (userNode.isNumber()) {
+                            long memberUserId = userNode.asLong();
+                            // Сохраняем только ID пользователя, остальную информацию получим позже
+                            dbManager.saveUser(memberUserId, "", "", "", "");
+                        }
+                    }
                 }
             }
 
@@ -409,7 +438,7 @@ public class Main {
 
         if ("messageText".equals(c.path("@type").asText())) {
             text = c.path("text").path("text").asText("");
-            // Extract links
+
             JsonNode entities = c.path("text").path("entities");
             if (entities.isArray()) {
                 for (JsonNode entity : entities) {
@@ -440,8 +469,14 @@ public class Main {
         Instant timestamp = Instant.ofEpochSecond(msg.path("date").asLong());
 
         try {
+            // Сохраняем сообщение
             dbManager.saveMessage(mid, chatId, userId, text, mediaType, mediaPath,
                     String.join(",", links), timestamp);
+
+            // Сохраняем информацию о пользователе только если он отправил сообщение в этой группе
+            // Получаем базовую информацию о пользователе
+            dbManager.saveUser(userId, "Unknown", "", "", "");
+
         } catch (Exception e) {
             log.error("Failed to process message {}", mid, e);
         }

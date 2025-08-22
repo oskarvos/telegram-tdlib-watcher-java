@@ -155,4 +155,26 @@ public class DatabaseManager {
             log.warn("Failed to close database connection", e);
         }
     }
+
+    public void updateUserInfo(long userId, String firstName, String lastName, String username, String phoneNumber) throws SQLException {
+        String sql = "UPDATE users SET first_name = ?, last_name = ?, username = ?, phone_number = ? WHERE id = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+            pstmt.setString(1, firstName);
+            pstmt.setString(2, lastName);
+            pstmt.setString(3, username);
+            pstmt.setString(4, phoneNumber);
+            pstmt.setLong(5, userId);
+            pstmt.executeUpdate();
+        }
+    }
+
+    public boolean isUserInChat(long chatId, long userId) throws SQLException {
+        String sql = "SELECT COUNT(*) FROM chat_users WHERE chat_id = ? AND user_id = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+            pstmt.setLong(1, chatId);
+            pstmt.setLong(2, userId);
+            ResultSet rs = pstmt.executeQuery();
+            return rs.next() && rs.getInt(1) > 0;
+        }
+    }
 }
