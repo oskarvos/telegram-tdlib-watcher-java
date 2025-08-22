@@ -53,6 +53,10 @@ public class Main {
                 config.tdlib.api_id, (config.tdlib.api_hash != null && !config.tdlib.api_hash.isBlank()),
                 config.tdlib.database_directory, config.tdlib.files_directory, config.groups, config.case_insensitive);
 
+        // Создаем директории перед инициализацией базы данных
+        Files.createDirectories(Path.of(config.tdlib.database_directory));
+        Files.createDirectories(Path.of(config.tdlib.files_directory));
+
         // Initialize database
         Path dbPath = Path.of(config.tdlib.database_directory, "telegram_data.db");
         dbManager = new DatabaseManager(dbPath.toString());
@@ -72,8 +76,7 @@ public class Main {
             patterns.add(new PatternEntry(p.name, Pattern.compile(p.regex, flags)));
         }
 
-        Files.createDirectories(Path.of(config.tdlib.database_directory));
-        Files.createDirectories(Path.of(config.tdlib.files_directory));
+        // Убрал дублирующее создание директорий (оно уже сделано выше)
         Path lockFile = Path.of(config.tdlib.database_directory, ".app.lock");
         appLockCh = FileChannel.open(lockFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
         try {
@@ -249,6 +252,9 @@ public class Main {
 
         if (text.isEmpty() && mediaType.isEmpty()) return;
 
+        // Создаем финальную копию для использования в лямбда-выражении
+        final String finalText = text;
+
         // Save message to database
         long userId = m.path("sender_id").path("user_id").asLong();
         Instant timestamp = Instant.ofEpochSecond(m.path("date").asLong());
@@ -262,7 +268,7 @@ public class Main {
 
         // Check for patterns
         var hits = patterns.stream()
-                .filter(p -> p.pattern.matcher(text).find())
+                .filter(p -> p.pattern.matcher(finalText).find()) // Используем finalText вместо text
                 .map(p -> p.name)
                 .collect(Collectors.toList());
 
