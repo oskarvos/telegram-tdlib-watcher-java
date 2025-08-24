@@ -33,9 +33,11 @@ public class TdJsonClient implements Closeable {
         this.recv.start();
     }
 
-    public void addUpdateHandler(Consumer<JsonNode> h) {
-        handlers.add(h);
-    }
+    /** Позволяет подписать роутер или отдельный обработчик. */
+    public void addUpdateHandler(Consumer<JsonNode> h) { handlers.add(h); }
+
+    /** Удобный способ подключить общий роутер. */
+    public void attachRouter(UpdateRouter router) { addUpdateHandler(router::dispatch); }
 
     public CompletableFuture<JsonNode> request(ObjectNode req) {
         String extra = UUID.randomUUID().toString();
@@ -57,17 +59,12 @@ public class TdJsonClient implements Closeable {
             try {
                 JsonNode n = om.readTree(s);
                 String extra = n.path("@extra").asText(null);
-                String type = n.path("@type").asText();
                 if (extra != null && pending.containsKey(extra)) {
                     var fut = pending.remove(extra);
                     if (fut != null) fut.complete(n);
                 } else {
                     for (var h : handlers) {
-                        try {
-                            h.accept(n);
-                        } catch (Exception e) {
-                            log.warn("handler", e);
-                        }
+                        try { h.accept(n); } catch (Exception e) { log.warn("handler", e); }
                     }
                 }
             } catch (Exception e) {
@@ -78,10 +75,7 @@ public class TdJsonClient implements Closeable {
 
     public void close() {
         running = false;
-        try {
-            recv.join(Duration.ofSeconds(2).toMillis());
-        } catch (InterruptedException ignored) {
-        }
+        try { recv.join(Duration.ofSeconds(2).toMillis()); } catch (InterruptedException ignored) {}
         lib.td_json_client_destroy(client);
     }
 
@@ -89,10 +83,6 @@ public class TdJsonClient implements Closeable {
         String s = req.toString();
         String resp = lib.td_json_client_execute(client, s);
         if (resp == null) return null;
-        try {
-            return om.readTree(resp);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        try { return om.readTree(resp); } catch (IOException e) { throw new RuntimeException(e); }
     }
 }

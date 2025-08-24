@@ -20,6 +20,8 @@ public interface TDLib extends Library {
     void td_set_log_message_callback(int maxLevel, LogMessageCallback cb);
 
     static TDLib load(String path) {
-        return (path != null && !path.isBlank()) ? Native.load(path, TDLib.class) : Native.load("tdjson", TDLib.class);
+        return (path != null && !path.isBlank())
+                ? Native.load(path, TDLib.class)
+                : Native.load("tdjson", TDLib.class);
     }
 }
