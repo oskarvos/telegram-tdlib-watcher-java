@@ -60,8 +60,12 @@ public class Database implements Closeable {
                 url              TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_links_chat_msg ON links(chat_id, message_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_messages_chat_msg    ON messages(chat_id, message_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_media_chat_msg_kind  ON media(chat_id, message_id, kind);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_links_chat_msg_url   ON links(chat_id, message_id, url);
             """;
         try (Statement st = conn.createStatement()) {
+            st.executeUpdate(ddl);
             st.executeUpdate(ddl);
         } catch (SQLException e) {
             throw new RuntimeException("SQLite init schema failed", e);
@@ -72,7 +76,7 @@ public class Database implements Closeable {
                               Long senderUserId, String senderUsername, String senderPhone,
                               String senderName, String text) {
         String sql = """
-            INSERT INTO messages(chat_id, chat_title, message_id, sent_at_unix,
+            INSERT OR IGNORE INTO messages(chat_id, chat_title, message_id, sent_at_unix,
                                  sender_user_id, sender_username, sender_phone, sender_name, text)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """;
@@ -95,7 +99,7 @@ public class Database implements Closeable {
     public void insertMedia(long chatId, long messageId, String kind, Long remoteFileId,
                             String localPath, Integer width, Integer height, Integer durationSec) {
         String sql = """
-            INSERT INTO media(chat_id, message_id, kind, remote_file_id, local_path, width, height, duration)
+            INSERT OR IGNORE INTO media(chat_id, message_id, kind, remote_file_id, local_path, width, height, duration)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -114,7 +118,7 @@ public class Database implements Closeable {
     }
 
     public void insertLink(long chatId, long messageId, String url) {
-        String sql = "INSERT INTO links(chat_id, message_id, url) VALUES (?, ?, ?)";
+        String sql = "INSERT OR IGNORE INTO links(chat_id, message_id, url) VALUES (?, ?, ?)";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, chatId);
             ps.setLong(2, messageId);

@@ -96,7 +96,13 @@ public class App {
 
                 // 9.4) Дампер истории по событию совпадения
                 ChatDumpCoordinator dumper = new ChatDumpCoordinator(client, messageLogger);
-                matcher.setOnMatchListener(dumper::onPatternMatch);
+                matcher.setOnMatchListener(chatId -> {
+                    // 1) разрешаем запись в БД для этого чата
+                    messageLogger.enableCapture(chatId);
+                    // 2) запускаем дамп всей истории
+                    dumper.onPatternMatch(chatId);
+                });
+
                 boolean dumpOnStart = Boolean.parseBoolean(
                         System.getProperty("DUMP_ON_START", "false")
                 );

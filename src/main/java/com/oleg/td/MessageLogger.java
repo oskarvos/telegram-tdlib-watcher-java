@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class MessageLogger {
     private final Database db;
@@ -16,6 +17,11 @@ public class MessageLogger {
     private final ChatTitleRegistry titles;
     private final MediaDownloader media;
     private final AtomicReference<Set<Long>> allowedChats = new AtomicReference<>(null);
+    private final ConcurrentHashMap<Long, Boolean> captureEnabled = new ConcurrentHashMap<>();
+
+    public void enableCapture(long chatId) {
+        captureEnabled.put(chatId, true);
+    }
 
     // URL fallback (кроме entities)
     private static final Pattern URL_RE = Pattern.compile(
@@ -55,6 +61,7 @@ public class MessageLogger {
     /** Можно вызывать и из дампа истории. */
     public void persistMessageNode(JsonNode m) {
         long chatId = m.path("chat_id").asLong();
+        if (!captureEnabled.getOrDefault(chatId, false)) return;
         Set<Long> allow = allowedChats.get();
         if (allow != null && !allow.isEmpty() && !allow.contains(chatId)) return;
 
