@@ -15,7 +15,7 @@
   "patterns": [
     {
       "name": "greeting",
-      "regex": "tiger"
+      "regex": "riga"
     }
   ],
   "case_insensitive": true

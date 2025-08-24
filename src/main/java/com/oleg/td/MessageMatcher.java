@@ -6,11 +6,13 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
+import java.util.function.LongConsumer;
 
 /**
  * Ищет совпадения по regex-паттернам в новых текстовых сообщениях.
  */
 public class MessageMatcher {
+
     public static class PatternEntry {
         public final String name;
         public final Pattern pattern;
@@ -24,6 +26,11 @@ public class MessageMatcher {
     private final List<PatternEntry> patterns;
     private final ChatTitleRegistry titles;
     private final AtomicReference<Set<Long>> allowedChats = new AtomicReference<>(null);
+    private LongConsumer onMatchListener = null;
+
+    public void setOnMatchListener(LongConsumer listener) {
+        this.onMatchListener = listener;
+    }
 
     public MessageMatcher(List<PatternEntry> patterns, ChatTitleRegistry titles) {
         this.patterns = patterns;
@@ -58,6 +65,8 @@ public class MessageMatcher {
             String title = titles.titleOf(chatId);
             System.out.printf("[%s] Match in chat %s (id=%d), msg %d, patterns=%s:%n%s%n----%n",
                     java.time.Instant.now(), title, chatId, mid, hits, text);
+            if (onMatchListener != null) onMatchListener.accept(chatId);
         }
+
     }
 }

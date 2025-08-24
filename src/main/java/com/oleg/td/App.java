@@ -88,15 +88,17 @@ public class App {
                 String dbPath = Path.of(cfg.tdlib.database_directory).resolve("messages.sqlite").toString();
                 Database db = new Database(dbPath);
 
-// 9.2) Кэш пользователей + логгер сообщений
+                // 9.2) Кэш пользователей + логгер сообщений
                 UserDirectory userDirectory = new UserDirectory(client);
-                MessageLogger messageLogger = new MessageLogger(db, userDirectory, titleRegistry);
+                MediaDownloader mediaDownloader = new MediaDownloader(client);
+                MessageLogger messageLogger = new MessageLogger(db, userDirectory, titleRegistry, mediaDownloader);
                 messageLogger.setAllowedChats(chatIds);
 
-                // 9.3) Подписываем логгер на апдейты
-                router.add(messageLogger::onUpdateNewMessage);
+                // 9.4) Дампер истории по событию совпадения
+                ChatDumpCoordinator dumper = new ChatDumpCoordinator(client, messageLogger);
+                matcher.setOnMatchListener(dumper::onPatternMatch);
 
-                // 9.4) Закрытие БД на выходе
+                // 9.5) Закрытие БД на выходе
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                     try {
                         db.close();
