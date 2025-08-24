@@ -84,6 +84,26 @@ public class App {
                 matcher.setAllowedChats(chatIds);
                 log.info("Watching {} chats: {}", chatIds.size(), chatIds);
 
+                // 9.1) Инициализируем SQLite (файл создадим рядом с базой TDLib)
+                String dbPath = Path.of(cfg.tdlib.database_directory).resolve("messages.sqlite").toString();
+                Database db = new Database(dbPath);
+
+// 9.2) Кэш пользователей + логгер сообщений
+                UserDirectory userDirectory = new UserDirectory(client);
+                MessageLogger messageLogger = new MessageLogger(db, userDirectory, titleRegistry);
+                messageLogger.setAllowedChats(chatIds);
+
+                // 9.3) Подписываем логгер на апдейты
+                router.add(messageLogger::onUpdateNewMessage);
+
+                // 9.4) Закрытие БД на выходе
+                Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                    try {
+                        db.close();
+                    } catch (Exception ignored) {
+                    }
+                }, "db-shutdown"));
+
                 for (Long chatId : chatIds) {
                     ObjectNode o = Utils.obj("getChatHistory");
                     o.put("chat_id", chatId);
