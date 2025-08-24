@@ -97,6 +97,14 @@ public class App {
                 // 9.4) Дампер истории по событию совпадения
                 ChatDumpCoordinator dumper = new ChatDumpCoordinator(client, messageLogger);
                 matcher.setOnMatchListener(dumper::onPatternMatch);
+                boolean dumpOnStart = Boolean.parseBoolean(
+                        System.getProperty("DUMP_ON_START", "false")
+                );
+                if (dumpOnStart) {
+                    for (Long chatId : chatIds) {
+                        dumper.onPatternMatch(chatId); // однократно выгрузит всю историю чата
+                    }
+                }
 
                 // 9.5) Закрытие БД на выходе
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
