@@ -2,6 +2,8 @@ package com.oleg.td;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -15,8 +17,26 @@ public class MessageLogger {
     private final MediaDownloader media;
     private final AtomicReference<Set<Long>> allowedChats = new AtomicReference<>(null);
 
-    // Простой fallback-регекс для URL (на случай, если нет entities)
-    private static final Pattern URL_RE = Pattern.compile("(https?://\\S+)", Pattern.CASE_INSENSITIVE);
+    // URL fallback (кроме entities)
+    private static final Pattern URL_RE = Pattern.compile(
+            "\\b((?:https?://|http://|www\\.|t\\.me/)[^\\s]+)",
+            Pattern.CASE_INSENSITIVE
+    );
+
+    // Разрешённые MIME/расширения для "часто используемых" форматов
+    private static final Set<String> IMG_MIME = set("image/jpeg","image/png","image/webp");
+    private static final Set<String> IMG_EXT  = set("jpg","jpeg","png","webp");
+
+    private static final Set<String> GIF_MIME = set("image/gif");
+    private static final Set<String> GIF_EXT  = set("gif");
+
+    private static final Set<String> VID_MIME = set("video/mp4","video/quicktime","video/webm","video/x-matroska");
+    private static final Set<String> VID_EXT  = set("mp4","mov","webm","mkv");
+
+    private static final Set<String> AUD_MIME = set("audio/mpeg","audio/mp4","audio/aac","audio/flac","audio/ogg","audio/opus","audio/x-m4a");
+    private static final Set<String> AUD_EXT  = set("mp3","m4a","aac","flac","ogg","opus");
+
+    private static Set<String> set(String... v){ return new HashSet<>(Arrays.asList(v)); }
 
     public MessageLogger(Database db, UserDirectory users, ChatTitleRegistry titles, MediaDownloader media) {
         this.db = db;
@@ -36,7 +56,7 @@ public class MessageLogger {
     public void persistMessageNode(JsonNode m) {
         long chatId = m.path("chat_id").asLong();
         Set<Long> allow = allowedChats.get();
-        if (allow != null && !allow.contains(chatId)) return;
+        if (allow != null && !allow.isEmpty() && !allow.contains(chatId)) return;
 
         long messageId = m.path("id").asLong();
         long dateUnix = m.path("date").asLong(0);
@@ -61,32 +81,33 @@ public class MessageLogger {
         JsonNode c = m.path("content");
         String ctype = c.path("@type").asText();
 
-        // --- Текст сообщения (messageText) ---
+        // --- Текст сообщения ---
         String mainText = null;
         if ("messageText".equals(ctype)) {
             mainText = c.path("text").path("text").asText("");
         }
 
-        // Сохраняем базовую запись о сообщении сразу (текст или null)
+        // Базовая запись
         db.insertMessage(chatId, chatTitle, messageId, dateUnix,
                 senderUserId, senderUsername, senderPhone, senderName, mainText);
 
-        // --- Ссылки из messageText.entities + fallback-регекс ---
+        // Ссылки из текста/подписи/preview
         if ("messageText".equals(ctype)) {
             extractUrlsFromFormattedTextAndSave(chatId, messageId, c.path("text"));
-            if ((mainText == null || mainText.isBlank()) == false) {
-                extractUrlsFallback(chatId, messageId, mainText);
-            }
+            if (mainText != null && !mainText.isBlank()) extractUrlsFallback(chatId, messageId, mainText);
         }
-
-        // --- Обработка caption у медиа (ссылки в подписи) ---
         if (!"messageText".equals(ctype)) {
-            JsonNode caption = c.path("caption"); // formattedText
+            JsonNode caption = c.path("caption");
             if (caption != null && caption.isObject()) {
                 extractUrlsFromFormattedTextAndSave(chatId, messageId, caption);
                 String capText = caption.path("text").asText("");
                 if (!capText.isBlank()) extractUrlsFallback(chatId, messageId, capText);
             }
+        }
+        JsonNode webPage = c.path("web_page");
+        if ("webPage".equals(webPage.path("@type").asText())) {
+            String url = webPage.path("url").asText(null);
+            if (url != null && !url.isBlank()) db.insertLink(chatId, messageId, url);
         }
 
         // --- ФОТО ---
@@ -102,57 +123,119 @@ public class MessageLogger {
                 if (area > bestArea) { bestArea = area; best = s; }
             }
             if (best != null) {
-                long fileId = best.path("photo").path("id").asLong(0);
-                String local = (fileId != 0) ? media.downloadFileGetPath(fileId) : null;
+                JsonNode fileObj = best.path("photo");
+                Long fid = media.ensureFileId(fileObj, "fileTypePhoto");
+                String local = (fid != null) ? media.downloadFileGetPath(fid) : null;
                 Integer w = best.path("width").isInt() ? best.path("width").asInt() : null;
                 Integer h = best.path("height").isInt() ? best.path("height").asInt() : null;
-                db.insertMedia(chatId, messageId, "photo",
-                        (fileId == 0 ? null : fileId), local, w, h, null);
+                db.insertMedia(chatId, messageId, "photo", (fid == null ? null : fid), local, w, h, null);
             }
         }
 
         // --- ВИДЕО ---
         if ("messageVideo".equals(ctype)) {
             JsonNode v = c.path("video");
-            long fileId = v.path("video").path("id").asLong(0);
+            JsonNode fileObj = v.path("video");
+            Long fid = media.ensureFileId(fileObj, "fileTypeVideo");
             Integer w = v.path("width").isInt() ? v.path("width").asInt() : null;
             Integer h = v.path("height").isInt() ? v.path("height").asInt() : null;
             Integer dur = v.path("duration").isInt() ? v.path("duration").asInt() : null;
-            String local = (fileId != 0) ? media.downloadFileGetPath(fileId) : null;
-            db.insertMedia(chatId, messageId, "video",
-                    (fileId == 0 ? null : fileId), local, w, h, dur);
+            String local = (fid != null) ? media.downloadFileGetPath(fid) : null;
+            db.insertMedia(chatId, messageId, "video", (fid == null ? null : fid), local, w, h, dur);
         }
 
-        // --- ДОКУМЕНТЫ (в т.ч. видео как документ) ---
-        if ("messageDocument".equals(ctype)) {
-            JsonNode d = c.path("document");
-            long fileId = d.path("document").path("id").asLong(0);
-            String local = (fileId != 0) ? media.downloadFileGetPath(fileId) : null;
-            db.insertMedia(chatId, messageId, "document",
-                    (fileId == 0 ? null : fileId), local, null, null, null);
-        }
-
-        // --- GIF/анимации ---
+        // --- ГИФ/анимация ---
         if ("messageAnimation".equals(ctype)) {
             JsonNode a = c.path("animation");
-            long fileId = a.path("animation").path("id").asLong(0);
+            JsonNode fileObj = a.path("animation");
+            Long fid = media.ensureFileId(fileObj, "fileTypeAnimation");
             Integer w = a.path("width").isInt() ? a.path("width").asInt() : null;
             Integer h = a.path("height").isInt() ? a.path("height").asInt() : null;
             Integer dur = a.path("duration").isInt() ? a.path("duration").asInt() : null;
-            String local = (fileId != 0) ? media.downloadFileGetPath(fileId) : null;
-            db.insertMedia(chatId, messageId, "animation",
-                    (fileId == 0 ? null : fileId), local, w, h, dur);
+            String local = (fid != null) ? media.downloadFileGetPath(fid) : null;
+            db.insertMedia(chatId, messageId, "animation", (fid == null ? null : fid), local, w, h, dur);
         }
 
-        // --- Видеозаметки (кружочки) ---
+        // --- ВИДЕО-ЗАМЕТКИ ---
         if ("messageVideoNote".equals(ctype)) {
             JsonNode vn = c.path("video_note");
-            long fileId = vn.path("video").path("id").asLong(0);
+            JsonNode fileObj = vn.path("video");
+            Long fid = media.ensureFileId(fileObj, "fileTypeVideoNote");
             Integer dur = vn.path("duration").isInt() ? vn.path("duration").asInt() : null;
-            String local = (fileId != 0) ? media.downloadFileGetPath(fileId) : null;
-            db.insertMedia(chatId, messageId, "video_note",
-                    (fileId == 0 ? null : fileId), local, null, null, dur);
+            String local = (fid != null) ? media.downloadFileGetPath(fid) : null;
+            db.insertMedia(chatId, messageId, "video_note", (fid == null ? null : fid), local, null, null, dur);
         }
+
+        // --- АУДИО (музыка) ---
+        if ("messageAudio".equals(ctype)) {
+            JsonNode a = c.path("audio");
+            String mime = a.path("mime_type").asText("");
+            String name = a.path("file_name").asText("");
+            if (AUD_MIME.contains(mime) || hasExt(name, AUD_EXT)) {
+                JsonNode fileObj = a.path("audio");
+                Long fid = media.ensureFileId(fileObj, "fileTypeAudio");
+                Integer dur = a.path("duration").isInt() ? a.path("duration").asInt() : null;
+                String local = (fid != null) ? media.downloadFileGetPath(fid) : null;
+                db.insertMedia(chatId, messageId, "audio", (fid == null ? null : fid), local, null, null, dur);
+            }
+        }
+
+        // --- ГОЛОСОВЫЕ ---
+        if ("messageVoiceNote".equals(ctype)) {
+            JsonNode vn = c.path("voice_note");
+            JsonNode fileObj = vn.path("voice");
+            Long fid = media.ensureFileId(fileObj, "fileTypeVoiceNote");
+            Integer dur = vn.path("duration").isInt() ? vn.path("duration").asInt() : null;
+            String local = (fid != null) ? media.downloadFileGetPath(fid) : null;
+            db.insertMedia(chatId, messageId, "voice_note", (fid == null ? null : fid), local, null, null, dur);
+        }
+
+        // --- СТИКЕРЫ (статические/видео) ---
+        if ("messageSticker".equals(ctype)) {
+            JsonNode s = c.path("sticker");
+            JsonNode fileObj = s.path("sticker");
+            Long fid = media.ensureFileId(fileObj, "fileTypeSticker");
+            String local = (fid != null) ? media.downloadFileGetPath(fid) : null;
+            db.insertMedia(chatId, messageId, "sticker", (fid == null ? null : fid), local, null, null, null);
+        }
+
+        // --- DOCUMENT -> переклассификация на частые форматы ---
+        if ("messageDocument".equals(ctype)) {
+            JsonNode d = c.path("document");
+            String mime = d.path("mime_type").asText("");
+            String name = d.path("file_name").asText("").toLowerCase();
+            JsonNode fileObj = d.path("document");
+
+            String kind = null;
+            String fileType = "fileTypeDocument";
+
+            if (IMG_MIME.contains(mime) || hasExt(name, IMG_EXT)) {
+                kind = "photo"; fileType = "fileTypePhoto";
+            } else if (GIF_MIME.contains(mime) || hasExt(name, GIF_EXT)) {
+                kind = "animation"; fileType = "fileTypeAnimation";
+            } else if (VID_MIME.contains(mime) || hasExt(name, VID_EXT)) {
+                kind = "video"; fileType = "fileTypeVideo";
+            } else if (AUD_MIME.contains(mime) || hasExt(name, AUD_EXT)) {
+                kind = "audio"; fileType = "fileTypeAudio";
+            } else if ("application/pdf".equals(mime) || hasExt(name, set("pdf","zip"))) {
+                kind = "document"; fileType = "fileTypeDocument";
+            } else {
+                // пропускаем редкие/нестандартные
+                return;
+            }
+
+            Long fid = media.ensureFileId(fileObj, fileType);
+            String local = (fid != null) ? media.downloadFileGetPath(fid) : null;
+            db.insertMedia(chatId, messageId, kind, (fid == null ? null : fid), local, null, null, null);
+        }
+    }
+
+    private static boolean hasExt(String fileName, Set<String> allowed) {
+        if (fileName == null || fileName.isBlank()) return false;
+        int dot = fileName.lastIndexOf('.');
+        if (dot < 0 || dot == fileName.length()-1) return false;
+        String ext = fileName.substring(dot+1).toLowerCase();
+        return allowed.contains(ext);
     }
 
     private void extractUrlsFromFormattedTextAndSave(long chatId, long messageId, JsonNode formattedText) {
