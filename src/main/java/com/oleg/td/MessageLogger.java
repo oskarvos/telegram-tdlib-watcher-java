@@ -2,10 +2,11 @@ package com.oleg.td;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
-import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class MessageLogger {
     private final Database db;
@@ -13,6 +14,9 @@ public class MessageLogger {
     private final ChatTitleRegistry titles;
     private final MediaDownloader media;
     private final AtomicReference<Set<Long>> allowedChats = new AtomicReference<>(null);
+
+    // Простой fallback-регекс для URL (на случай, если нет entities)
+    private static final Pattern URL_RE = Pattern.compile("(https?://\\S+)", Pattern.CASE_INSENSITIVE);
 
     public MessageLogger(Database db, UserDirectory users, ChatTitleRegistry titles, MediaDownloader media) {
         this.db = db;
@@ -28,7 +32,7 @@ public class MessageLogger {
         persistMessageNode(u.path("message"));
     }
 
-    /** Публичный метод: можно вызывать как из live‑апдейтов, так и из дампера истории. */
+    /** Можно вызывать и из дампа истории. */
     public void persistMessageNode(JsonNode m) {
         long chatId = m.path("chat_id").asLong();
         Set<Long> allow = allowedChats.get();
@@ -38,7 +42,7 @@ public class MessageLogger {
         long dateUnix = m.path("date").asLong(0);
         String chatTitle = titles.titleOf(chatId);
 
-        // Отправитель (синхронно: важнее полнота, чем скорость при дампе)
+        // --- Отправитель ---
         Long senderUserId = null; String senderUsername = null; String senderPhone = null; String senderName = null;
         JsonNode senderNode = m.path("sender_id");
         if ("messageSenderUser".equals(senderNode.path("@type").asText())) {
@@ -48,31 +52,46 @@ public class MessageLogger {
                 UserDirectory.UserInfo info = users.getUser(uid).get(3, TimeUnit.SECONDS);
                 if (info != null) {
                     senderUsername = info.username;
-                    senderPhone = info.phone;
+                    senderPhone = info.phone;      // часто null, если не контакт
                     senderName = info.displayName;
                 }
             } catch (Exception ignored) {}
         }
 
-        // Текст (если есть)
-        String text = null;
         JsonNode c = m.path("content");
         String ctype = c.path("@type").asText();
+
+        // --- Текст сообщения (messageText) ---
+        String mainText = null;
         if ("messageText".equals(ctype)) {
-            text = c.path("text").path("text").asText("");
+            mainText = c.path("text").path("text").asText("");
         }
+
+        // Сохраняем базовую запись о сообщении сразу (текст или null)
         db.insertMessage(chatId, chatTitle, messageId, dateUnix,
-                senderUserId, senderUsername, senderPhone, senderName, text);
+                senderUserId, senderUsername, senderPhone, senderName, mainText);
 
-        // Ссылки из форматированного текста
+        // --- Ссылки из messageText.entities + fallback-регекс ---
         if ("messageText".equals(ctype)) {
-            extractUrlsFromEntitiesAndSave(chatId, messageId, c.path("text"));
+            extractUrlsFromFormattedTextAndSave(chatId, messageId, c.path("text"));
+            if ((mainText == null || mainText.isBlank()) == false) {
+                extractUrlsFallback(chatId, messageId, mainText);
+            }
         }
 
-        // Медиа: фото
+        // --- Обработка caption у медиа (ссылки в подписи) ---
+        if (!"messageText".equals(ctype)) {
+            JsonNode caption = c.path("caption"); // formattedText
+            if (caption != null && caption.isObject()) {
+                extractUrlsFromFormattedTextAndSave(chatId, messageId, caption);
+                String capText = caption.path("text").asText("");
+                if (!capText.isBlank()) extractUrlsFallback(chatId, messageId, capText);
+            }
+        }
+
+        // --- ФОТО ---
         if ("messagePhoto".equals(ctype)) {
             JsonNode photo = c.path("photo");
-            // берём самый большой size
             JsonNode sizes = photo.path("sizes");
             JsonNode best = null;
             int bestArea = -1;
@@ -92,7 +111,7 @@ public class MessageLogger {
             }
         }
 
-        // Медиа: видео
+        // --- ВИДЕО ---
         if ("messageVideo".equals(ctype)) {
             JsonNode v = c.path("video");
             long fileId = v.path("video").path("id").asLong(0);
@@ -104,7 +123,7 @@ public class MessageLogger {
                     (fileId == 0 ? null : fileId), local, w, h, dur);
         }
 
-        // Документы (например, видео как документ, pdf и т.п.)
+        // --- ДОКУМЕНТЫ (в т.ч. видео как документ) ---
         if ("messageDocument".equals(ctype)) {
             JsonNode d = c.path("document");
             long fileId = d.path("document").path("id").asLong(0);
@@ -113,17 +132,31 @@ public class MessageLogger {
                     (fileId == 0 ? null : fileId), local, null, null, null);
         }
 
-        // Если в message присутствует web_page (превью), можно также вытащить url
-        JsonNode webPage = c.path("web_page");
-        if ("webPage".equals(webPage.path("@type").asText())) {
-            String url = webPage.path("url").asText(null);
-            if (url != null && !url.isBlank()) {
-                db.insertLink(chatId, messageId, url);
-            }
+        // --- GIF/анимации ---
+        if ("messageAnimation".equals(ctype)) {
+            JsonNode a = c.path("animation");
+            long fileId = a.path("animation").path("id").asLong(0);
+            Integer w = a.path("width").isInt() ? a.path("width").asInt() : null;
+            Integer h = a.path("height").isInt() ? a.path("height").asInt() : null;
+            Integer dur = a.path("duration").isInt() ? a.path("duration").asInt() : null;
+            String local = (fileId != 0) ? media.downloadFileGetPath(fileId) : null;
+            db.insertMedia(chatId, messageId, "animation",
+                    (fileId == 0 ? null : fileId), local, w, h, dur);
+        }
+
+        // --- Видеозаметки (кружочки) ---
+        if ("messageVideoNote".equals(ctype)) {
+            JsonNode vn = c.path("video_note");
+            long fileId = vn.path("video").path("id").asLong(0);
+            Integer dur = vn.path("duration").isInt() ? vn.path("duration").asInt() : null;
+            String local = (fileId != 0) ? media.downloadFileGetPath(fileId) : null;
+            db.insertMedia(chatId, messageId, "video_note",
+                    (fileId == 0 ? null : fileId), local, null, null, dur);
         }
     }
 
-    private void extractUrlsFromEntitiesAndSave(long chatId, long messageId, JsonNode formattedText) {
+    private void extractUrlsFromFormattedTextAndSave(long chatId, long messageId, JsonNode formattedText) {
+        if (formattedText == null || !formattedText.isObject()) return;
         String fullText = formattedText.path("text").asText("");
         JsonNode entities = formattedText.path("entities");
         if (!entities.isArray()) return;
@@ -136,14 +169,20 @@ public class MessageLogger {
                 int length = e.path("length").asInt(0);
                 if (offset >= 0 && length > 0 && offset + length <= fullText.length()) {
                     String url = fullText.substring(offset, offset + length);
-                    db.insertLink(chatId, messageId, url);
+                    if (!url.isBlank()) db.insertLink(chatId, messageId, url);
                 }
             } else if ("textEntityTypeTextUrl".equals(tt)) {
                 String url = t.path("url").asText(null);
-                if (url != null && !url.isBlank()) {
-                    db.insertLink(chatId, messageId, url);
-                }
+                if (url != null && !url.isBlank()) db.insertLink(chatId, messageId, url);
             }
+        }
+    }
+
+    private void extractUrlsFallback(long chatId, long messageId, String text) {
+        Matcher m = URL_RE.matcher(text);
+        while (m.find()) {
+            String url = m.group(1);
+            if (url != null && !url.isBlank()) db.insertLink(chatId, messageId, url);
         }
     }
 }
