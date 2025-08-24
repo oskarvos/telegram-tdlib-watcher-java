@@ -1,7 +1,8 @@
 package com.oleg.td;
 
 final class EnvVars {
-    private EnvVars(){}
+    private EnvVars() {
+    }
 
     static String get(String... keys) {
         for (String k : keys) {
@@ -17,6 +18,10 @@ final class EnvVars {
         String v = System.getProperty(key);
         if (v == null || v.isBlank()) v = System.getenv(key);
         if (v == null || v.isBlank()) return def;
-        try { return Integer.parseInt(v.trim()); } catch (Exception e){ return def; }
+        try {
+            return Integer.parseInt(v.trim());
+        } catch (Exception e) {
+            return def;
+        }
     }
 }

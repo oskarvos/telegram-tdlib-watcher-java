@@ -1,7 +1,5 @@
 package com.oleg.td;
 
-import com.sun.jna.Native;
-
 import java.util.Optional;
 
 /**

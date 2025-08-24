@@ -7,7 +7,6 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
-
 /**
  * Ищет совпадения по regex-паттернам в новых текстовых сообщениях.
  */

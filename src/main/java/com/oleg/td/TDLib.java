@@ -1,6 +1,9 @@
 package com.oleg.td;
 
-import com.sun.jna.*;
+import com.sun.jna.Callback;
+import com.sun.jna.Library;
+import com.sun.jna.Native;
+import com.sun.jna.Pointer;
 
 public interface TDLib extends Library {
     Pointer td_json_client_create();

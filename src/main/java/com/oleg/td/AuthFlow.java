@@ -1,16 +1,15 @@
 package com.oleg.td;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.Console;
-import java.time.Duration;
 import java.util.NoSuchElementException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
 
-/** Реализует шаги авторизации TDLib. */
+/**
+ * Реализует шаги авторизации TDLib.
+ */
 public class AuthFlow {
     private final TdJsonClient client;
     private final Config cfg;
@@ -23,7 +22,9 @@ public class AuthFlow {
         this.cfg = cfg;
     }
 
-    /** Подписывает обработчики апдейтов, чтобы ловить состояния авторизации. */
+    /**
+     * Подписывает обработчики апдейтов, чтобы ловить состояния авторизации.
+     */
     public void wireInto(UpdateRouter router) {
         router.add(n -> {
             String type = n.path("@type").asText();
@@ -41,7 +42,9 @@ public class AuthFlow {
         });
     }
 
-    /** Блокирующая авторизация — проходит все шаги. */
+    /**
+     * Блокирующая авторизация — проходит все шаги.
+     */
     public void authorizeBlocking() {
         client.send(Utils.obj("getAuthorizationState"));
 
@@ -112,14 +115,18 @@ public class AuthFlow {
                     System.out.println("Authorization completed.");
                 }
                 case "authorizationStateClosed" -> System.err.println("Authorization closed.");
-                default -> {}
+                default -> {
+                }
             }
             last = s;
         }
     }
 
     private static void sleep(long ms) {
-        try { Thread.sleep(ms); } catch (InterruptedException ignored) {}
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ignored) {
+        }
     }
 
     private static String readValue(String prompt, boolean secret, String... keys) {
