@@ -57,7 +57,7 @@ public class Database implements Closeable {
         createBootFlagsIfNeeded();
     }
 
-    // ---------- messages: без message_id/sent_at_unix, с msg_date/msg_time ----------
+    // ---------- messages ----------
     private void migrateMessagesIfNeeded() {
         boolean exists = tableExists("messages");
         if (!exists) {
@@ -144,7 +144,6 @@ public class Database implements Closeable {
                 """);
             }
 
-            // Дедуп до создания UNIQUE индекса
             st.execute("""
                 DELETE FROM messages_new
                 WHERE rowid NOT IN (
@@ -235,7 +234,6 @@ public class Database implements Closeable {
                 )
             """);
 
-            // переносим всё, что можем
             if (cols.contains("media_date") && cols.contains("media_time") && cols.contains("kind") && cols.contains("local_path")) {
                 st.execute("""
                     INSERT INTO media_new(id, chat_id, media_date, media_time, sender_name, kind, local_path, file_size)
@@ -249,7 +247,6 @@ public class Database implements Closeable {
                     FROM media
                 """);
             } else {
-                // Старые схемы без нужных полей — переносим хотя бы chat_id
                 st.execute("""
                     INSERT INTO media_new(id, chat_id, media_date, media_time, sender_name, kind, local_path, file_size)
                     SELECT id, chat_id, strftime('%d-%m-%Y','now'), strftime('%H:%M:%S','now'), NULL, 'document', NULL, NULL
@@ -373,7 +370,7 @@ public class Database implements Closeable {
         }
     }
 
-    // ---------- message_meta: map (chat_id,message_id) -> дата/время/отправитель ----------
+    // ---------- message_meta ----------
     private void createMessageMetaIfNeeded() {
         try (Statement st = conn.createStatement()) {
             st.execute("""
@@ -395,7 +392,7 @@ public class Database implements Closeable {
         }
     }
 
-    // ---------- boot_flags: отметка «первая выгрузка сделана» ----------
+    // ---------- boot_flags ----------
     private void createBootFlagsIfNeeded() {
         try (Statement st = conn.createStatement()) {
             st.execute("""
@@ -434,10 +431,9 @@ public class Database implements Closeable {
         }
     }
 
-    // =========================== ВСТАВКИ (сигнатуры прежние) ===========================
+    // =========================== ВСТАВКИ ===========================
 
-    /** Вставка сообщения + обновление message_meta для последующего media/links. */
-    public void insertMessage(long chatId, String chatTitle, long messageId /* используется для meta */, long sentAtUnix,
+    public void insertMessage(long chatId, String chatTitle, long messageId, long sentAtUnix,
                               Long senderUserId, String senderUsername, String senderPhone,
                               String senderName, String text) {
         String msgDate = (sentAtUnix > 0)
@@ -470,9 +466,8 @@ public class Database implements Closeable {
         upsertMessageMeta(chatId, messageId, msgDate, msgTime, senderUserId, senderUsername, senderPhone, senderName);
     }
 
-    /** Вставка медиа. Берёт дату/время и sender_name из message_meta. */
-    public void insertMedia(long chatId, long messageId, String kind, Long remoteFileId /* ignored */,
-                            String localPath, Integer width /* ignored */, Integer height /* ignored */, Integer durationSec /* ignored */) {
+    public void insertMedia(long chatId, long messageId, String kind, Long remoteFileId,
+                            String localPath, Integer width, Integer height, Integer durationSec) {
         Meta meta = fetchMeta(chatId, messageId);
         String mediaDate = (meta != null) ? meta.msgDate : DATE_FMT.format(Instant.now());
         String mediaTime = (meta != null) ? meta.msgTime : TIME_FMT.format(Instant.now());
@@ -504,7 +499,6 @@ public class Database implements Closeable {
         }
     }
 
-    /** Вставка ссылки. Берёт дату/время и sender_name из message_meta. */
     public void insertLink(long chatId, long messageId, String url) {
         Meta meta = fetchMeta(chatId, messageId);
         String linkDate = (meta != null) ? meta.msgDate : DATE_FMT.format(Instant.now());

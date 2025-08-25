@@ -78,17 +78,17 @@ public class App {
                 // 8) Подписать обработчик на новые сообщения
                 router.add(n -> matcher.onUpdateNewMessage(n));
 
-                // 9) Разрешить чаты/вступить и инициировать по одному запросу истории (как “проброс” прав)
+                // 9) Разрешить чаты/вступить
                 ChatResolver chatResolver = new ChatResolver(client);
                 Set<Long> chatIds = chatResolver.resolveGroups(cfg.groups);
                 matcher.setAllowedChats(chatIds);
                 log.info("Watching {} chats: {}", chatIds.size(), chatIds);
 
-                // 9.1) Инициализируем SQLite (файл создадим рядом с базой TDLib)
+                // 9.1) SQLite
                 String dbPath = Path.of(cfg.tdlib.database_directory).resolve("messages.sqlite").toString();
                 Database db = new Database(dbPath);
 
-                // 9.2) Кэш пользователей + логгер сообщений
+                // 9.2) Кэш пользователей + логгер
                 UserDirectory userDirectory = new UserDirectory(client);
                 MediaDownloader mediaDownloader = new MediaDownloader(client);
                 MessageLogger messageLogger = new MessageLogger(db, userDirectory, titleRegistry, mediaDownloader);
@@ -97,29 +97,19 @@ public class App {
                 // 9.3) Дампер истории
                 ChatDumpCoordinator dumper = new ChatDumpCoordinator(client, messageLogger);
 
-                // 9.4) Дамп по событию совпадения (как было)
+                // 9.4) Дамп по событию совпадения
                 matcher.setOnMatchListener(chatId -> {
                     messageLogger.enableCapture(chatId);
                     dumper.onPatternMatch(chatId);
                 });
 
-                // ★★★★★ АВТО-ДАМП ПРИ ПЕРВОМ ПОДКЛЮЧЕНИИ ★★★★★
-                // Для каждого чата проверяем флаг в БД; если ещё не дампили — один раз выгружаем всю историю.
+                // ★ Автоматический дамп при первом подключении ★
                 for (Long chatId : chatIds) {
                     if (!db.isChatBootstrapped(chatId)) {
                         log.info("First-time bootstrap dump for chat {}", chatId);
-                        messageLogger.enableCapture(chatId);   // разрешаем запись
-                        dumper.onPatternMatch(chatId);         // выгружаем всю историю
-                        db.markChatBootstrapped(chatId);       // помечаем, чтобы больше не повторять
-                    }
-                }
-                // ★★★★★ конец блока авто-дампа ★★★★★
-
-                // (опциональный режим, как и раньше)
-                boolean dumpOnStart = Boolean.parseBoolean(System.getProperty("DUMP_ON_START", "false"));
-                if (dumpOnStart) {
-                    for (Long chatId : chatIds) {
-                        dumper.onPatternMatch(chatId); // однократно выгрузит всю историю чата
+                        messageLogger.enableCapture(chatId);
+                        dumper.onPatternMatch(chatId);
+                        db.markChatBootstrapped(chatId);
                     }
                 }
 
@@ -128,6 +118,7 @@ public class App {
                     try { db.close(); } catch (Exception ignored) {}
                 }, "db-shutdown"));
 
+                // небольшой «проброс» истории (как было)
                 for (Long chatId : chatIds) {
                     ObjectNode o = Utils.obj("getChatHistory");
                     o.put("chat_id", chatId);
@@ -147,7 +138,6 @@ public class App {
         }
     }
 
-    /** Простой вывод ошибок TDLib (как было в исходнике) */
     static final class TDLibErrors {
         static void logIfError(com.fasterxml.jackson.databind.JsonNode n) {
             if ("error".equals(n.path("@type").asText())) {

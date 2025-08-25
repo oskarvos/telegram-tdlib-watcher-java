@@ -17,19 +17,16 @@ public class MessageLogger {
     private final ChatTitleRegistry titles;
     private final MediaDownloader media;
     private final AtomicReference<Set<Long>> allowedChats = new AtomicReference<>(null);
+
+    // «рубильник»: писать только когда явно включено (включает дампер/бот)
     private final ConcurrentHashMap<Long, Boolean> captureEnabled = new ConcurrentHashMap<>();
+    public void enableCapture(long chatId) { captureEnabled.put(chatId, true); }
 
-    public void enableCapture(long chatId) {
-        captureEnabled.put(chatId, true);
-    }
-
-    // URL fallback (кроме entities)
     private static final Pattern URL_RE = Pattern.compile(
             "\\b((?:https?://|http://|www\\.|t\\.me/)[^\\s]+)",
             Pattern.CASE_INSENSITIVE
     );
 
-    // Разрешённые MIME/расширения для "часто используемых" форматов
     private static final Set<String> IMG_MIME = set("image/jpeg","image/png","image/webp");
     private static final Set<String> IMG_EXT  = set("jpg","jpeg","png","webp");
 
@@ -61,7 +58,10 @@ public class MessageLogger {
     /** Можно вызывать и из дампа истории. */
     public void persistMessageNode(JsonNode m) {
         long chatId = m.path("chat_id").asLong();
+
+        // писать только если включили для этого чата
         if (!captureEnabled.getOrDefault(chatId, false)) return;
+
         Set<Long> allow = allowedChats.get();
         if (allow != null && !allow.isEmpty() && !allow.contains(chatId)) return;
 
@@ -69,7 +69,7 @@ public class MessageLogger {
         long dateUnix = m.path("date").asLong(0);
         String chatTitle = titles.titleOf(chatId);
 
-        // --- Отправитель ---
+        // отправитель
         Long senderUserId = null; String senderUsername = null; String senderPhone = null; String senderName = null;
         JsonNode senderNode = m.path("sender_id");
         if ("messageSenderUser".equals(senderNode.path("@type").asText())) {
@@ -79,7 +79,7 @@ public class MessageLogger {
                 UserDirectory.UserInfo info = users.getUser(uid).get(3, TimeUnit.SECONDS);
                 if (info != null) {
                     senderUsername = info.username;
-                    senderPhone = info.phone;      // часто null, если не контакт
+                    senderPhone = info.phone;
                     senderName = info.displayName;
                 }
             } catch (Exception ignored) {}
@@ -88,17 +88,15 @@ public class MessageLogger {
         JsonNode c = m.path("content");
         String ctype = c.path("@type").asText();
 
-        // --- Текст сообщения ---
         String mainText = null;
         if ("messageText".equals(ctype)) {
             mainText = c.path("text").path("text").asText("");
         }
 
-        // Базовая запись
         db.insertMessage(chatId, chatTitle, messageId, dateUnix,
                 senderUserId, senderUsername, senderPhone, senderName, mainText);
 
-        // Ссылки из текста/подписи/preview
+        // ссылки
         if ("messageText".equals(ctype)) {
             extractUrlsFromFormattedTextAndSave(chatId, messageId, c.path("text"));
             if (mainText != null && !mainText.isBlank()) extractUrlsFallback(chatId, messageId, mainText);
@@ -117,7 +115,7 @@ public class MessageLogger {
             if (url != null && !url.isBlank()) db.insertLink(chatId, messageId, url);
         }
 
-        // --- ФОТО ---
+        // фото
         if ("messagePhoto".equals(ctype)) {
             JsonNode photo = c.path("photo");
             JsonNode sizes = photo.path("sizes");
@@ -139,7 +137,7 @@ public class MessageLogger {
             }
         }
 
-        // --- ВИДЕО ---
+        // видео
         if ("messageVideo".equals(ctype)) {
             JsonNode v = c.path("video");
             JsonNode fileObj = v.path("video");
@@ -151,7 +149,7 @@ public class MessageLogger {
             db.insertMedia(chatId, messageId, "video", (fid == null ? null : fid), local, w, h, dur);
         }
 
-        // --- ГИФ/анимация ---
+        // gif/анимации
         if ("messageAnimation".equals(ctype)) {
             JsonNode a = c.path("animation");
             JsonNode fileObj = a.path("animation");
@@ -163,7 +161,7 @@ public class MessageLogger {
             db.insertMedia(chatId, messageId, "animation", (fid == null ? null : fid), local, w, h, dur);
         }
 
-        // --- ВИДЕО-ЗАМЕТКИ ---
+        // кружочки
         if ("messageVideoNote".equals(ctype)) {
             JsonNode vn = c.path("video_note");
             JsonNode fileObj = vn.path("video");
@@ -173,7 +171,7 @@ public class MessageLogger {
             db.insertMedia(chatId, messageId, "video_note", (fid == null ? null : fid), local, null, null, dur);
         }
 
-        // --- АУДИО (музыка) ---
+        // аудио (музыка)
         if ("messageAudio".equals(ctype)) {
             JsonNode a = c.path("audio");
             String mime = a.path("mime_type").asText("");
@@ -187,7 +185,7 @@ public class MessageLogger {
             }
         }
 
-        // --- ГОЛОСОВЫЕ ---
+        // голосовые
         if ("messageVoiceNote".equals(ctype)) {
             JsonNode vn = c.path("voice_note");
             JsonNode fileObj = vn.path("voice");
@@ -197,7 +195,7 @@ public class MessageLogger {
             db.insertMedia(chatId, messageId, "voice_note", (fid == null ? null : fid), local, null, null, dur);
         }
 
-        // --- СТИКЕРЫ (статические/видео) ---
+        // стикеры
         if ("messageSticker".equals(ctype)) {
             JsonNode s = c.path("sticker");
             JsonNode fileObj = s.path("sticker");
@@ -206,7 +204,7 @@ public class MessageLogger {
             db.insertMedia(chatId, messageId, "sticker", (fid == null ? null : fid), local, null, null, null);
         }
 
-        // --- DOCUMENT -> переклассификация на частые форматы ---
+        // document — переклассификация
         if ("messageDocument".equals(ctype)) {
             JsonNode d = c.path("document");
             String mime = d.path("mime_type").asText("");
@@ -227,7 +225,6 @@ public class MessageLogger {
             } else if ("application/pdf".equals(mime) || hasExt(name, set("pdf","zip"))) {
                 kind = "document"; fileType = "fileTypeDocument";
             } else {
-                // пропускаем редкие/нестандартные
                 return;
             }
 
