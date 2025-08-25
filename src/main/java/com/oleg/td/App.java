@@ -94,18 +94,29 @@ public class App {
                 MessageLogger messageLogger = new MessageLogger(db, userDirectory, titleRegistry, mediaDownloader);
                 messageLogger.setAllowedChats(chatIds);
 
-                // 9.4) Дампер истории по событию совпадения
+                // 9.3) Дампер истории
                 ChatDumpCoordinator dumper = new ChatDumpCoordinator(client, messageLogger);
+
+                // 9.4) Дамп по событию совпадения (как было)
                 matcher.setOnMatchListener(chatId -> {
-                    // 1) разрешаем запись в БД для этого чата
                     messageLogger.enableCapture(chatId);
-                    // 2) запускаем дамп всей истории
                     dumper.onPatternMatch(chatId);
                 });
 
-                boolean dumpOnStart = Boolean.parseBoolean(
-                        System.getProperty("DUMP_ON_START", "false")
-                );
+                // ★★★★★ АВТО-ДАМП ПРИ ПЕРВОМ ПОДКЛЮЧЕНИИ ★★★★★
+                // Для каждого чата проверяем флаг в БД; если ещё не дампили — один раз выгружаем всю историю.
+                for (Long chatId : chatIds) {
+                    if (!db.isChatBootstrapped(chatId)) {
+                        log.info("First-time bootstrap dump for chat {}", chatId);
+                        messageLogger.enableCapture(chatId);   // разрешаем запись
+                        dumper.onPatternMatch(chatId);         // выгружаем всю историю
+                        db.markChatBootstrapped(chatId);       // помечаем, чтобы больше не повторять
+                    }
+                }
+                // ★★★★★ конец блока авто-дампа ★★★★★
+
+                // (опциональный режим, как и раньше)
+                boolean dumpOnStart = Boolean.parseBoolean(System.getProperty("DUMP_ON_START", "false"));
                 if (dumpOnStart) {
                     for (Long chatId : chatIds) {
                         dumper.onPatternMatch(chatId); // однократно выгрузит всю историю чата
@@ -114,10 +125,7 @@ public class App {
 
                 // 9.5) Закрытие БД на выходе
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                    try {
-                        db.close();
-                    } catch (Exception ignored) {
-                    }
+                    try { db.close(); } catch (Exception ignored) {}
                 }, "db-shutdown"));
 
                 for (Long chatId : chatIds) {
@@ -131,9 +139,6 @@ public class App {
                 }
 
                 log.info("Ready. Listening...");
-                // 10) Бесконечный цикл (минимальная активность, всё по колбэкам)
-                // Если хотите — замените на CountDownLatch.await().
-                // Здесь сохраняем простой подход из исходника.
                 //noinspection InfiniteLoopStatement
                 while (true) {
                     Thread.sleep(10_000L);
@@ -142,9 +147,7 @@ public class App {
         }
     }
 
-    /**
-     * Простой вывод ошибок TDLib (как было в исходнике)
-     */
+    /** Простой вывод ошибок TDLib (как было в исходнике) */
     static final class TDLibErrors {
         static void logIfError(com.fasterxml.jackson.databind.JsonNode n) {
             if ("error".equals(n.path("@type").asText())) {

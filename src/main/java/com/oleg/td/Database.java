@@ -15,9 +15,11 @@ public class Database implements Closeable {
     private final String url;
     private Connection conn;
 
-    // dd-MM-yyyy / HH:mm:ss (UTC)
-    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd-MM-yyyy").withZone(ZoneOffset.UTC);
-    private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneOffset.UTC);
+    // Форматы даты/времени (UTC): dd-MM-yyyy / HH:mm:ss
+    private static final DateTimeFormatter DATE_FMT =
+            DateTimeFormatter.ofPattern("dd-MM-yyyy").withZone(ZoneOffset.UTC);
+    private static final DateTimeFormatter TIME_FMT =
+            DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneOffset.UTC);
 
     public Database(String path) {
         this.url = "jdbc:sqlite:" + Objects.requireNonNull(path);
@@ -34,11 +36,12 @@ public class Database implements Closeable {
         }
     }
 
-    @Override public void close() {
+    @Override
+    public void close() {
         try { if (conn != null) conn.close(); } catch (SQLException ignored) {}
     }
 
-    // -------------------- СХЕМА / МИГРАЦИЯ --------------------
+    // =========================== СХЕМА / МИГРАЦИИ ===========================
 
     private void initSchema() {
         try (Statement st = conn.createStatement()) {
@@ -47,24 +50,25 @@ public class Database implements Closeable {
             throw new RuntimeException("SQLite pragma failed", e);
         }
 
-        // основная схема
         migrateMessagesIfNeeded();
         migrateMediaIfNeeded();
         migrateLinksIfNeeded();
-        createMessageMetaIfNeeded(); // вспомогательная таблица для связи message_id -> отправитель/время
+        createMessageMetaIfNeeded();
+        createBootFlagsIfNeeded();
     }
 
+    // ---------- messages: без message_id/sent_at_unix, с msg_date/msg_time ----------
     private void migrateMessagesIfNeeded() {
-        boolean tableExists = tableExists("messages");
-        if (!tableExists) {
+        boolean exists = tableExists("messages");
+        if (!exists) {
             try (Statement st = conn.createStatement()) {
                 st.execute("""
                     CREATE TABLE IF NOT EXISTS messages(
                         id               INTEGER PRIMARY KEY AUTOINCREMENT,
                         chat_id          INTEGER NOT NULL,
                         chat_title       TEXT,
-                        msg_date         TEXT NOT NULL,          -- dd-MM-yyyy
-                        msg_time         TEXT NOT NULL,          -- HH:mm:ss
+                        msg_date         TEXT NOT NULL,      -- dd-MM-yyyy
+                        msg_time         TEXT NOT NULL,      -- HH:mm:ss
                         sender_user_id   INTEGER,
                         sender_username  TEXT,
                         sender_phone     TEXT,
@@ -84,11 +88,11 @@ public class Database implements Closeable {
         }
 
         Set<String> cols = columnsOf("messages");
-        boolean needMigration =
+        boolean need =
                 cols.contains("message_id") || cols.contains("sent_at_unix")
                         || !cols.contains("msg_date") || !cols.contains("msg_time");
 
-        if (!needMigration) {
+        if (!need) {
             try (Statement st = conn.createStatement()) {
                 st.execute("CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_id, msg_date, msg_time)");
                 st.execute("""
@@ -133,12 +137,14 @@ public class Database implements Closeable {
                     INSERT INTO messages_new(id, chat_id, chat_title, msg_date, msg_time,
                                              sender_user_id, sender_username, sender_phone, sender_name, text)
                     SELECT id, chat_id, chat_title,
-                           date('now'), time('now'),
+                           strftime('%d-%m-%Y','now'),
+                           strftime('%H:%M:%S','now'),
                            sender_user_id, sender_username, sender_phone, sender_name, text
                     FROM messages
                 """);
             }
 
+            // Дедуп до создания UNIQUE индекса
             st.execute("""
                 DELETE FROM messages_new
                 WHERE rowid NOT IN (
@@ -163,10 +169,10 @@ public class Database implements Closeable {
         }
     }
 
+    // ---------- media: chat_id, media_date, media_time, sender_name, kind, local_path, file_size ----------
     private void migrateMediaIfNeeded() {
-        // требуемая структура: id, chat_id, media_date, media_time, sender_name, kind, local_path, file_size
-        boolean tableExists = tableExists("media");
-        if (!tableExists) {
+        boolean exists = tableExists("media");
+        if (!exists) {
             try (Statement st = conn.createStatement()) {
                 st.execute("""
                     CREATE TABLE IF NOT EXISTS media(
@@ -184,7 +190,7 @@ public class Database implements Closeable {
                 st.execute("CREATE INDEX IF NOT EXISTS idx_media_chat_kind ON media(chat_id, kind)");
                 st.execute("""
                     CREATE UNIQUE INDEX IF NOT EXISTS uq_media_dedup
-                    ON media(chat_id, kind, COALESCE(local_path, ''), COALESCE(file_size, -1))
+                    ON media(chat_id, kind, COALESCE(local_path,''), COALESCE(file_size,-1))
                 """);
             } catch (SQLException e) {
                 throw new RuntimeException("Create media failed", e);
@@ -193,20 +199,20 @@ public class Database implements Closeable {
         }
 
         Set<String> cols = columnsOf("media");
-        boolean needMigration =
-                cols.contains("message_id") || cols.contains("remote_file_id") || cols.contains("width")
-                        || cols.contains("height") || cols.contains("duration")
+        boolean need =
+                cols.contains("message_id") || cols.contains("remote_file_id")
+                        || cols.contains("width") || cols.contains("height") || cols.contains("duration")
                         || !cols.contains("media_date") || !cols.contains("media_time")
                         || !cols.contains("sender_name") || !cols.contains("file_size")
-                        || !cols.contains("local_path") || !cols.contains("kind");
+                        || !cols.contains("kind") || !cols.contains("local_path");
 
-        if (!needMigration) {
+        if (!need) {
             try (Statement st = conn.createStatement()) {
                 st.execute("CREATE INDEX IF NOT EXISTS idx_media_dt ON media(media_date, media_time)");
                 st.execute("CREATE INDEX IF NOT EXISTS idx_media_chat_kind ON media(chat_id, kind)");
                 st.execute("""
                     CREATE UNIQUE INDEX IF NOT EXISTS uq_media_dedup
-                    ON media(chat_id, kind, COALESCE(local_path, ''), COALESCE(file_size, -1))
+                    ON media(chat_id, kind, COALESCE(local_path,''), COALESCE(file_size,-1))
                 """);
             } catch (SQLException e) {
                 throw new RuntimeException("Ensure media indexes failed", e);
@@ -229,17 +235,24 @@ public class Database implements Closeable {
                 )
             """);
 
-            // переносим то, что можем
-            if (cols.contains("media_date") && cols.contains("media_time")) {
+            // переносим всё, что можем
+            if (cols.contains("media_date") && cols.contains("media_time") && cols.contains("kind") && cols.contains("local_path")) {
                 st.execute("""
                     INSERT INTO media_new(id, chat_id, media_date, media_time, sender_name, kind, local_path, file_size)
                     SELECT id, chat_id, media_date, media_time, NULL, kind, local_path, NULL
                     FROM media
                 """);
-            } else {
+            } else if (cols.contains("kind") && cols.contains("local_path")) {
                 st.execute("""
                     INSERT INTO media_new(id, chat_id, media_date, media_time, sender_name, kind, local_path, file_size)
                     SELECT id, chat_id, strftime('%d-%m-%Y','now'), strftime('%H:%M:%S','now'), NULL, kind, local_path, NULL
+                    FROM media
+                """);
+            } else {
+                // Старые схемы без нужных полей — переносим хотя бы chat_id
+                st.execute("""
+                    INSERT INTO media_new(id, chat_id, media_date, media_time, sender_name, kind, local_path, file_size)
+                    SELECT id, chat_id, strftime('%d-%m-%Y','now'), strftime('%H:%M:%S','now'), NULL, 'document', NULL, NULL
                     FROM media
                 """);
             }
@@ -248,7 +261,7 @@ public class Database implements Closeable {
                 DELETE FROM media_new
                 WHERE rowid NOT IN (
                     SELECT MIN(rowid) FROM media_new
-                    GROUP BY chat_id, kind, COALESCE(local_path, ''), COALESCE(file_size, -1)
+                    GROUP BY chat_id, kind, COALESCE(local_path,''), COALESCE(file_size,-1)
                 )
             """);
 
@@ -258,7 +271,7 @@ public class Database implements Closeable {
             st.execute("CREATE INDEX IF NOT EXISTS idx_media_chat_kind ON media(chat_id, kind)");
             st.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_media_dedup
-                ON media(chat_id, kind, COALESCE(local_path, ''), COALESCE(file_size, -1))
+                ON media(chat_id, kind, COALESCE(local_path,''), COALESCE(file_size,-1))
             """);
             st.execute("COMMIT");
         } catch (SQLException e) {
@@ -267,10 +280,10 @@ public class Database implements Closeable {
         }
     }
 
+    // ---------- links: chat_id, link_date, link_time, sender_name, url ----------
     private void migrateLinksIfNeeded() {
-        // требуемая структура: id, chat_id, link_date, link_time, sender_name, url  (без message_id)
-        boolean tableExists = tableExists("links");
-        if (!tableExists) {
+        boolean exists = tableExists("links");
+        if (!exists) {
             try (Statement st = conn.createStatement()) {
                 st.execute("""
                     CREATE TABLE IF NOT EXISTS links(
@@ -294,11 +307,11 @@ public class Database implements Closeable {
         }
 
         Set<String> cols = columnsOf("links");
-        boolean needMigration =
+        boolean need =
                 cols.contains("message_id") || !cols.contains("link_date") || !cols.contains("link_time")
                         || !cols.contains("sender_name") || !cols.contains("url");
 
-        if (!needMigration) {
+        if (!need) {
             try (Statement st = conn.createStatement()) {
                 st.execute("CREATE INDEX IF NOT EXISTS idx_links_dt ON links(link_date, link_time)");
                 st.execute("""
@@ -324,7 +337,6 @@ public class Database implements Closeable {
                 )
             """);
 
-            // переносим старые записи (если были колонки link_date/time — используем)
             if (cols.contains("link_date") && cols.contains("link_time")) {
                 st.execute("""
                     INSERT INTO links_new(id, chat_id, link_date, link_time, sender_name, url)
@@ -361,8 +373,8 @@ public class Database implements Closeable {
         }
     }
 
+    // ---------- message_meta: map (chat_id,message_id) -> дата/время/отправитель ----------
     private void createMessageMetaIfNeeded() {
-        // карта (chat_id, message_id) -> дата/время/отправитель (для заполнения links & media)
         try (Statement st = conn.createStatement()) {
             st.execute("""
                 CREATE TABLE IF NOT EXISTS message_meta(
@@ -383,14 +395,57 @@ public class Database implements Closeable {
         }
     }
 
-    // -------------------- ВСТАВКИ (сигнатуры НЕ менялись) --------------------
+    // ---------- boot_flags: отметка «первая выгрузка сделана» ----------
+    private void createBootFlagsIfNeeded() {
+        try (Statement st = conn.createStatement()) {
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS boot_flags(
+                    chat_id INTEGER PRIMARY KEY,
+                    dumped  INTEGER NOT NULL DEFAULT 0
+                )
+            """);
+        } catch (SQLException e) {
+            throw new RuntimeException("Create boot_flags failed", e);
+        }
+    }
 
-    public void insertMessage(long chatId, String chatTitle, long messageId /*ignored here but used for meta*/, long sentAtUnix,
+    public boolean isChatBootstrapped(long chatId) {
+        String sql = "SELECT dumped FROM boot_flags WHERE chat_id=?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, chatId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && rs.getInt(1) == 1;
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("boot_flags check failed", e);
+        }
+    }
+
+    public void markChatBootstrapped(long chatId) {
+        String sql = """
+            INSERT INTO boot_flags(chat_id, dumped) VALUES(?,1)
+            ON CONFLICT(chat_id) DO UPDATE SET dumped=1
+        """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, chatId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException("boot_flags upsert failed", e);
+        }
+    }
+
+    // =========================== ВСТАВКИ (сигнатуры прежние) ===========================
+
+    /** Вставка сообщения + обновление message_meta для последующего media/links. */
+    public void insertMessage(long chatId, String chatTitle, long messageId /* используется для meta */, long sentAtUnix,
                               Long senderUserId, String senderUsername, String senderPhone,
                               String senderName, String text) {
-        // Основная таблица messages (как раньше)
-        String msgDate = (sentAtUnix > 0) ? DATE_FMT.format(Instant.ofEpochSecond(sentAtUnix)) : DATE_FMT.format(Instant.now());
-        String msgTime = (sentAtUnix > 0) ? TIME_FMT.format(Instant.ofEpochSecond(sentAtUnix)) : TIME_FMT.format(Instant.now());
+        String msgDate = (sentAtUnix > 0)
+                ? DATE_FMT.format(Instant.ofEpochSecond(sentAtUnix))
+                : DATE_FMT.format(Instant.now());
+        String msgTime = (sentAtUnix > 0)
+                ? TIME_FMT.format(Instant.ofEpochSecond(sentAtUnix))
+                : TIME_FMT.format(Instant.now());
 
         String sql = """
             INSERT OR IGNORE INTO messages(chat_id, chat_title, msg_date, msg_time,
@@ -412,18 +467,16 @@ public class Database implements Closeable {
             throw new RuntimeException("SQLite insert message failed", e);
         }
 
-        // Сопутствующая запись в message_meta для последующих links/media
         upsertMessageMeta(chatId, messageId, msgDate, msgTime, senderUserId, senderUsername, senderPhone, senderName);
     }
 
-    public void insertMedia(long chatId, long messageId /*используем для meta*/, String kind, Long remoteFileId /*ignored*/,
-                            String localPath, Integer width /*ignored*/, Integer height /*ignored*/, Integer durationSec /*ignored*/) {
-
-        // Пытаемся взять метаданные сообщения
+    /** Вставка медиа. Берёт дату/время и sender_name из message_meta. */
+    public void insertMedia(long chatId, long messageId, String kind, Long remoteFileId /* ignored */,
+                            String localPath, Integer width /* ignored */, Integer height /* ignored */, Integer durationSec /* ignored */) {
         Meta meta = fetchMeta(chatId, messageId);
-        String mediaDate = meta != null ? meta.msgDate : DATE_FMT.format(Instant.now());
-        String mediaTime = meta != null ? meta.msgTime : TIME_FMT.format(Instant.now());
-        String senderName = meta != null ? meta.senderName : null;
+        String mediaDate = (meta != null) ? meta.msgDate : DATE_FMT.format(Instant.now());
+        String mediaTime = (meta != null) ? meta.msgTime : TIME_FMT.format(Instant.now());
+        String senderName = (meta != null) ? meta.senderName : null;
 
         Long fileSize = null;
         try {
@@ -451,12 +504,12 @@ public class Database implements Closeable {
         }
     }
 
-    public void insertLink(long chatId, long messageId /*используем для meta*/, String url) {
-        // Пытаемся взять метаданные сообщения
+    /** Вставка ссылки. Берёт дату/время и sender_name из message_meta. */
+    public void insertLink(long chatId, long messageId, String url) {
         Meta meta = fetchMeta(chatId, messageId);
-        String linkDate = meta != null ? meta.msgDate : DATE_FMT.format(Instant.now());
-        String linkTime = meta != null ? meta.msgTime : TIME_FMT.format(Instant.now());
-        String senderName = meta != null ? meta.senderName : null;
+        String linkDate = (meta != null) ? meta.msgDate : DATE_FMT.format(Instant.now());
+        String linkTime = (meta != null) ? meta.msgTime : TIME_FMT.format(Instant.now());
+        String senderName = (meta != null) ? meta.senderName : null;
 
         String sql = """
             INSERT OR IGNORE INTO links(chat_id, link_date, link_time, sender_name, url)
@@ -474,7 +527,7 @@ public class Database implements Closeable {
         }
     }
 
-    // -------------------- ВСПОМОГАТЕЛЬНОЕ: message_meta --------------------
+    // =========================== message_meta helpers ===========================
 
     private void upsertMessageMeta(long chatId, long messageId, String msgDate, String msgTime,
                                    Long senderUserId, String senderUsername, String senderPhone, String senderName) {
@@ -506,7 +559,7 @@ public class Database implements Closeable {
 
     private static final class Meta {
         final String msgDate, msgTime, senderName;
-        Meta(String d, String t, String n) { msgDate=d; msgTime=t; senderName=n; }
+        Meta(String d, String t, String n) { msgDate = d; msgTime = t; senderName = n; }
     }
 
     private Meta fetchMeta(long chatId, long messageId) {
@@ -515,24 +568,19 @@ public class Database implements Closeable {
             ps.setLong(1, chatId);
             ps.setLong(2, messageId);
             try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return new Meta(rs.getString(1), rs.getString(2), rs.getString(3));
-                }
+                if (rs.next()) return new Meta(rs.getString(1), rs.getString(2), rs.getString(3));
             }
         } catch (SQLException ignored) {}
         return null;
     }
 
-    // -------------------- УТИЛИТЫ --------------------
+    // =========================== Утилиты ===========================
 
     private boolean tableExists(String name) {
         try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?"
-        )) {
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")) {
             ps.setString(1, name);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
-            }
+            try (ResultSet rs = ps.executeQuery()) { return rs.next(); }
         } catch (SQLException e) {
             throw new RuntimeException("tableExists failed", e);
         }
