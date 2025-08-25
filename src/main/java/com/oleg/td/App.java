@@ -28,6 +28,11 @@ public class App {
                 cfg.tdlib.files_directory,
                 cfg.groups, cfg.case_insensitive);
 
+        // ★ Развести каталоги TDLib по api_id+телефон — чтобы не провоцировать re-auth и 429
+        String phoneSan = (cfg.auth != null && cfg.auth.phone != null) ? cfg.auth.phone.replaceAll("\\D", "") : "unknown";
+        cfg.tdlib.database_directory = Path.of(cfg.tdlib.database_directory, cfg.tdlib.api_id + "_" + phoneSan).toString();
+        cfg.tdlib.files_directory    = Path.of(cfg.tdlib.files_directory,    cfg.tdlib.api_id + "_" + phoneSan).toString();
+
         // 1) Создать каталоги БД/файлов TDLib
         Files.createDirectories(Path.of(cfg.tdlib.database_directory));
         Files.createDirectories(Path.of(cfg.tdlib.files_directory));
@@ -65,8 +70,8 @@ public class App {
 
                 // 6) Авторизация
                 AuthFlow auth = new AuthFlow(client, cfg);
-                auth.wireInto(router); // подписать обработчики шагов авторизации
-                auth.authorizeBlocking(); // пройти все состояния
+                auth.wireInto(router);      // подписать обработчики шагов авторизации
+                auth.authorizeBlocking();   // пройти все состояния
 
                 // 7) Компиляция паттернов
                 int flags = cfg.case_insensitive ? Pattern.CASE_INSENSITIVE : 0;
@@ -126,7 +131,7 @@ public class App {
                     o.put("offset", 0);
                     o.put("limit", 1);
                     o.put("only_local", false);
-                    client.request(o);
+                    client.request(o, TdJsonClient.Channel.HISTORY);
                 }
 
                 log.info("Ready. Listening...");
