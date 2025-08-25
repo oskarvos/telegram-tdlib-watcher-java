@@ -139,17 +139,47 @@ public class AuthFlow {
     private static void sleep(long ms) { try { Thread.sleep(ms); } catch (InterruptedException ignored) {} }
 
     private static String readValue(String prompt, boolean secret, String... keys) {
-        String v = EnvVars.get(keys);
-        if (v != null) { System.out.println(prompt + " [value from env/sysprop]"); return v; }
+        String envVal = EnvVars.get(keys);
+
+        // 1) Есть реальная консоль — позволяем перебить ENV ручным вводом
         Console cons = System.console();
-        if (cons != null) return secret ? new String(cons.readPassword(prompt)) : cons.readLine(prompt);
-        System.out.print(prompt);
-        try (java.util.Scanner sc = new java.util.Scanner(System.in)) {
-            if (sc.hasNextLine()) return sc.nextLine();
-            throw new IllegalStateException("STDIN is not interactive (EOF).");
-        } catch (NoSuchElementException e) {
-            throw new IllegalStateException(
-                    "No input available on STDIN. Provide value via env/sysprop or use real TTY (--console=plain).", e);
+        if (cons != null) {
+            if (envVal != null) {
+                String full = prompt + " [value from env/sysprop; press Enter to use it or type a new one]: ";
+                if (secret) {
+                    char[] in = cons.readPassword(full);
+                    String s = (in == null) ? "" : new String(in).trim();
+                    return s.isEmpty() ? envVal : s;
+                } else {
+                    String s = cons.readLine(full);
+                    return (s == null || s.isBlank()) ? envVal : s.trim();
+                }
+            } else {
+                return secret ? new String(cons.readPassword(prompt)) : cons.readLine(prompt);
+            }
         }
+
+        // 2) Консоли нет (частый случай в Gradle). Тоже ждём ввод из STDIN.
+        //    Если введено пусто — используем ENV (если он есть).
+        String hint = (envVal != null)
+                ? " [value from env/sysprop; press Enter to use it or type a new one]: "
+                : "";
+        System.out.print(prompt + hint);
+
+        java.util.Scanner sc = new java.util.Scanner(System.in); // не закрываем System.in
+        if (sc.hasNextLine()) {
+            String line = sc.nextLine();
+            String s = (line == null) ? "" : line.trim();
+            if (s.isEmpty()) {
+                if (envVal != null) {
+                    System.out.println("(using value from env/sysprop)");
+                    return envVal;
+                }
+                throw new IllegalStateException("Empty input and no env/sysprop value available.");
+            }
+            return s;
+        }
+        throw new IllegalStateException(
+                "No input available on STDIN. Provide value via env/system property or run in a real terminal (e.g. `--console=plain`).");
     }
 }
