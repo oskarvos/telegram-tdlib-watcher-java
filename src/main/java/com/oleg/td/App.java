@@ -31,7 +31,7 @@ public class App {
         // ★ Развести каталоги TDLib по api_id+телефон — чтобы не провоцировать re-auth и 429
         String phoneSan = (cfg.auth != null && cfg.auth.phone != null) ? cfg.auth.phone.replaceAll("\\D", "") : "unknown";
         cfg.tdlib.database_directory = Path.of(cfg.tdlib.database_directory, cfg.tdlib.api_id + "_" + phoneSan).toString();
-        cfg.tdlib.files_directory    = Path.of(cfg.tdlib.files_directory,    cfg.tdlib.api_id + "_" + phoneSan).toString();
+        cfg.tdlib.files_directory = Path.of(cfg.tdlib.files_directory, cfg.tdlib.api_id + "_" + phoneSan).toString();
 
         // 1) Создать каталоги БД/файлов TDLib
         Files.createDirectories(Path.of(cfg.tdlib.database_directory));
@@ -90,13 +90,13 @@ public class App {
                 log.info("Watching {} chats: {}", chatIds.size(), chatIds);
 
                 // 9.1) SQLite
-                String dbPath = Path.of(cfg.tdlib.database_directory).resolve("messages.sqlite").toString();
-                Database db = new Database(dbPath);
+                DatabaseRouter dbRouter = new DatabaseRouter(Path.of(cfg.tdlib.database_directory), titleRegistry);
 
                 // 9.2) Кэш пользователей + логгер
                 UserDirectory userDirectory = new UserDirectory(client);
                 MediaDownloader mediaDownloader = new MediaDownloader(client);
-                MessageLogger messageLogger = new MessageLogger(db, userDirectory, titleRegistry, mediaDownloader);
+                MessageLogger messageLogger = new MessageLogger(
+                        dbRouter, userDirectory, titleRegistry, mediaDownloader, Path.of(cfg.tdlib.files_directory));
                 messageLogger.setAllowedChats(chatIds);
 
                 // 9.3) Дампер истории
@@ -110,17 +110,21 @@ public class App {
 
                 // ★ Автоматический дамп при первом подключении ★
                 for (Long chatId : chatIds) {
-                    if (!db.isChatBootstrapped(chatId)) {
+                    Database dbForChat = dbRouter.forChat(chatId);   // ← берём БД конкретного чата
+                    if (!dbForChat.isChatBootstrapped(chatId)) {
                         log.info("First-time bootstrap dump for chat {}", chatId);
                         messageLogger.enableCapture(chatId);
                         dumper.onPatternMatch(chatId);
-                        db.markChatBootstrapped(chatId);
+                        dbForChat.markChatBootstrapped(chatId);
                     }
                 }
 
                 // 9.5) Закрытие БД на выходе
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                    try { db.close(); } catch (Exception ignored) {}
+                    try {
+                        dbRouter.close();
+                    } catch (Exception ignored) {
+                    }
                 }, "db-shutdown"));
 
                 // небольшой «проброс» истории (как было)
