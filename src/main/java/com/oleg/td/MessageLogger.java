@@ -67,7 +67,7 @@ public class MessageLogger {
         Database db = dbRouter.forChat(chatId);
 
         long messageId = m.path("id").asLong();
-        long dateUnix = m.path("date").asLong(0);
+        long dateUnix  = m.path("date").asLong(0);
         String chatTitle = titles.titleOf(chatId);
 
         // отправитель

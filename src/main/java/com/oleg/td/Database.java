@@ -60,107 +60,70 @@ public class Database implements Closeable {
     // ---------- messages ----------
     private void migrateMessagesIfNeeded() {
         boolean exists = tableExists("messages");
+
+        // 1) Нет таблицы — создаём СРАЗУ новую схему (с message_id)
         if (!exists) {
             try (Statement st = conn.createStatement()) {
                 st.execute("""
                     CREATE TABLE IF NOT EXISTS messages(
-                        id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                        chat_id          INTEGER NOT NULL,
-                        chat_title       TEXT,
-                        msg_date         TEXT NOT NULL,      -- dd-MM-yyyy
-                        msg_time         TEXT NOT NULL,      -- HH:mm:ss
-                        sender_user_id   INTEGER,
-                        sender_username  TEXT,
-                        sender_phone     TEXT,
-                        sender_name      TEXT,
-                        text             TEXT
+                        chat_id         INTEGER NOT NULL,
+                        message_id      INTEGER NOT NULL,
+                        chat_title      TEXT,
+                        msg_date        TEXT NOT NULL,  -- dd-MM-yyyy
+                        msg_time        TEXT NOT NULL,  -- HH:mm:ss
+                        sender_user_id  INTEGER,
+                        sender_username TEXT,
+                        sender_phone    TEXT,
+                        sender_name     TEXT,
+                        text            TEXT,
+                        PRIMARY KEY(chat_id, message_id)
                     )
                 """);
                 st.execute("CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_id, msg_date, msg_time)");
-                st.execute("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS uq_messages_dedup
-                    ON messages(chat_id, msg_date, msg_time, COALESCE(sender_user_id, -1), COALESCE(text, ''))
-                """);
             } catch (SQLException e) {
                 throw new RuntimeException("Create messages failed", e);
             }
             return;
         }
 
+        // 2) Таблица есть — проверяем наличие message_id
         Set<String> cols = columnsOf("messages");
-        boolean need =
-                cols.contains("message_id") || cols.contains("sent_at_unix")
-                        || !cols.contains("msg_date") || !cols.contains("msg_time");
+        boolean needMigration = !cols.contains("message_id");
 
-        if (!need) {
+        if (!needMigration) {
+            // Таблица уже в новой схеме — убедимся, что индекс есть.
             try (Statement st = conn.createStatement()) {
                 st.execute("CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_id, msg_date, msg_time)");
-                st.execute("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS uq_messages_dedup
-                    ON messages(chat_id, msg_date, msg_time, COALESCE(sender_user_id, -1), COALESCE(text, ''))
-                """);
             } catch (SQLException e) {
                 throw new RuntimeException("Ensure messages indexes failed", e);
             }
             return;
         }
 
+        // 3) Миграция: старую таблицу переименовываем, создаём новую, удаляем старую.
         try (Statement st = conn.createStatement()) {
             st.execute("BEGIN");
-            st.execute("""
-                CREATE TABLE IF NOT EXISTS messages_new(
-                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                    chat_id          INTEGER NOT NULL,
-                    chat_title       TEXT,
-                    msg_date         TEXT NOT NULL,
-                    msg_time         TEXT NOT NULL,
-                    sender_user_id   INTEGER,
-                    sender_username  TEXT,
-                    sender_phone     TEXT,
-                    sender_name      TEXT,
-                    text             TEXT
-                )
-            """);
-
-            if (cols.contains("sent_at_unix")) {
-                st.execute("""
-                    INSERT INTO messages_new(id, chat_id, chat_title, msg_date, msg_time,
-                                             sender_user_id, sender_username, sender_phone, sender_name, text)
-                    SELECT id, chat_id, chat_title,
-                           strftime('%d-%m-%Y', sent_at_unix, 'unixepoch'),
-                           strftime('%H:%M:%S', sent_at_unix, 'unixepoch'),
-                           sender_user_id, sender_username, sender_phone, sender_name, text
-                    FROM messages
-                """);
-            } else {
-                st.execute("""
-                    INSERT INTO messages_new(id, chat_id, chat_title, msg_date, msg_time,
-                                             sender_user_id, sender_username, sender_phone, sender_name, text)
-                    SELECT id, chat_id, chat_title,
-                           strftime('%d-%m-%Y','now'),
-                           strftime('%H:%M:%S','now'),
-                           sender_user_id, sender_username, sender_phone, sender_name, text
-                    FROM messages
-                """);
-            }
+            st.execute("ALTER TABLE messages RENAME TO messages_old");
 
             st.execute("""
-                DELETE FROM messages_new
-                WHERE rowid NOT IN (
-                    SELECT MIN(rowid) FROM messages_new
-                    GROUP BY chat_id, msg_date, msg_time,
-                             COALESCE(sender_user_id, -1),
-                             COALESCE(text, '')
+                CREATE TABLE messages(
+                    chat_id         INTEGER NOT NULL,
+                    message_id      INTEGER NOT NULL,
+                    chat_title      TEXT,
+                    msg_date        TEXT NOT NULL,
+                    msg_time        TEXT NOT NULL,
+                    sender_user_id  INTEGER,
+                    sender_username TEXT,
+                    sender_phone    TEXT,
+                    sender_name     TEXT,
+                    text            TEXT,
+                    PRIMARY KEY(chat_id, message_id)
                 )
             """);
-
-            st.execute("DROP TABLE messages");
-            st.execute("ALTER TABLE messages_new RENAME TO messages");
             st.execute("CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_id, msg_date, msg_time)");
-            st.execute("""
-                CREATE UNIQUE INDEX IF NOT EXISTS uq_messages_dedup
-                ON messages(chat_id, msg_date, msg_time, COALESCE(sender_user_id, -1), COALESCE(text, ''))
-            """);
+
+            // Переносить старые строки корректно нельзя (нет message_id). Просто очищаем схему.
+            st.execute("DROP TABLE messages_old");
             st.execute("COMMIT");
         } catch (SQLException e) {
             try { conn.createStatement().execute("ROLLBACK"); } catch (SQLException ignored) {}
@@ -444,20 +407,22 @@ public class Database implements Closeable {
                 : TIME_FMT.format(Instant.now());
 
         String sql = """
-            INSERT OR IGNORE INTO messages(chat_id, chat_title, msg_date, msg_time,
-                                           sender_user_id, sender_username, sender_phone, sender_name, text)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """;
+            INSERT OR IGNORE INTO messages(
+                chat_id, message_id, chat_title, msg_date, msg_time,
+                sender_user_id, sender_username, sender_phone, sender_name, text
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, chatId);
-            ps.setString(2, chatTitle);
-            ps.setString(3, msgDate);
-            ps.setString(4, msgTime);
-            if (senderUserId == null) ps.setNull(5, Types.BIGINT); else ps.setLong(5, senderUserId);
-            ps.setString(6, senderUsername);
-            ps.setString(7, senderPhone);
-            ps.setString(8, senderName);
-            ps.setString(9, text);
+            ps.setLong(2, messageId);
+            ps.setString(3, chatTitle);
+            ps.setString(4, msgDate);
+            ps.setString(5, msgTime);
+            if (senderUserId == null) ps.setNull(6, Types.BIGINT); else ps.setLong(6, senderUserId);
+            ps.setString(7, senderUsername);
+            ps.setString(8, senderPhone);
+            ps.setString(9, senderName);
+            ps.setString(10, text);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("SQLite insert message failed", e);
@@ -484,7 +449,7 @@ public class Database implements Closeable {
         String sql = """
             INSERT OR IGNORE INTO media(chat_id, media_date, media_time, sender_name, kind, local_path, file_size)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-            """;
+        """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, chatId);
             ps.setString(2, mediaDate);
@@ -508,7 +473,7 @@ public class Database implements Closeable {
         String sql = """
             INSERT OR IGNORE INTO links(chat_id, link_date, link_time, sender_name, url)
             VALUES (?, ?, ?, ?, ?)
-            """;
+        """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, chatId);
             ps.setString(2, linkDate);
@@ -535,7 +500,7 @@ public class Database implements Closeable {
                 sender_username=excluded.sender_username,
                 sender_phone=excluded.sender_phone,
                 sender_name=excluded.sender_name
-            """;
+        """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, chatId);
             ps.setLong(2, messageId);

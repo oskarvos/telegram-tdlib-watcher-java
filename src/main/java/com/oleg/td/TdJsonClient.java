@@ -37,7 +37,7 @@ public class TdJsonClient implements Closeable {
     /** Токен-бакеты на каналы (без фанатизма, но безопасно). */
     private final RateLimiter rlGeneral  = new RateLimiter(15.0, 30.0); // 15 rps, burst 30
     private final RateLimiter rlAuth     = new RateLimiter( 1.0,  2.0); // авторизация — аккуратно
-    private final RateLimiter rlHistory  = new RateLimiter( 8.0, 16.0); // история чатов
+    private final RateLimiter rlHistory  = new RateLimiter( 4.0, 8.0); // история чатов
     private final RateLimiter rlDownload = new RateLimiter( 4.0,  8.0); // загрузки
 
     public TdJsonClient(TDLib lib) {
