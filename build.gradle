@@ -1,20 +1,24 @@
 plugins {
-    id 'java'; id 'application'
+    id 'java'
+    id 'application'
 }
 
-group = 'com.oleg.td'; version = '1.0.4-debug'
+group = 'com.oleg.td'
+version = '1.0.4-debug'
 
-repositories {
-    mavenCentral()
-}
+repositories { mavenCentral() }
+
 dependencies {
     implementation 'net.java.dev.jna:jna:5.14.0'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.1'
     implementation 'org.slf4j:slf4j-simple:2.0.13'
     implementation 'org.xerial:sqlite-jdbc:3.46.0.0'
+    implementation 'io.javalin:javalin:6.6.0'
+    // (Thymeleaf подключим на 2-м шаге; пока можно обойтись простым HTML)
 }
+
 application {
-    mainClass = 'com.oleg.td.App'
+    mainClass = 'com.oleg.td.WebApp'
 }
 
 tasks.named('run', JavaExec) {
