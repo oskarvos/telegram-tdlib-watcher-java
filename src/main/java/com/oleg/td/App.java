@@ -110,12 +110,17 @@ public class App {
 
                 // ★ Автоматический дамп при первом подключении ★
                 for (Long chatId : chatIds) {
-                    Database dbForChat = dbRouter.forChat(chatId);   // ← берём БД конкретного чата
+                    Database dbForChat = dbRouter.forChat(chatId);
                     if (!dbForChat.isChatBootstrapped(chatId)) {
                         log.info("First-time bootstrap dump for chat {}", chatId);
                         messageLogger.enableCapture(chatId);
-                        dumper.onPatternMatch(chatId);
-                        dbForChat.markChatBootstrapped(chatId);
+                        boolean ok = dumper.dumpWholeChatSync(chatId);   // ← синхронно и с результатом
+                        if (ok) {
+                            dbForChat.markChatBootstrapped(chatId);
+                            log.info("Bootstrap dump finished for chat {}", chatId);
+                        } else {
+                            log.warn("Bootstrap dump did NOT finish to the bottom for chat {}. Will retry on next start.", chatId);
+                        }
                     }
                 }
 
