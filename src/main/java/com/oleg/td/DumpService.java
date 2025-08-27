@@ -29,16 +29,26 @@ public class DumpService {
         }
         running.set(true);
         progress = 0;
-        new Thread(() -> {
-            try {
-                authFlow.authorize();
-                coordinator.dumpChats(request, this::incrementProgress);
-            } catch (Exception e) {
-                log.error("Dump failed", e);
-            } finally {
-                running.set(false);
+
+        try {
+            // Настраиваем обработчики авторизации
+            authFlow.wireInto();
+
+            // Запускаем авторизацию в текущем потоке
+            authFlow.authorizeBlocking();
+
+            if (!authFlow.isAuthorized()) {
+                log.error("Authorization failed");
+                return;
             }
-        }).start();
+
+            // После успешной авторизации начинаем дамп
+            coordinator.dumpChats(request, this::incrementProgress);
+        } catch (Exception e) {
+            log.error("Dump failed", e);
+        } finally {
+            running.set(false);
+        }
     }
 
     public void stopDump() {
