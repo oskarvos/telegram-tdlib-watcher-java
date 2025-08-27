@@ -27,23 +27,34 @@ public class AuthFlow {
      * Подписывает обработчики апдейтов, чтобы ловить состояния авторизации.
      */
     public void wireInto() {
-        if (wired) return;
+        if (wired) {
+            System.out.println("AuthFlow already wired");
+            return;
+        }
+
+        System.out.println("Wiring AuthFlow into UpdateRouter...");
 
         router.add(n -> {
             String type = n.path("@type").asText();
+            System.out.println("Received update: " + type);
+
             if ("updateAuthorizationState".equals(type)) {
                 String state = n.path("authorization_state").path("@type").asText();
+                System.out.println("Authorization state update: " + state);
                 stateRef.set(state);
-                System.out.println("Authorization state: " + state);
 
                 if ("authorizationStateReady".equals(state)) {
                     authorized.set(true);
+                    System.out.println("Authorized successfully!");
                 } else if ("authorizationStateClosed".equals(state)) {
                     authorized.set(false);
+                    System.out.println("Authorization closed");
                 }
             }
         });
+
         wired = true;
+        System.out.println("AuthFlow wired successfully");
     }
 
     /**
@@ -51,10 +62,10 @@ public class AuthFlow {
      */
     public void authorizeBlocking() {
         if (!wired) {
-            throw new IllegalStateException("AuthFlow not wired. Call wireInto() first.");
+            throw new IllegalStateException("AuthFlow не инициализирован. Сначала вызовите wireInto()");
         }
 
-        System.out.println("Starting authorization process...");
+        System.out.println("Начало процесса авторизации...");
 
         // Запрашиваем текущее состояние авторизации
         client.send(Utils.obj("getAuthorizationState"), TdJsonClient.Channel.AUTH);
@@ -67,7 +78,7 @@ public class AuthFlow {
             String state = stateRef.get();
 
             if (state == null) {
-                System.out.println("Waiting for authorization state...");
+                System.out.println("Ожидание состояния авторизации...");
                 sleep(500);
                 continue;
             }
@@ -77,7 +88,7 @@ public class AuthFlow {
                 continue;
             }
 
-            System.out.println("Processing authorization state: " + state);
+            System.out.println("Обработка состояния авторизации: " + state);
 
             try {
                 switch (state) {
@@ -95,22 +106,22 @@ public class AuthFlow {
                         break;
                     case "authorizationStateReady":
                         authorized.set(true);
-                        System.out.println("Authorization completed successfully!");
+                        System.out.println("Авторизация успешно завершена!");
                         break;
                     case "authorizationStateClosed":
-                        System.err.println("Authorization closed by TDLib");
-                        throw new RuntimeException("Authorization closed");
+                        System.err.println("Авторизация закрыта TDLib");
+                        throw new RuntimeException("Авторизация закрыта");
                     case "authorizationStateLoggingOut":
-                        System.err.println("Logging out");
-                        throw new RuntimeException("Logging out");
+                        System.err.println("Выход из системы");
+                        throw new RuntimeException("Выход из системы");
                     default:
-                        System.out.println("Waiting in state: " + state);
+                        System.out.println("Ожидание в состоянии: " + state);
                         sleep(1000);
                         break;
                 }
             } catch (Exception e) {
-                System.err.println("Error processing state " + state + ": " + e.getMessage());
-                throw new RuntimeException("Authorization failed in state: " + state, e);
+                System.err.println("Ошибка обработки состояния " + state + ": " + e.getMessage());
+                throw new RuntimeException("Ошибка авторизации в состоянии: " + state, e);
             }
 
             last = state;
@@ -118,7 +129,7 @@ public class AuthFlow {
         }
 
         if (!authorized.get()) {
-            throw new RuntimeException("Authorization timeout after " + timeout + "ms");
+            throw new RuntimeException("Таймаут авторизации после " + timeout + "мс");
         }
     }
 

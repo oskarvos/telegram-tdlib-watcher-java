@@ -1,98 +1,92 @@
 package com.oleg.td;
 
+import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
+import java.util.List;
+
 @Component
+@ConfigurationProperties(prefix = "td")
 public class Config {
-    private final Tdlib tdlib = new Tdlib();
-    private final Auth auth = new Auth();
-    private final String botUsername = System.getProperty(
-            "td.bot_username", System.getenv().getOrDefault("TG_BOT_USERNAME", null));
-    private final String welcomeMessage = System.getProperty(
-            "td.welcome_message", System.getenv().getOrDefault("TG_WELCOME_MESSAGE", null));
 
-    public Tdlib getTdlib() {
-        return tdlib;
-    }
+    private Tdlib tdlib = new Tdlib();
+    private Auth auth = new Auth();
+    private String groups;
+    private String libPath;
+    private String botUsername;
+    private String welcomeMessage;
 
-    public Auth getAuth() {
-        return auth;
-    }
+    // Геттеры и сеттеры для основных полей
+    public Tdlib getTdlib() { return tdlib; }
+    public void setTdlib(Tdlib tdlib) { this.tdlib = tdlib; }
 
-    public String getBotUsername() {
-        return botUsername;
-    }
+    public Auth getAuth() { return auth; }
+    public void setAuth(Auth auth) { this.auth = auth; }
 
-    public String getWelcomeMessage() {
-        return welcomeMessage;
+    public List<String> getGroups() {
+        return groups == null || groups.isEmpty() ? List.of() : Arrays.asList(groups.split(","));
     }
+    public void setGroups(String groups) { this.groups = groups; }
+
+    public String getLibPath() { return libPath; }
+    public void setLibPath(String libPath) { this.libPath = libPath; }
+
+    public String getBotUsername() { return botUsername; }
+    public void setBotUsername(String botUsername) { this.botUsername = botUsername; }
+
+    public String getWelcomeMessage() { return welcomeMessage; }
+    public void setWelcomeMessage(String welcomeMessage) { this.welcomeMessage = welcomeMessage; }
 
     public static class Tdlib {
-        private final int apiId = Integer.parseInt(
-                System.getProperty("td.api_id", System.getenv().getOrDefault("TD_API_ID", "0")));
-        private final String apiHash = System.getProperty(
-                "td.api_hash", System.getenv().getOrDefault("TD_API_HASH", ""));
-        private final String systemLanguageCode = System.getProperty(
-                "td.system_language_code", System.getenv().getOrDefault("TD_SYSTEM_LANGUAGE_CODE", "en"));
-        private final String deviceModel = System.getProperty(
-                "td.device_model", System.getenv().getOrDefault("TD_DEVICE_MODEL", "Java"));
-        private final String systemVersion = System.getProperty(
-                "td.system_version", System.getProperty("os.name") + " " + System.getProperty("os.version", ""));
-        private final String applicationVersion = System.getProperty(
-                "td.application_version", System.getenv().getOrDefault("TD_APPLICATION_VERSION", "1.0.4-debug"));
-        private final String databaseDirectory = System.getProperty(
-                "td.database_directory", System.getenv().getOrDefault("TD_DATABASE_DIRECTORY", "tdlib"));
-        private final String filesDirectory = System.getProperty(
-                "td.files_directory", System.getenv().getOrDefault("TD_FILES_DIRECTORY", "tdlib/files"));
+        private int apiId;
+        private String apiHash;
+        private String databaseDirectory = "tdlib";
+        private String filesDirectory = "tdlib/files";
+        private String systemLanguageCode = "en";
+        private String deviceModel = "Java";
+        private String systemVersion;
+        private String applicationVersion = "1.0";
 
-        public int getApiId() {
-            return apiId;
-        }
+        // Геттеры и сеттеры
+        public int getApiId() { return apiId; }
+        public void setApiId(int apiId) { this.apiId = apiId; }
 
-        public String getApiHash() {
-            return apiHash;
-        }
+        public String getApiHash() { return apiHash; }
+        public void setApiHash(String apiHash) { this.apiHash = apiHash; }
 
-        public String getSystemLanguageCode() {
-            return systemLanguageCode;
-        }
+        public String getDatabaseDirectory() { return databaseDirectory; }
+        public void setDatabaseDirectory(String databaseDirectory) { this.databaseDirectory = databaseDirectory; }
 
-        public String getDeviceModel() {
-            return deviceModel;
-        }
+        public String getFilesDirectory() { return filesDirectory; }
+        public void setFilesDirectory(String filesDirectory) { this.filesDirectory = filesDirectory; }
 
-        public String getSystemVersion() {
-            return systemVersion;
-        }
+        public String getSystemLanguageCode() { return systemLanguageCode; }
+        public void setSystemLanguageCode(String systemLanguageCode) { this.systemLanguageCode = systemLanguageCode; }
 
-        public String getApplicationVersion() {
-            return applicationVersion;
-        }
+        public String getDeviceModel() { return deviceModel; }
+        public void setDeviceModel(String deviceModel) { this.deviceModel = deviceModel; }
 
-        public String getDatabaseDirectory() {
-            return databaseDirectory;
-        }
+        public String getSystemVersion() { return systemVersion; }
+        public void setSystemVersion(String systemVersion) { this.systemVersion = systemVersion; }
 
-        public String getFilesDirectory() {
-            return filesDirectory;
-        }
+        public String getApplicationVersion() { return applicationVersion; }
+        public void setApplicationVersion(String applicationVersion) { this.applicationVersion = applicationVersion; }
     }
 
     public static class Auth {
-        private final String phone = System.getProperty("td.auth.phone", System.getenv().getOrDefault("TG_PHONE", null));
-        private final String code = System.getProperty("td.auth.code", System.getenv().getOrDefault("TG_CODE", null));
-        private final String pass = System.getProperty("td.auth.pass", System.getenv().getOrDefault("TG_PASS", null));
+        private String phone;
+        private String code;
+        private String pass;
 
-        public String getPhone() {
-            return phone;
-        }
+        // Геттеры и сеттеры
+        public String getPhone() { return phone; }
+        public void setPhone(String phone) { this.phone = phone; }
 
-        public String getCode() {
-            return code;
-        }
+        public String getCode() { return code; }
+        public void setCode(String code) { this.code = code; }
 
-        public String getPass() {
-            return pass;
-        }
+        public String getPass() { return pass; }
+        public void setPass(String pass) { this.pass = pass; }
     }
 }

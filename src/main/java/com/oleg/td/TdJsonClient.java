@@ -26,7 +26,6 @@ public class TdJsonClient {
     public enum Channel { AUTH, MAIN }
 
     private interface TdLib extends Library {
-        TdLib INSTANCE = Native.load("tdjson", TdLib.class);
         Pointer td_json_client_create();
         void td_json_client_send(Pointer client, String request);
         String td_json_client_receive(Pointer client, double timeout);
@@ -34,15 +33,31 @@ public class TdJsonClient {
     }
 
     private final UpdateRouter router;
+    private final Config config;
     private final AtomicLong extraId = new AtomicLong();
-    private final Pointer client = TdLib.INSTANCE.td_json_client_create();
+    private final Pointer client;
+    private final TdLib tdLib;
 
-    public TdJsonClient(@Lazy UpdateRouter router) {
+    public TdJsonClient(@Lazy UpdateRouter router, Config config) {
         this.router = router;
+        this.config = config;
+
+        // Инициализация TDLib
+        String libPath = config.getLibPath();
+        if (libPath != null && !libPath.isEmpty()) {
+            log.info("Загрузка TDLib из: {}", libPath);
+            this.tdLib = Native.load(libPath, TdLib.class);
+        } else {
+            log.info("Загрузка TDLib по умолчанию");
+            this.tdLib = Native.load("tdjson", TdLib.class);
+        }
+
+        this.client = tdLib.td_json_client_create();
+        log.info("TDLib клиент создан успешно");
     }
 
     public void send(String request) {
-        TdLib.INSTANCE.td_json_client_send(client, request);
+        tdLib.td_json_client_send(client, request);
     }
 
     public void send(String request, Channel channel) {
@@ -125,10 +140,11 @@ public class TdJsonClient {
     }
 
     public String receive(double timeout) {
-        return TdLib.INSTANCE.td_json_client_receive(client, timeout);
+        return tdLib.td_json_client_receive(client, timeout);
     }
 
     public void close() {
-        TdLib.INSTANCE.td_json_client_destroy(client);
+        tdLib.td_json_client_destroy(client);
+        log.info("TDLib клиент закрыт");
     }
 }
