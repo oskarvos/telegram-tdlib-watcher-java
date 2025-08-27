@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8"/>
+    <title>TDLib Chat Dump</title>
+    <style>
+        #progress {
+            width: 100px;
+            height: 20px;
+            background-color: red;
+        }
+        #progress.green {
+            background-color: green;
+        }
+    </style>
+</head>
+<body>
+<h1>TDLib Chat Dump</h1>
+<textarea id="chats" placeholder="Chat links or IDs, one per line"></textarea><br/>
+<label><input type="checkbox" id="photos"/> Photos</label>
+<label><input type="checkbox" id="videos"/> Videos</label>
+<label><input type="checkbox" id="links"/> Links</label>
+<label><input type="checkbox" id="messages"/> Messages</label><br/>
+<button onclick="startDump()">Start</button>
+<button onclick="stopDump()">Stop</button>
+<div id="progress"></div>
+<script>
+    async function startDump() {
+        const chats = document.getElementById('chats').value.split(/\n+/);
+        const request = {
+            chats: chats,
+            photos: document.getElementById('photos').checked,
+            videos: document.getElementById('videos').checked,
+            links: document.getElementById('links').checked,
+            messages: document.getElementById('messages').checked
+        };
+        document.getElementById('progress').classList.remove('green');
+        await fetch('/start', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(request)
+        });
+        poll();
+    }
+    async function stopDump() {
+        await fetch('/stop', {method: 'POST'});
+    }
+    async function poll() {
+        const res = await fetch('/progress');
+        const data = await res.json();
+        const progress = document.getElementById('progress');
+        if (data.running) {
+            progress.classList.remove('green');
+            setTimeout(poll, 1000);
+        } else {
+            progress.classList.add('green');
+        }
+    }
+</script>
+</body>
+</html>
