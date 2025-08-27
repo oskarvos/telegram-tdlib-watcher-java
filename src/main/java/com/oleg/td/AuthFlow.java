@@ -1,191 +1,117 @@
 package com.oleg.td;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.Console;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
+import java.io.IOException;
 
+/**
+ * Handles interactive authorization with TDLib.
+ */
 @Component
 public class AuthFlow {
+    private static final Logger log = LoggerFactory.getLogger(AuthFlow.class);
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     private final TdJsonClient client;
-    private final Config cfg;
 
-    private final AtomicBoolean authorized = new AtomicBoolean(false);
-    private final AtomicReference<String> stateRef = new AtomicReference<>(null);
-
-    public AuthFlow(TdJsonClient client, Config cfg) {
+    public AuthFlow(TdJsonClient client) {
         this.client = client;
-        this.cfg = cfg;
     }
 
-    public void wireInto(UpdateRouter router) {
-        router.add(n -> {
-            String type = n.path("@type").asText();
-            if ("updateAuthorizationState".equals(type)) {
-                String s = n.path("authorization_state").path("@type").asText();
-                System.out.println("AUTH DEBUG: state = " + s);
-                stateRef.set(s);
-                if ("authorizationStateReady".equals(s)) authorized.set(true);
-            } else if (type.startsWith("authorizationState")) {
-                String s = n.path("@type").asText();
-                System.out.println("AUTH DEBUG: state = " + s);
-                stateRef.set(s);
-                if ("authorizationStateReady".equals(s)) authorized.set(true);
-            }
-        });
-    }
-
-    public void authorizeBlocking() {
+    /**
+     * Runs authorization flow using environment variables and console input.
+     */
+    public void authorize() {
+        log.info("Запрос состояния авторизации");
         client.send(Utils.obj("getAuthorizationState"), TdJsonClient.Channel.AUTH);
-
-        String last = null;
-        while (!authorized.get()) {
-            String s = stateRef.get();
-            if (s == null || s.equals(last)) {
-                sleep(100);
+        while (true) {
+            String updateStr = client.receive(60);
+            if (updateStr == null) {
                 continue;
             }
-
-            switch (s) {
-                case "authorizationStateWaitTdlibParameters" -> sendTdParams();
-                case "authorizationStateWaitPhoneNumber" -> sendPhoneLimited();
-                case "authorizationStateWaitCode" -> sendCodeLimited();
-                case "authorizationStateWaitPassword" -> sendPassword();
-                case "authorizationStateReady" -> {
-                    authorized.set(true);
-                    System.out.println("Authorization completed.");
+            try {
+                JsonNode update = MAPPER.readTree(updateStr);
+                String type = update.path("@type").asText();
+                if (!"updateAuthorizationState".equals(type)) {
+                    continue;
                 }
-                case "authorizationStateClosed" -> System.err.println("Authorization closed.");
-                default -> {
+                String state = update.path("authorization_state").path("@type").asText();
+                log.info("Состояние авторизации: {}", state);
+                switch (state) {
+                    case "authorizationStateWaitPhoneNumber" -> handlePhoneNumber();
+                    case "authorizationStateWaitCode" -> handleCode();
+                    case "authorizationStateWaitPassword" -> handlePassword();
+                    case "authorizationStateReady" -> {
+                        log.info("Авторизация завершена");
+                        return;
+                    }
+                    default -> {
+                        // ignore other states
+                    }
                 }
+            } catch (IOException e) {
+                log.error("Не удалось разобрать ответ TDLib", e);
             }
-            last = s;
         }
     }
 
-    private void sendTdParams() {
-        ObjectNode p = Utils.obj("setTdlibParameters");
-        p.put("use_test_dc", false);
-        p.put("database_directory", cfg.getTdlib().getDatabaseDirectory());
-        p.put("files_directory", cfg.getTdlib().getFilesDirectory());
-        p.put("use_file_database", true);
-        p.put("use_chat_info_database", true);
-        p.put("use_message_database", true);
-        p.put("use_secret_chats", false);
-        p.put("api_id", cfg.getTdlib().getApiId());
-        p.put("api_hash", cfg.getTdlib().getApiHash());
-        p.put("system_language_code", cfg.getTdlib().getSystemLanguageCode());
-        p.put("device_model", cfg.getTdlib().getDeviceModel());
-        p.put("system_version", cfg.getTdlib().getSystemVersion());
-        p.put("application_version", cfg.getTdlib().getApplicationVersion());
-        p.put("enable_storage_optimizer", true);
-        p.put("ignore_file_names", true);
-        p.put("database_encryption_key", "");
-        System.out.println("DEBUG setTdlibParameters JSON --> " + p);
-        client.send(p, TdJsonClient.Channel.AUTH);
-    }
-
-    private void sendPhoneLimited() {
-        String phone = cfg.getAuth().getPhone() != null && !cfg.getAuth().getPhone().isBlank()
-                ? cfg.getAuth().getPhone().trim()
-                : readValue("Enter phone number (+xxxxxxxxxxx): ", false,
-                "TG_PHONE", "TELEGRAM_PHONE", "telegram.phone");
-
-        ObjectNode r = Utils.obj("setAuthenticationPhoneNumber");
-        r.put("phone_number", phone);
-
-        ObjectNode settings = r.putObject("settings");
-        settings.put("@type", "phoneNumberAuthenticationSettings");
-        settings.put("allow_flash_call", false);
-        settings.put("is_current_phone_number", true);
-        settings.put("allow_sms_retriever_api", false);
-
-        var resp = client.requestWithFloodWaitSyncLimited(r, 60, TdJsonClient.Channel.AUTH);
-        if ("error".equals(resp.path("@type").asText())) {
-            System.err.printf("AUTH ERROR on phone: code=%d msg=%s%n",
-                    resp.path("code").asInt(), resp.path("message").asText());
-        } else {
-            System.out.println("AUTH DEBUG: phone submitted");
+    private void handlePhoneNumber() {
+        String phone = System.getenv("TG_PHONE");
+        if (phone == null || phone.isBlank()) {
+            phone = System.getenv("TELEGRAM_PHONE");
         }
-    }
-
-    private void sendCodeLimited() {
-        String code = cfg.getAuth().getCode() != null && !cfg.getAuth().getCode().isBlank()
-                ? cfg.getAuth().getCode().trim()
-                : readValue("Enter code from Telegram: ", false,
-                "TG_CODE", "TELEGRAM_CODE", "telegram.code");
-
-        ObjectNode r = Utils.obj("checkAuthenticationCode");
-        r.put("code", code);
-
-        var resp = client.requestWithFloodWaitSyncLimited(r, 60, TdJsonClient.Channel.AUTH);
-        if ("error".equals(resp.path("@type").asText())) {
-            System.err.printf("AUTH ERROR on code: code=%d msg=%s%n",
-                    resp.path("code").asInt(), resp.path("message").asText());
-        } else {
-            System.out.println("AUTH DEBUG: code submitted");
+        if (phone == null || phone.isBlank()) {
+            throw new IllegalStateException(
+                    "Не задан номер телефона в переменных среды TG_PHONE или TELEGRAM_PHONE");
         }
+        ObjectNode req = Utils.obj("setAuthenticationPhoneNumber");
+        req.put("phone_number", phone);
+        client.send(req, TdJsonClient.Channel.AUTH);
+        log.info("Отправлен номер телефона");
     }
 
-    private void sendPassword() {
-        String pass = cfg.getAuth().getPass() != null && !cfg.getAuth().getPass().isBlank()
-                ? cfg.getAuth().getPass()
-                : readValue("Enter 2FA password: ", true,
-                "TG_PASS", "TELEGRAM_PASS", "telegram.pass");
-        ObjectNode r = Utils.obj("checkAuthenticationPassword");
-        r.put("password", pass);
-        client.send(r, TdJsonClient.Channel.AUTH);
-        System.out.println("AUTH DEBUG: 2FA password submitted");
-    }
-
-    private static void sleep(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException ignored) {
+    private void handleCode() {
+        Console console = System.console();
+        if (console == null) {
+            throw new IllegalStateException("Консоль недоступна");
         }
-    }
-
-    private static String readValue(String prompt, boolean secret, String... keys) {
-        String envVal = EnvVars.get(keys);
-
-        Console cons = System.console();
-        if (cons != null) {
-            if (envVal != null) {
-                String full = prompt + " [value from env/sysprop; press Enter to use it or type a new one]: ";
-                if (secret) {
-                    char[] in = cons.readPassword(full);
-                    String s = (in == null) ? "" : new String(in).trim();
-                    return s.isEmpty() ? envVal : s;
-                } else {
-                    String s = cons.readLine(full);
-                    return (s == null || s.isBlank()) ? envVal : s.trim();
-                }
+        while (true) {
+            String code = console.readLine("Введите код: ");
+            ObjectNode req = Utils.obj("checkAuthenticationCode");
+            req.put("code", code);
+            ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.AUTH);
+            if ("error".equals(resp.path("@type").asText())) {
+                log.warn("Неверный код: {}", resp.path("message").asText());
             } else {
-                return secret ? new String(cons.readPassword(prompt)) : cons.readLine(prompt);
+                log.info("Код принят");
+                break;
             }
         }
+    }
 
-        String hint = (envVal != null)
-                ? " [value from env/sysprop; press Enter to use it or type a new one]: "
-                : "";
-        System.out.print(prompt + hint);
-
-        java.util.Scanner sc = new java.util.Scanner(System.in); // не закрываем System.in
-        if (sc.hasNextLine()) {
-            String line = sc.nextLine();
-            String s = (line == null) ? "" : line.trim();
-            if (s.isEmpty()) {
-                if (envVal != null) {
-                    System.out.println("(using value from env/sysprop)");
-                    return envVal;
-                }
-                throw new IllegalStateException("Empty input and no env/sysprop value available.");
-            }
-            return s;
+    private void handlePassword() {
+        Console console = System.console();
+        if (console == null) {
+            throw new IllegalStateException("Консоль недоступна");
         }
-        throw new IllegalStateException(
-                "No input available on STDIN. Provide value via env/system property or run in a real terminal (e.g. `--console=plain`).");
+        while (true) {
+            char[] passChars = console.readPassword("Введите пароль: ");
+            String pass = passChars == null ? "" : new String(passChars);
+            ObjectNode req = Utils.obj("checkAuthenticationPassword");
+            req.put("password", pass);
+            ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.AUTH);
+            if ("error".equals(resp.path("@type").asText())) {
+                log.warn("Неверный пароль: {}", resp.path("message").asText());
+            } else {
+                log.info("Пароль принят");
+                break;
+            }
+        }
     }
 }

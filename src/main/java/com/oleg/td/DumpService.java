@@ -31,7 +31,7 @@ public class DumpService {
         progress = 0;
         new Thread(() -> {
             try {
-                authFlow.authorizeBlocking();
+                authFlow.authorize();
                 coordinator.dumpChats(request, this::incrementProgress);
             } catch (Exception e) {
                 log.error("Dump failed", e);
