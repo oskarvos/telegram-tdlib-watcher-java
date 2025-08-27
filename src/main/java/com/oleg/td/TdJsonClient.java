@@ -47,17 +47,26 @@ public class TdJsonClient {
     }
 
     public ObjectNode requestWithFloodWaitSyncLimited(ObjectNode req, int limit, Channel channel) {
-        int remaining = limit;
+        int remaining = Math.min(limit, 60);
         while (true) {
             send(req, channel);
             ObjectNode resp = waitForResponse();
-            if (resp == null) return MAPPER.createObjectNode();
+            if (resp == null) {
+                return MAPPER.createObjectNode();
+            }
 
             String type = resp.path("@type").asText();
             if ("error".equals(type) && resp.path("code").asInt() == 429) {
                 int waitSec = extractFloodWait(resp.path("message").asText());
-                if (waitSec <= 0 || waitSec > remaining) {
+                if (waitSec <= 0) {
                     return resp;
+                }
+                if (waitSec > remaining) {
+                    log.warn("Requested flood wait {}s exceeds remaining limit {}s; waiting only {}s", waitSec, remaining, remaining);
+                    try { Thread.sleep(remaining * 1000L); } catch (InterruptedException ignored) {}
+                    remaining = 0;
+                    send(req, channel);
+                    return waitForResponse();
                 }
                 try { Thread.sleep(waitSec * 1000L); } catch (InterruptedException ignored) {}
                 remaining -= waitSec;
