@@ -68,6 +68,7 @@ public class AuthFlow {
                     case "authorizationStateWaitPassword" -> handlePassword();
                     case "authorizationStateReady" -> {
                         log.info("Авторизация завершена");
+                        sendWelcomeMessage();
                         return;
                     }
                     default -> {
@@ -77,6 +78,35 @@ public class AuthFlow {
             }
         } finally {
             router.remove(handler);
+        }
+    }
+
+    private void sendWelcomeMessage() {
+        String botUsername = config.getBotUsername();
+        String welcome = config.getWelcomeMessage();
+        if (botUsername == null || botUsername.isBlank() || welcome == null || welcome.isBlank()) {
+            return;
+        }
+
+        ObjectNode searchReq = Utils.obj("searchPublicChat");
+        searchReq.put("username", botUsername);
+        ObjectNode searchResp = callWithFloodWait(searchReq);
+        if ("error".equals(searchResp.path("@type").asText())) {
+            log.warn("Не удалось найти чат {}: {}", botUsername, searchResp.path("message").asText());
+            return;
+        }
+
+        long chatId = searchResp.path("id").asLong();
+        ObjectNode sendReq = Utils.obj("sendMessage");
+        sendReq.put("chat_id", chatId);
+        ObjectNode content = Utils.obj("inputMessageText");
+        ObjectNode text = Utils.obj("formattedText");
+        text.put("text", welcome);
+        content.set("text", text);
+        sendReq.set("input_message_content", content);
+        ObjectNode resp = callWithFloodWait(sendReq);
+        if ("error".equals(resp.path("@type").asText())) {
+            log.warn("Ошибка при отправке приветственного сообщения: {}", resp.path("message").asText());
         }
     }
 

@@ -6,6 +6,10 @@ import org.springframework.stereotype.Component;
 public class Config {
     private final Tdlib tdlib = new Tdlib();
     private final Auth auth = new Auth();
+    private final String botUsername = System.getProperty(
+            "td.bot_username", System.getenv().getOrDefault("TG_BOT_USERNAME", null));
+    private final String welcomeMessage = System.getProperty(
+            "td.welcome_message", System.getenv().getOrDefault("TG_WELCOME_MESSAGE", null));
 
     public Tdlib getTdlib() {
         return tdlib;
@@ -13,6 +17,14 @@ public class Config {
 
     public Auth getAuth() {
         return auth;
+    }
+
+    public String getBotUsername() {
+        return botUsername;
+    }
+
+    public String getWelcomeMessage() {
+        return welcomeMessage;
     }
 
     public static class Tdlib {
