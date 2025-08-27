@@ -63,18 +63,18 @@ public class AuthFlow {
     private void sendTdParams() {
         ObjectNode p = Utils.obj("setTdlibParameters");
         p.put("use_test_dc", false);
-        p.put("database_directory", cfg.tdlib.database_directory);
-        p.put("files_directory", cfg.tdlib.files_directory);
+        p.put("database_directory", cfg.getTdlib().getDatabaseDirectory());
+        p.put("files_directory", cfg.getTdlib().getFilesDirectory());
         p.put("use_file_database", true);
         p.put("use_chat_info_database", true);
         p.put("use_message_database", true);
         p.put("use_secret_chats", false);
-        p.put("api_id", cfg.tdlib.api_id);
-        p.put("api_hash", cfg.tdlib.api_hash);
-        p.put("system_language_code", "en");
-        p.put("device_model", "Java");
-        p.put("system_version", System.getProperty("os.name") + " " + System.getProperty("os.version", ""));
-        p.put("application_version", "1.0.4-debug");
+        p.put("api_id", cfg.getTdlib().getApiId());
+        p.put("api_hash", cfg.getTdlib().getApiHash());
+        p.put("system_language_code", cfg.getTdlib().getSystemLanguageCode());
+        p.put("device_model", cfg.getTdlib().getDeviceModel());
+        p.put("system_version", cfg.getTdlib().getSystemVersion());
+        p.put("application_version", cfg.getTdlib().getApplicationVersion());
         p.put("enable_storage_optimizer", true);
         p.put("ignore_file_names", true);
         p.put("database_encryption_key", "");
@@ -83,8 +83,8 @@ public class AuthFlow {
     }
 
     private void sendPhoneLimited() {
-        String phone = (cfg.auth != null && cfg.auth.phone != null && !cfg.auth.phone.isBlank())
-                ? cfg.auth.phone.trim()
+        String phone = cfg.getAuth().getPhone() != null && !cfg.getAuth().getPhone().isBlank()
+                ? cfg.getAuth().getPhone().trim()
                 : readValue("Enter phone number (+xxxxxxxxxxx): ", false,
                 "TG_PHONE", "TELEGRAM_PHONE", "telegram.phone");
 
@@ -109,8 +109,8 @@ public class AuthFlow {
     }
 
     private void sendCodeLimited() {
-        String code = (cfg.auth != null && cfg.auth.code != null && !cfg.auth.code.isBlank())
-                ? cfg.auth.code.trim()
+        String code = cfg.getAuth().getCode() != null && !cfg.getAuth().getCode().isBlank()
+                ? cfg.getAuth().getCode().trim()
                 : readValue("Enter code from Telegram: ", false,
                 "TG_CODE", "TELEGRAM_CODE", "telegram.code");
 
@@ -127,8 +127,8 @@ public class AuthFlow {
     }
 
     private void sendPassword() {
-        String pass = (cfg.auth != null && cfg.auth.pass != null && !cfg.auth.pass.isBlank())
-                ? cfg.auth.pass
+        String pass = cfg.getAuth().getPass() != null && !cfg.getAuth().getPass().isBlank()
+                ? cfg.getAuth().getPass()
                 : readValue("Enter 2FA password: ", true,
                 "TG_PASS", "TELEGRAM_PASS", "telegram.pass");
         ObjectNode r = Utils.obj("checkAuthenticationPassword");
