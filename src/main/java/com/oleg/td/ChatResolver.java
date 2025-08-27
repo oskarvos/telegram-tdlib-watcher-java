@@ -8,7 +8,6 @@ public class ChatResolver {
         try {
             return Long.parseLong(identifier);
         } catch (NumberFormatException e) {
-            // placeholder for resolving chat links
             return identifier.hashCode();
         }
     }

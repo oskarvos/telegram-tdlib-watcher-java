@@ -14,10 +14,6 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
-/**
- * Service that receives updates from {@link TdJsonClient} and dispatches them
- * to registered handlers.
- */
 @Component
 public class UpdateRouter {
     private static final Logger log = LoggerFactory.getLogger(UpdateRouter.class);
@@ -32,9 +28,6 @@ public class UpdateRouter {
         this.client = client;
     }
 
-    /**
-     * Registers a new handler that will be invoked for every incoming update.
-     */
     public void add(Consumer<ObjectNode> handler) {
         handlers.add(handler);
     }

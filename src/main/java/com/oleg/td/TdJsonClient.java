@@ -35,8 +35,6 @@ public class TdJsonClient {
     }
 
     public void send(String request, Channel channel) {
-        // Channel is currently informational; different channels may be used in
-        // higher level logic, but sending a request does not depend on it.
         send(request);
     }
 

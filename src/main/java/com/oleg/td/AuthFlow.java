@@ -2,8 +2,8 @@ package com.oleg.td;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.stereotype.Component;
+
 import java.io.Console;
-import java.util.NoSuchElementException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -20,7 +20,6 @@ public class AuthFlow {
         this.cfg = cfg;
     }
 
-    /** Подписывает обработчики апдейтов, чтобы ловить состояния авторизации. */
     public void wireInto(UpdateRouter router) {
         router.add(n -> {
             String type = n.path("@type").asText();
@@ -38,23 +37,29 @@ public class AuthFlow {
         });
     }
 
-    /** Блокирующая авторизация — проходит все шаги. */
     public void authorizeBlocking() {
         client.send(Utils.obj("getAuthorizationState"), TdJsonClient.Channel.AUTH);
 
         String last = null;
         while (!authorized.get()) {
             String s = stateRef.get();
-            if (s == null || s.equals(last)) { sleep(100); continue; }
+            if (s == null || s.equals(last)) {
+                sleep(100);
+                continue;
+            }
 
             switch (s) {
                 case "authorizationStateWaitTdlibParameters" -> sendTdParams();
-                case "authorizationStateWaitPhoneNumber"     -> sendPhoneLimited();
-                case "authorizationStateWaitCode"            -> sendCodeLimited();
-                case "authorizationStateWaitPassword"        -> sendPassword();
-                case "authorizationStateReady"               -> { authorized.set(true); System.out.println("Authorization completed."); }
-                case "authorizationStateClosed"              -> System.err.println("Authorization closed.");
-                default -> {}
+                case "authorizationStateWaitPhoneNumber" -> sendPhoneLimited();
+                case "authorizationStateWaitCode" -> sendCodeLimited();
+                case "authorizationStateWaitPassword" -> sendPassword();
+                case "authorizationStateReady" -> {
+                    authorized.set(true);
+                    System.out.println("Authorization completed.");
+                }
+                case "authorizationStateClosed" -> System.err.println("Authorization closed.");
+                default -> {
+                }
             }
             last = s;
         }
@@ -91,14 +96,12 @@ public class AuthFlow {
         ObjectNode r = Utils.obj("setAuthenticationPhoneNumber");
         r.put("phone_number", phone);
 
-        // В TDLib settings — это вложенный объект:
         ObjectNode settings = r.putObject("settings");
         settings.put("@type", "phoneNumberAuthenticationSettings");
         settings.put("allow_flash_call", false);
         settings.put("is_current_phone_number", true);
         settings.put("allow_sms_retriever_api", false);
 
-        // Жёстко ограничиваем ожидание 429 одной минутой.
         var resp = client.requestWithFloodWaitSyncLimited(r, 60, TdJsonClient.Channel.AUTH);
         if ("error".equals(resp.path("@type").asText())) {
             System.err.printf("AUTH ERROR on phone: code=%d msg=%s%n",
@@ -137,12 +140,16 @@ public class AuthFlow {
         System.out.println("AUTH DEBUG: 2FA password submitted");
     }
 
-    private static void sleep(long ms) { try { Thread.sleep(ms); } catch (InterruptedException ignored) {} }
+    private static void sleep(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ignored) {
+        }
+    }
 
     private static String readValue(String prompt, boolean secret, String... keys) {
         String envVal = EnvVars.get(keys);
 
-        // 1) Есть реальная консоль — позволяем перебить ENV ручным вводом
         Console cons = System.console();
         if (cons != null) {
             if (envVal != null) {
@@ -160,8 +167,6 @@ public class AuthFlow {
             }
         }
 
-        // 2) Консоли нет (частый случай в Gradle). Тоже ждём ввод из STDIN.
-        //    Если введено пусто — используем ENV (если он есть).
         String hint = (envVal != null)
                 ? " [value from env/sysprop; press Enter to use it or type a new one]: "
                 : "";
