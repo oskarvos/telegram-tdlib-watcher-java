@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.jna.Library;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
@@ -38,6 +40,9 @@ public class TdJsonClient {
     private final Pointer client;
     private final TdLib tdLib;
 
+    private volatile boolean running = true;
+    private Thread receiverThread;
+
     public TdJsonClient(@Lazy UpdateRouter router, Config config) {
         this.router = router;
         this.config = config;
@@ -56,7 +61,45 @@ public class TdJsonClient {
         log.info("TDLib клиент создан успешно");
     }
 
+    @PostConstruct
+    public void startReceiver() {
+        receiverThread = new Thread(() -> {
+            while (running) {
+                try {
+                    String update = receive(1.0);
+                    if (update != null && !update.trim().isEmpty()) {
+                        ObjectNode updateNode = MAPPER.readValue(update, ObjectNode.class);
+                        router.handleUpdate(updateNode); // Изменено с route на handleUpdate
+                        log.debug("Получено обновление: {}", update);
+                    }
+                } catch (Exception e) {
+                    if (running) {
+                        log.error("Ошибка при получении обновления", e);
+                    }
+                }
+            }
+        }, "TDLib-Receiver");
+        receiverThread.setDaemon(true);
+        receiverThread.start();
+        log.info("Поток получения обновлений TDLib запущен");
+    }
+
+    @PreDestroy
+    public void stopReceiver() {
+        running = false;
+        if (receiverThread != null) {
+            receiverThread.interrupt();
+            try {
+                receiverThread.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        close();
+    }
+
     public void send(String request) {
+        log.debug("Отправка запроса: {}", request);
         tdLib.td_json_client_send(client, request);
     }
 
@@ -102,7 +145,7 @@ public class TdJsonClient {
                         return resp;
                     }
                     if (waitSec > remaining) {
-                        log.warn("Requested flood wait {}s exceeds remaining limit {}s; waiting only {}s", waitSec, remaining, remaining);
+                        log.warn("Flood wait {}s превышает оставшийся лимит {}s; ожидаем только {}s", waitSec, remaining, remaining);
                         try { Thread.sleep(remaining * 1000L); } catch (InterruptedException ignored) {
                             Thread.currentThread().interrupt();
                         }
@@ -119,7 +162,7 @@ public class TdJsonClient {
                         Thread.currentThread().interrupt();
                     }
                     remaining -= waitSec;
-                    continue; // resend the request after waiting
+                    continue;
                 }
                 return resp;
             }
@@ -128,7 +171,7 @@ public class TdJsonClient {
         }
     }
 
-    static int extractFloodWait(String message) {
+    public static int extractFloodWait(String message) {
         Matcher m = FLOOD_WAIT.matcher(message);
         if (m.find()) {
             try {
@@ -144,9 +187,9 @@ public class TdJsonClient {
     }
 
     public void close() {
-        tdLib.td_json_client_destroy(client);
-        log.info("TDLib клиент закрыт");
+        if (client != null) {
+            tdLib.td_json_client_destroy(client);
+            log.info("TDLib клиент закрыт");
+        }
     }
-
-
 }

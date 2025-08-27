@@ -1,13 +1,10 @@
 package com.oleg.td;
 
-import org.springframework.stereotype.Component;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-
+import org.springframework.stereotype.Component;
 import java.io.Console;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-
-import static com.oleg.td.TdJsonClient.extractFloodWait;
 
 @Component
 public class AuthFlow {
@@ -30,26 +27,26 @@ public class AuthFlow {
      */
     public void wireInto() {
         if (wired) {
-            System.out.println("AuthFlow already wired");
+            System.out.println("AuthFlow уже подключен");
             return;
         }
 
-        System.out.println("Wiring AuthFlow into UpdateRouter...");
+        System.out.println("Подключение AuthFlow к UpdateRouter...");
 
         router.add(n -> {
             String type = n.path("@type").asText();
-            System.out.println("Received update: " + n.toString()); // ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ
+            System.out.println("Получен апдейт: " + n.toString());
 
-            // ОБРАБОТКА ОШИБОК - ДОБАВИТЬ ЭТОТ БЛОК
+            // ОБРАБОТКА ОШИБОК
             if ("error".equals(type)) {
                 int errorCode = n.path("code").asInt();
                 String errorMessage = n.path("message").asText();
-                System.err.println("TDLib ERROR: " + errorCode + " - " + errorMessage);
+                System.err.println("Ошибка TDLib: " + errorCode + " - " + errorMessage);
 
                 // Обработка Flood Wait
                 if (errorCode == 429) {
-                    int waitTime = extractFloodWait(errorMessage);
-                    System.out.println("Flood wait: " + waitTime + " seconds");
+                    int waitTime = TdJsonClient.extractFloodWait(errorMessage); // Используем статический метод
+                    System.out.println("Flood wait: " + waitTime + " секунд");
                     try {
                         Thread.sleep(waitTime * 1000L);
                     } catch (InterruptedException e) {
@@ -60,37 +57,23 @@ public class AuthFlow {
             }
 
             if ("updateAuthorizationState".equals(type)) {
-                String state = n.path("authorization_state").path("@type").asText();
-                System.out.println("Authorization state update: " + state);
+                ObjectNode authState = (ObjectNode) n.path("authorization_state");
+                String state = authState.path("@type").asText();
+                System.out.println("Обновление состояния авторизации: " + state);
                 stateRef.set(state);
 
                 if ("authorizationStateReady".equals(state)) {
                     authorized.set(true);
-                    System.out.println("Authorized successfully!");
+                    System.out.println("Авторизация прошла успешно!");
                 } else if ("authorizationStateClosed".equals(state)) {
                     authorized.set(false);
-                    System.out.println("Authorization closed");
+                    System.out.println("Авторизация закрыта");
                 }
             }
         });
 
         wired = true;
         System.out.println("AuthFlow успешно подключен");
-    }
-
-    private void handleFloodWait(ObjectNode errorNode) {
-        int waitTime = extractFloodWait(errorNode.path("message").asText());
-        System.out.println("Обнаружен Flood wait: " + waitTime + " секунд");
-
-        // Асинхронная обработка без блокировки основного потока
-        new Thread(() -> {
-            try {
-                Thread.sleep(waitTime * 1000L);
-                System.out.println("Flood wait завершен, возобновляем операции");
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }).start();
     }
 
     /**
@@ -103,19 +86,16 @@ public class AuthFlow {
 
         System.out.println("Начало процесса авторизации...");
 
-        // Запрашиваем текущее состояние авторизации
-        client.send(Utils.obj("getAuthorizationState"), TdJsonClient.Channel.AUTH);
-
         String last = null;
         long startTime = System.currentTimeMillis();
-        long timeout = 300000; // Увеличить таймаут до 5 минут
+        long timeout = 300000; // Таймаут в 5 минут
 
         while (!authorized.get() && (System.currentTimeMillis() - startTime) < timeout) {
             String state = stateRef.get();
 
             if (state == null) {
                 System.out.println("Ожидание состояния авторизации...");
-                sleep(500);
+                sleep(1000);
                 continue;
             }
 
@@ -124,24 +104,22 @@ public class AuthFlow {
                 continue;
             }
 
-            System.out.println("Обработка состояния авторизации: " + state);
+            System.out.println("Текущее состояние авторизации: " + state);
 
             try {
                 switch (state) {
                     case "authorizationStateWaitTdlibParameters":
                         System.out.println("Отправка параметров TDLib...");
                         sendTdParams();
-                        // Добавить небольшую задержку
-                        sleep(1000);
                         break;
                     case "authorizationStateWaitPhoneNumber":
                         sendPhoneNumber();
                         break;
                     case "authorizationStateWaitCode":
-                        sendCode();
+                        sendCode(); // Здесь терминал будет ждать ввод кода
                         break;
                     case "authorizationStateWaitPassword":
-                        sendPassword();
+                        sendPassword(); // Для 2FA пароля
                         break;
                     case "authorizationStateReady":
                         authorized.set(true);
@@ -168,13 +146,13 @@ public class AuthFlow {
         }
 
         if (!authorized.get()) {
-            throw new RuntimeException("Таймаут авторизации после " + timeout + "мс");
+            throw new RuntimeException("Таймаут авторизации после " + timeout + " мс");
         }
     }
 
     private void sendTdParams() {
         ObjectNode params = Utils.obj("setTdlibParameters");
-        params.put("use_test_dc", true); // ИСПОЛЬЗОВАТЬ TEST DC ДЛЯ ТЕСТИРОВАНИЯ
+        params.put("use_test_dc", cfg.getTdlib().getUseTestDc()); // Исправлено на getUseTestDc()
         params.put("database_directory", cfg.getTdlib().getDatabaseDirectory());
         params.put("files_directory", cfg.getTdlib().getFilesDirectory());
         params.put("api_id", cfg.getTdlib().getApiId());
@@ -221,12 +199,21 @@ public class AuthFlow {
     private String readValue(String prompt) {
         Console console = System.console();
         if (console != null) {
-            String input = console.readLine(prompt);
+            System.out.print(prompt);
+            String input = console.readLine();
             if (input != null) {
                 return input.trim();
             }
         }
-        throw new IllegalStateException("Нет доступного ввода.");
+
+        // Fallback для IDE
+        System.out.print(prompt);
+        try {
+            java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(System.in));
+            return reader.readLine().trim();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("Нет доступного ввода: " + e.getMessage());
+        }
     }
 
     private static void sleep(long ms) {
@@ -240,17 +227,4 @@ public class AuthFlow {
     public boolean isAuthorized() {
         return authorized.get();
     }
-
-    // Добавить этот метод в класс AuthFlow
-    private int extractFloodWait(String message) {
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+)").matcher(message);
-        if (m.find()) {
-            try {
-                return Integer.parseInt(m.group(1));
-            } catch (NumberFormatException ignored) {
-            }
-        }
-        return 10; // стандартные 10 секунд если не удалось распарсить
-    }
-
 }

@@ -30,10 +30,23 @@ public class UpdateRouter {
 
     public void add(Consumer<ObjectNode> handler) {
         handlers.add(handler);
+        log.debug("Добавлен новый обработчик. Всего обработчиков: {}", handlers.size());
     }
 
     public void remove(Consumer<ObjectNode> handler) {
         handlers.remove(handler);
+        log.debug("Удален обработчик. Осталось обработчиков: {}", handlers.size());
+    }
+
+    public void handleUpdate(ObjectNode node) {
+        log.debug("Маршрутизация обновления: {}", node.toString());
+        for (Consumer<ObjectNode> handler : handlers) {
+            try {
+                handler.accept(node);
+            } catch (Exception e) {
+                log.warn("Обработчик вызвал исключение", e);
+            }
+        }
     }
 
     @PostConstruct
@@ -41,9 +54,11 @@ public class UpdateRouter {
         thread = new Thread(this::loop, "td-update-router");
         thread.setDaemon(true);
         thread.start();
+        log.info("Маршрутизатор обновлений запущен");
     }
 
     private void loop() {
+        log.info("Начало цикла обработки обновлений");
         while (running) {
             try {
                 String raw = client.receive(1.0);
@@ -51,30 +66,30 @@ public class UpdateRouter {
 
                 JsonNode parsed = mapper.readTree(raw);
                 if (!(parsed instanceof ObjectNode node)) {
-                    log.warn("Unexpected update format: {}", raw);
+                    log.warn("Неожиданный формат обновления: {}", raw);
                     continue;
                 }
 
-                for (Consumer<ObjectNode> h : handlers) {
-                    try {
-                        h.accept(node);
-                    } catch (Exception e) {
-                        log.warn("Update handler threw exception", e);
-                    }
-                }
+                log.debug("Получено сырое обновление: {}", node.toString());
+
+                handleUpdate(node);
+
             } catch (IOException e) {
-                log.error("Failed to parse update", e);
+                log.error("Ошибка парсинга обновления", e);
             } catch (Exception e) {
-                log.error("Error in update loop", e);
+                log.error("Ошибка в цикле обработки обновлений", e);
             }
         }
+        log.info("Цикл обработки обновлений завершен");
     }
 
     @PreDestroy
     void stop() {
+        log.info("Остановка маршрутизатора обновлений");
         running = false;
-        if (thread != null) {
+        if (thread != null && thread.isAlive()) {
             thread.interrupt();
         }
+        log.info("Маршрутизатор обновлений остановлен");
     }
 }
