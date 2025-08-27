@@ -128,7 +128,7 @@ public class TdJsonClient {
         }
     }
 
-    private static int extractFloodWait(String message) {
+    static int extractFloodWait(String message) {
         Matcher m = FLOOD_WAIT.matcher(message);
         if (m.find()) {
             try {
@@ -147,4 +147,6 @@ public class TdJsonClient {
         tdLib.td_json_client_destroy(client);
         log.info("TDLib клиент закрыт");
     }
+
+
 }

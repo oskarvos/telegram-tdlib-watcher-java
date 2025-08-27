@@ -7,6 +7,8 @@ import java.io.Console;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static com.oleg.td.TdJsonClient.extractFloodWait;
+
 @Component
 public class AuthFlow {
     private final TdJsonClient client;
@@ -28,33 +30,54 @@ public class AuthFlow {
      */
     public void wireInto() {
         if (wired) {
-            System.out.println("AuthFlow already wired");
+            System.out.println("AuthFlow уже подключен");
             return;
         }
 
-        System.out.println("Wiring AuthFlow into UpdateRouter...");
+        System.out.println("Подключение AuthFlow к UpdateRouter...");
 
         router.add(n -> {
             String type = n.path("@type").asText();
-            System.out.println("Received update: " + type);
+            System.out.println("Получен апдейт: " + type);
+
+            // Обработка ошибки Flood Wait
+            if ("error".equals(type) && n.path("code").asInt() == 429) {
+                handleFloodWait(n);
+                return;
+            }
 
             if ("updateAuthorizationState".equals(type)) {
                 String state = n.path("authorization_state").path("@type").asText();
-                System.out.println("Authorization state update: " + state);
+                System.out.println("Обновление состояния авторизации: " + state);
                 stateRef.set(state);
 
                 if ("authorizationStateReady".equals(state)) {
                     authorized.set(true);
-                    System.out.println("Authorized successfully!");
+                    System.out.println("Авторизация прошла успешно!");
                 } else if ("authorizationStateClosed".equals(state)) {
                     authorized.set(false);
-                    System.out.println("Authorization closed");
+                    System.out.println("Авторизация закрыта");
                 }
             }
         });
 
         wired = true;
-        System.out.println("AuthFlow wired successfully");
+        System.out.println("AuthFlow успешно подключен");
+    }
+
+    private void handleFloodWait(ObjectNode errorNode) {
+        int waitTime = extractFloodWait(errorNode.path("message").asText());
+        System.out.println("Обнаружен Flood wait: " + waitTime + " секунд");
+
+        // Асинхронная обработка без блокировки основного потока
+        new Thread(() -> {
+            try {
+                Thread.sleep(waitTime * 1000L);
+                System.out.println("Flood wait завершен, возобновляем операции");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }).start();
     }
 
     /**
@@ -72,7 +95,7 @@ public class AuthFlow {
 
         String last = null;
         long startTime = System.currentTimeMillis();
-        long timeout = 120000; // 2 минуты таймаут
+        long timeout = 100000; // Увеличьте таймаут до 5 минут
 
         while (!authorized.get() && (System.currentTimeMillis() - startTime) < timeout) {
             String state = stateRef.get();
@@ -148,34 +171,34 @@ public class AuthFlow {
         params.put("ignore_file_names", false);
 
         client.send(params, TdJsonClient.Channel.AUTH);
-        System.out.println("TDLib parameters sent.");
+        System.out.println("Параметры TDLib отправлены.");
     }
 
     private void sendPhoneNumber() {
         String phone = cfg.getAuth() != null && cfg.getAuth().getPhone() != null ?
-                cfg.getAuth().getPhone().trim() : readValue("Enter phone number (+xxxxxxxxxxx): ");
+                cfg.getAuth().getPhone().trim() : readValue("Введите номер телефона (+xxxxxxxxxxx): ");
         ObjectNode req = Utils.obj("setAuthenticationPhoneNumber");
         req.put("phone_number", phone);
         client.send(req, TdJsonClient.Channel.AUTH);
-        System.out.println("Phone number submitted: " + phone);
+        System.out.println("Номер телефона отправлен: " + phone);
     }
 
     private void sendCode() {
         String code = cfg.getAuth() != null && cfg.getAuth().getCode() != null ?
-                cfg.getAuth().getCode().trim() : readValue("Enter code from Telegram: ");
+                cfg.getAuth().getCode().trim() : readValue("Введите код из Telegram: ");
         ObjectNode req = Utils.obj("checkAuthenticationCode");
         req.put("code", code);
         client.send(req, TdJsonClient.Channel.AUTH);
-        System.out.println("Code submitted.");
+        System.out.println("Код отправлен.");
     }
 
     private void sendPassword() {
         String password = cfg.getAuth() != null && cfg.getAuth().getPass() != null ?
-                cfg.getAuth().getPass().trim() : readValue("Enter 2FA password: ");
+                cfg.getAuth().getPass().trim() : readValue("Введите 2FA пароль: ");
         ObjectNode req = Utils.obj("checkAuthenticationPassword");
         req.put("password", password);
         client.send(req, TdJsonClient.Channel.AUTH);
-        System.out.println("Password submitted.");
+        System.out.println("Пароль отправлен.");
     }
 
     private String readValue(String prompt) {
@@ -186,7 +209,7 @@ public class AuthFlow {
                 return input.trim();
             }
         }
-        throw new IllegalStateException("No input available.");
+        throw new IllegalStateException("Нет доступного ввода.");
     }
 
     private static void sleep(long ms) {
@@ -200,4 +223,6 @@ public class AuthFlow {
     public boolean isAuthorized() {
         return authorized.get();
     }
+
+
 }
