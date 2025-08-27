@@ -22,10 +22,12 @@ public class AuthFlow {
 
     private final TdJsonClient client;
     private final UpdateRouter router;
+    private final Config config;
 
-    public AuthFlow(TdJsonClient client, UpdateRouter router) {
+    public AuthFlow(TdJsonClient client, UpdateRouter router, Config config) {
         this.client = client;
         this.router = router;
+        this.config = config;
     }
 
     /**
@@ -60,6 +62,7 @@ public class AuthFlow {
                 String state = update.path("authorization_state").path("@type").asText();
                 log.info("Состояние авторизации: {}", state);
                 switch (state) {
+                    case "authorizationStateWaitTdlibParameters" -> handleTdlibParameters();
                     case "authorizationStateWaitPhoneNumber" -> handlePhoneNumber();
                     case "authorizationStateWaitCode" -> handleCode();
                     case "authorizationStateWaitPassword" -> handlePassword();
@@ -117,6 +120,34 @@ public class AuthFlow {
                 break;
             }
         }
+    }
+
+    private void handleTdlibParameters() {
+        Config.Tdlib td = config.getTdlib();
+        ObjectNode req = Utils.obj("setTdlibParameters");
+        ObjectNode params = Utils.obj("tdlibParameters");
+        params.put("use_test_dc", false);
+        params.put("database_directory", td.getDatabaseDirectory());
+        params.put("files_directory", td.getFilesDirectory());
+        params.put("use_file_database", true);
+        params.put("use_chat_info_database", true);
+        params.put("use_message_database", true);
+        params.put("use_secret_chats", false);
+        params.put("api_id", td.getApiId());
+        params.put("api_hash", td.getApiHash());
+        params.put("system_language_code", td.getSystemLanguageCode());
+        params.put("device_model", td.getDeviceModel());
+        params.put("system_version", td.getSystemVersion());
+        params.put("application_version", td.getApplicationVersion());
+        params.put("enable_storage_optimizer", true);
+        params.put("ignore_file_names", false);
+        req.set("parameters", params);
+        ObjectNode resp = callWithFloodWait(req);
+        if ("error".equals(resp.path("@type").asText()) && resp.path("code").asInt() == 429) {
+            log.warn("Превышено ожидание flood wait при отправке параметров TDLib");
+            return;
+        }
+        log.info("Отправлены параметры TDLib");
     }
 
     private void handlePassword() {
