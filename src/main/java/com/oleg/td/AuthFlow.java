@@ -1,12 +1,13 @@
 package com.oleg.td;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
-
+import org.springframework.stereotype.Component;
 import java.io.Console;
 import java.util.NoSuchElementException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+@Component
 public class AuthFlow {
     private final TdJsonClient client;
     private final Config cfg;
