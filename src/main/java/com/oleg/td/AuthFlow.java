@@ -30,33 +30,46 @@ public class AuthFlow {
      */
     public void wireInto() {
         if (wired) {
-            System.out.println("AuthFlow уже подключен");
+            System.out.println("AuthFlow already wired");
             return;
         }
 
-        System.out.println("Подключение AuthFlow к UpdateRouter...");
+        System.out.println("Wiring AuthFlow into UpdateRouter...");
 
         router.add(n -> {
             String type = n.path("@type").asText();
-            System.out.println("Получен апдейт: " + type);
+            System.out.println("Received update: " + n.toString()); // ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ
 
-            // Обработка ошибки Flood Wait
-            if ("error".equals(type) && n.path("code").asInt() == 429) {
-                handleFloodWait(n);
+            // ОБРАБОТКА ОШИБОК - ДОБАВИТЬ ЭТОТ БЛОК
+            if ("error".equals(type)) {
+                int errorCode = n.path("code").asInt();
+                String errorMessage = n.path("message").asText();
+                System.err.println("TDLib ERROR: " + errorCode + " - " + errorMessage);
+
+                // Обработка Flood Wait
+                if (errorCode == 429) {
+                    int waitTime = extractFloodWait(errorMessage);
+                    System.out.println("Flood wait: " + waitTime + " seconds");
+                    try {
+                        Thread.sleep(waitTime * 1000L);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
                 return;
             }
 
             if ("updateAuthorizationState".equals(type)) {
                 String state = n.path("authorization_state").path("@type").asText();
-                System.out.println("Обновление состояния авторизации: " + state);
+                System.out.println("Authorization state update: " + state);
                 stateRef.set(state);
 
                 if ("authorizationStateReady".equals(state)) {
                     authorized.set(true);
-                    System.out.println("Авторизация прошла успешно!");
+                    System.out.println("Authorized successfully!");
                 } else if ("authorizationStateClosed".equals(state)) {
                     authorized.set(false);
-                    System.out.println("Авторизация закрыта");
+                    System.out.println("Authorization closed");
                 }
             }
         });
@@ -95,7 +108,7 @@ public class AuthFlow {
 
         String last = null;
         long startTime = System.currentTimeMillis();
-        long timeout = 100000; // Увеличьте таймаут до 5 минут
+        long timeout = 300000; // Увеличить таймаут до 5 минут
 
         while (!authorized.get() && (System.currentTimeMillis() - startTime) < timeout) {
             String state = stateRef.get();
@@ -116,7 +129,10 @@ public class AuthFlow {
             try {
                 switch (state) {
                     case "authorizationStateWaitTdlibParameters":
+                        System.out.println("Отправка параметров TDLib...");
                         sendTdParams();
+                        // Добавить небольшую задержку
+                        sleep(1000);
                         break;
                     case "authorizationStateWaitPhoneNumber":
                         sendPhoneNumber();
@@ -158,7 +174,7 @@ public class AuthFlow {
 
     private void sendTdParams() {
         ObjectNode params = Utils.obj("setTdlibParameters");
-        params.put("use_test_dc", false);
+        params.put("use_test_dc", true); // ИСПОЛЬЗОВАТЬ TEST DC ДЛЯ ТЕСТИРОВАНИЯ
         params.put("database_directory", cfg.getTdlib().getDatabaseDirectory());
         params.put("files_directory", cfg.getTdlib().getFilesDirectory());
         params.put("api_id", cfg.getTdlib().getApiId());
@@ -170,6 +186,7 @@ public class AuthFlow {
         params.put("enable_storage_optimizer", true);
         params.put("ignore_file_names", false);
 
+        System.out.println("ОТПРАВКА ПАРАМЕТРОВ TDLib: " + params.toString());
         client.send(params, TdJsonClient.Channel.AUTH);
         System.out.println("Параметры TDLib отправлены.");
     }
@@ -224,5 +241,16 @@ public class AuthFlow {
         return authorized.get();
     }
 
+    // Добавить этот метод в класс AuthFlow
+    private int extractFloodWait(String message) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+)").matcher(message);
+        if (m.find()) {
+            try {
+                return Integer.parseInt(m.group(1));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return 10; // стандартные 10 секунд если не удалось распарсить
+    }
 
 }
