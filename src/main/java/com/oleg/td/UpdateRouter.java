@@ -32,6 +32,10 @@ public class UpdateRouter {
         handlers.add(handler);
     }
 
+    public void remove(Consumer<ObjectNode> handler) {
+        handlers.remove(handler);
+    }
+
     @PostConstruct
     void start() {
         thread = new Thread(this::loop, "td-update-router");

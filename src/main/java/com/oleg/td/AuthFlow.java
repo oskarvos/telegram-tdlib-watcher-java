@@ -1,16 +1,16 @@
 package com.oleg.td;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.Console;
-import java.io.IOException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.function.Consumer;
 
 /**
  * Handles interactive authorization with TDLib.
@@ -18,38 +18,44 @@ import java.util.regex.Pattern;
 @Component
 public class AuthFlow {
     private static final Logger log = LoggerFactory.getLogger(AuthFlow.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Pattern FLOOD_WAIT = Pattern.compile("(\\d+)");
 
     private final TdJsonClient client;
+    private final UpdateRouter router;
 
-    public AuthFlow(TdJsonClient client) {
+    public AuthFlow(TdJsonClient client, UpdateRouter router) {
         this.client = client;
+        this.router = router;
     }
 
     /**
      * Runs authorization flow using environment variables and console input.
      */
     public void authorize() {
-        log.info("Запрос состояния авторизации");
-        ObjectNode resp = callWithFloodWait(Utils.obj("getAuthorizationState"));
-        if ("error".equals(resp.path("@type").asText())) {
-            if (resp.path("code").asInt() == 429) {
-                log.warn("Превышено ожидание flood wait при запросе состояния авторизации");
-                return;
+        BlockingQueue<ObjectNode> queue = new LinkedBlockingQueue<>();
+        Consumer<ObjectNode> handler = node -> {
+            if ("updateAuthorizationState".equals(node.path("@type").asText())) {
+                queue.offer(node);
             }
-            log.warn("Ошибка при запросе состояния авторизации: {}", resp.path("message").asText());
-        }
-        while (true) {
-            String updateStr = client.receive(60);
-            if (updateStr == null) {
-                continue;
+        };
+        router.add(handler);
+        try {
+            log.info("Запрос состояния авторизации");
+            ObjectNode resp = callWithFloodWait(Utils.obj("getAuthorizationState"));
+            if ("error".equals(resp.path("@type").asText())) {
+                if (resp.path("code").asInt() == 429) {
+                    log.warn("Превышено ожидание flood wait при запросе состояния авторизации");
+                    return;
+                }
+                log.warn("Ошибка при запросе состояния авторизации: {}", resp.path("message").asText());
             }
-            try {
-                JsonNode update = MAPPER.readTree(updateStr);
-                String type = update.path("@type").asText();
-                if (!"updateAuthorizationState".equals(type)) {
-                    continue;
+            while (true) {
+                ObjectNode update;
+                try {
+                    update = queue.take();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
                 }
                 String state = update.path("authorization_state").path("@type").asText();
                 log.info("Состояние авторизации: {}", state);
@@ -65,9 +71,9 @@ public class AuthFlow {
                         // ignore other states
                     }
                 }
-            } catch (IOException e) {
-                log.error("Не удалось разобрать ответ TDLib", e);
             }
+        } finally {
+            router.remove(handler);
         }
     }
 

@@ -7,8 +7,13 @@ import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -28,7 +33,13 @@ public class TdJsonClient {
         void td_json_client_destroy(Pointer client);
     }
 
+    private final UpdateRouter router;
+    private final AtomicLong extraId = new AtomicLong();
     private final Pointer client = TdLib.INSTANCE.td_json_client_create();
+
+    public TdJsonClient(@Lazy UpdateRouter router) {
+        this.router = router;
+    }
 
     public void send(String request) {
         TdLib.INSTANCE.td_json_client_send(client, request);
@@ -48,51 +59,57 @@ public class TdJsonClient {
 
     public ObjectNode requestWithFloodWaitSyncLimited(ObjectNode req, int limit, Channel channel) {
         int remaining = Math.min(limit, 60);
-        while (true) {
-            send(req, channel);
-            ObjectNode resp = waitForResponse();
-            if (resp == null) {
-                return MAPPER.createObjectNode();
-            }
+        String extra = "req-" + extraId.incrementAndGet();
+        req.put("@extra", extra);
 
-            String type = resp.path("@type").asText();
-            if ("error".equals(type) && resp.path("code").asInt() == 429) {
-                int waitSec = extractFloodWait(resp.path("message").asText());
-                if (waitSec <= 0) {
-                    return resp;
-                }
-                if (waitSec > remaining) {
-                    log.warn("Requested flood wait {}s exceeds remaining limit {}s; waiting only {}s", waitSec, remaining, remaining);
-                    try { Thread.sleep(remaining * 1000L); } catch (InterruptedException ignored) {}
-                    remaining = 0;
-                    send(req, channel);
-                    return waitForResponse();
-                }
-                try { Thread.sleep(waitSec * 1000L); } catch (InterruptedException ignored) {}
-                remaining -= waitSec;
-                continue; // resend the request after waiting
+        BlockingQueue<ObjectNode> queue = new LinkedBlockingQueue<>();
+        Consumer<ObjectNode> handler = node -> {
+            if (extra.equals(node.path("@extra").asText())) {
+                queue.offer(node);
             }
-            return resp;
-        }
-    }
-
-    private ObjectNode waitForResponse() {
+        };
+        router.add(handler);
         try {
             while (true) {
-                String respStr = receive(60);
-                if (respStr == null) continue;
-                ObjectNode node = (ObjectNode) MAPPER.readTree(respStr);
-                String type = node.path("@type").asText();
-                if (type.startsWith("update")) {
-                    // Ignore updates; higher level components may handle them separately.
-                    log.debug("Ignoring update: {}", respStr);
-                    continue;
+                send(req, channel);
+                ObjectNode resp;
+                try {
+                    resp = queue.take();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return MAPPER.createObjectNode();
                 }
-                return node;
+
+                String type = resp.path("@type").asText();
+                if ("error".equals(type) && resp.path("code").asInt() == 429) {
+                    int waitSec = extractFloodWait(resp.path("message").asText());
+                    if (waitSec <= 0) {
+                        return resp;
+                    }
+                    if (waitSec > remaining) {
+                        log.warn("Requested flood wait {}s exceeds remaining limit {}s; waiting only {}s", waitSec, remaining, remaining);
+                        try { Thread.sleep(remaining * 1000L); } catch (InterruptedException ignored) {
+                            Thread.currentThread().interrupt();
+                        }
+                        remaining = 0;
+                        send(req, channel);
+                        try {
+                            return queue.take();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return MAPPER.createObjectNode();
+                        }
+                    }
+                    try { Thread.sleep(waitSec * 1000L); } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                    remaining -= waitSec;
+                    continue; // resend the request after waiting
+                }
+                return resp;
             }
-        } catch (Exception e) {
-            log.error("Failed to parse TDLib response", e);
-            return null;
+        } finally {
+            router.remove(handler);
         }
     }
 
