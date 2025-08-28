@@ -30,7 +30,7 @@ public class ChatDumpCoordinator {
                 log.info("Dump cancelled");
                 break;
             }
-            long chatId = resolver.resolve(chat);
+            long chatId = resolver.resolveOrJoin(chat);
             databaseManager.prepareSchema(chatId);
 
             long fromMessageId = 0;
