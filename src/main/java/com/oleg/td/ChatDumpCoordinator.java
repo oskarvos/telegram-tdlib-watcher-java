@@ -9,10 +9,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Координатор дампа чатов:
- *  - создаёт схему под чат
- *  - постранично запрашивает историю
- *  - сохраняет сообщения/медиа/ссылки
+ * Координатор дампа чатов.
+ * Только новые сообщения: останавливаемся, как только дошли до mid <= lastSavedId.
  */
 @Component
 public class ChatDumpCoordinator {
@@ -36,24 +34,24 @@ public class ChatDumpCoordinator {
         this.downloader = downloader;
     }
 
-    /** Запускает выгрузку для набора чатов. */
     public void dumpChats(DumpRequest request, Runnable progressCallback) {
         stopRequested = false;
 
         for (String chatRef : request.getChats()) {
-            if (stopRequested) {
-                log.info("Дамп прерван пользователем");
-                break;
-            }
+            if (stopRequested) { log.info("Дамп прерван пользователем"); break; }
 
             long chatId = resolver.resolveOrJoin(chatRef.trim());
             log.info("Начинаем дамп чата {} (ref='{}')", chatId, chatRef);
 
-            // Создать/мигрировать таблицы под этот чат
             db.prepareSchema(chatId);
 
-            long fromMessageId = 0; // 0 = начать с последнего (TDLib)
-            while (!stopRequested) {
+            final long lastSavedId = db.getLastSavedIdForChat(chatId);
+            if (lastSavedId > 0) log.info("Чат {}: lastSavedId={}", chatId, lastSavedId);
+
+            long fromMessageId = 0; // берём с самых новых
+            boolean reachedAlreadySaved = false;
+
+            while (!stopRequested && !reachedAlreadySaved) {
                 ObjectNode req = MAPPER.createObjectNode();
                 req.put("@type", "getChatHistory");
                 req.put("chat_id", chatId);
@@ -62,8 +60,7 @@ public class ChatDumpCoordinator {
                 req.put("limit", 100);
                 req.put("only_local", false);
 
-                ObjectNode resp = client.requestWithFloodWaitSyncLimited(
-                        req, 60, TdJsonClient.Channel.MAIN);
+                ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.MAIN);
 
                 if (!"messages".equals(resp.path("@type").asText())) {
                     log.warn("Ответ TDLib отличен от 'messages': {}", resp.path("@type").asText());
@@ -78,17 +75,25 @@ public class ChatDumpCoordinator {
 
                 for (JsonNode msg : messages) {
                     if (stopRequested) break;
+
+                    long mid = msg.path("id").asLong();
+                    if (lastSavedId > 0 && mid <= lastSavedId) {
+                        reachedAlreadySaved = true;
+                        log.info("Чат {}: достигли уже сохранённых (mid={} <= {}), стоп", chatId, mid, lastSavedId);
+                        break;
+                    }
+
                     try {
                         processMessage(chatId, msg, request);
                         if (progressCallback != null) progressCallback.run();
                     } catch (Exception ex) {
-                        long mid = msg.path("id").asLong();
                         log.error("Ошибка обработки сообщения {} из чата {}: {}", mid, chatId, ex.getMessage(), ex);
                     }
                 }
 
-                // Продолжаем от самого старого id из текущей пачки (TDLib сортирует по убыванию)
-                fromMessageId = messages.get(messages.size() - 1).path("id").asLong();
+                if (!reachedAlreadySaved) {
+                    fromMessageId = messages.get(messages.size() - 1).path("id").asLong();
+                }
             }
 
             log.info("Дамп чата {} завершён", chatId);
@@ -117,22 +122,14 @@ public class ChatDumpCoordinator {
         String ctype = content.path("@type").asText();
 
         // 1) Текст + ссылки
-        String plainText = null;
         if ("messageText".equals(ctype)) {
             JsonNode ft = content.path("text"); // formattedText
-            plainText = ft.path("text").asText(null);
+            String plainText = ft.path("text").asText(null);
 
-            if (request.isMessages()) {
-                db.saveMessage(chatId, messageId, date, senderId, replyTo, plainText);
-            }
-            if (request.isLinks()) {
-                extractLinksFromFormattedText(chatId, messageId, ft);
-            }
+            if (request.isMessages()) db.saveMessage(chatId, messageId, date, senderId, replyTo, plainText);
+            if (request.isLinks())    extractLinksFromFormattedText(chatId, messageId, ft);
         } else {
-            // Если не текст — всё равно сохраним запись в messages, но без текста
-            if (request.isMessages()) {
-                db.saveMessage(chatId, messageId, date, senderId, replyTo, null);
-            }
+            if (request.isMessages()) db.saveMessage(chatId, messageId, date, senderId, replyTo, null);
         }
 
         // 2) Фото
@@ -143,19 +140,17 @@ public class ChatDumpCoordinator {
 
             JsonNode sizes = photo.path("sizes");
             JsonNode best = sizes.isArray() && sizes.size() > 0 ? sizes.get(sizes.size() - 1) : null;
-            Integer w = best == null ? null : (best.path("width").isInt() ? best.path("width").asInt() : null);
+            Integer w = best == null ? null : (best.path("width").isInt()  ? best.path("width").asInt()  : null);
             Integer h = best == null ? null : (best.path("height").isInt() ? best.path("height").asInt() : null);
 
             JsonNode fileNode = best == null ? null : best.path("photo");
-            Integer fileId = (fileNode == null || !fileNode.path("id").isInt()) ? null : fileNode.path("id").asInt();
-            String remoteId = fileNode == null ? null : fileNode.path("remote").path("id").asText(null);
+            Integer fileId  = fileNode == null ? null : (fileNode.path("id").isInt() ? fileNode.path("id").asInt() : null);
+            String  remoteId = fileNode == null ? null : fileNode.path("remote").path("id").asText(null);
 
             String filePath = null;
-            if (fileId != null) {
-                filePath = downloader.downloadBlocking(fileId);
-            }
-            db.savePhoto(chatId, messageId, fileId, remoteId, w, h, caption, filePath);
+            if (fileId != null) filePath = downloader.downloadBlocking(fileId);
 
+            db.savePhoto(chatId, messageId, fileId, remoteId, w, h, caption, filePath);
             if (request.isLinks()) extractLinksFromFormattedText(chatId, messageId, captionFT);
         }
 
@@ -172,42 +167,40 @@ public class ChatDumpCoordinator {
             String remoteId = fileNode.path("remote").path("id").asText(null);
 
             String filePath = null;
-            if (fileId != null) {
-                filePath = downloader.downloadBlocking(fileId);
-            }
-            db.saveVideo(chatId, messageId, fileId, remoteId, duration, w, h, caption, filePath);
+            if (fileId != null) filePath = downloader.downloadBlocking(fileId);
 
+            db.saveVideo(chatId, messageId, fileId, remoteId, duration, w, h, caption, filePath);
             if (request.isLinks()) extractLinksFromFormattedText(chatId, messageId, content.path("caption"));
         }
 
-        // 4) Голосовые/аудио (сохраняем и трек, и путь, и MIME)
+        // 4) Голосовые/аудио
         if ("messageVoiceNote".equals(ctype) && request.isMessages()) {
             JsonNode vn = content.path("voice_note");
             Integer duration = vn.path("duration").isInt() ? vn.path("duration").asInt() : null;
+
             JsonNode fileNode = vn.path("voice");
             Integer fileId = fileNode.path("id").isInt() ? fileNode.path("id").asInt() : null;
             String remoteId = fileNode.path("remote").path("id").asText(null);
             String mime = vn.path("mime_type").asText(null);
 
             String filePath = null;
-            if (fileId != null) {
-                filePath = downloader.downloadBlocking(fileId);
-            }
+            if (fileId != null) filePath = downloader.downloadBlocking(fileId);
+
             db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime, filePath);
         }
 
         if ("messageAudio".equals(ctype) && request.isMessages()) {
             JsonNode au = content.path("audio");
             Integer duration = au.path("duration").isInt() ? au.path("duration").asInt() : null;
+
             JsonNode fileNode = au.path("audio");
             Integer fileId = fileNode.path("id").isInt() ? fileNode.path("id").asInt() : null;
             String remoteId = fileNode.path("remote").path("id").asText(null);
             String mime = au.path("mime_type").asText(null);
 
             String filePath = null;
-            if (fileId != null) {
-                filePath = downloader.downloadBlocking(fileId);
-            }
+            if (fileId != null) filePath = downloader.downloadBlocking(fileId);
+
             db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime, filePath);
         }
     }
@@ -241,7 +234,6 @@ public class ChatDumpCoordinator {
         }
     }
 
-    /** Безопасная нарезка строки по смещению/длине. */
     private static String safeSubstring(String s, int offset, int length) {
         if (s == null || offset < 0 || length <= 0 || offset >= s.length()) return null;
         int end = Math.min(s.length(), offset + length);
