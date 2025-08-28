@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+
 import java.io.Console;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -26,43 +27,23 @@ public class AuthFlow {
         this.router = router;
     }
 
-    /** Подписываемся на апдейты авторизации. */
+    /**
+     * Subscribes to authorization updates.
+     */
     public void wireInto() {
         if (wired) {
             log.info("AuthFlow уже подключен");
             return;
         }
-
         log.info("Подключение AuthFlow к UpdateRouter...");
 
         router.add(n -> {
-            String type = n.path("@type").asText();
-
-            if ("error".equals(type)) {
-                int errorCode = n.path("code").asInt();
-                String errorMessage = n.path("message").asText();
-                log.error("Ошибка TDLib: {} - {}", errorCode, errorMessage);
-                if (errorCode == 429) {
-                    int waitTime = TdJsonClient.extractFloodWait(errorMessage);
-                    log.info("Flood wait: {} секунд", waitTime);
-                    try { Thread.sleep(Math.max(0, waitTime) * 1000L); } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                    }
-                } else if (errorCode == 400 && errorMessage.toLowerCase().contains("code")
-                        && "authorizationStateWaitCode".equals(stateRef.get())) {
-                    log.warn("Неверный код, попробуйте снова");
-                    if (cfg.getAuth() != null) cfg.getAuth().setCode(null);
-                    sendCode();
-                }
-                return;
-            }
-
+            final String type = n.path("@type").asText();
             if ("updateAuthorizationState".equals(type)) {
-                com.fasterxml.jackson.databind.node.ObjectNode authState = (com.fasterxml.jackson.databind.node.ObjectNode) n.path("authorization_state");
+                var authState = n.path("authorization_state");
                 String state = authState.path("@type").asText();
-                log.info("AUTH DEBUG: state = {}", state);
                 stateRef.set(state);
-
+                log.info("AUTH DEBUG: state = {}", state);
                 if ("authorizationStateReady".equals(state)) {
                     authorized.set(true);
                     log.info("Авторизация прошла успешно!");
@@ -78,7 +59,9 @@ public class AuthFlow {
         client.send(Utils.obj("getAuthorizationState"), TdJsonClient.Channel.AUTH);
     }
 
-    /** Блокирующая авторизация — проходит все шаги. */
+    /**
+     * Blocking state-machine. Single-threaded: we pump receive inside this loop.
+     */
     public void authorizeBlocking() {
         if (!wired) throw new IllegalStateException("AuthFlow не инициализирован. Сначала вызовите wireInto()");
 
@@ -87,107 +70,74 @@ public class AuthFlow {
 
         String last = null;
         long startTime = System.currentTimeMillis();
-        long timeout = 300_000;
+        long timeoutMs = 300_000L;
 
-        while (!authorized.get() && (System.currentTimeMillis() - startTime) < timeout) {
+        while (!authorized.get() && (System.currentTimeMillis() - startTime) < timeoutMs) {
+            client.pumpOnce(1.5); // pulls exactly one update (if any) in this thread
+
             String state = stateRef.get();
             if (state == null) {
-                // через секунду повторим запрос состояния, если ничего не пришло
-                try { Thread.sleep(1000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
                 client.send(Utils.obj("getAuthorizationState"), TdJsonClient.Channel.AUTH);
+                sleep(500);
                 continue;
             }
-
-            if (state == null) {
-                log.info("Ожидание состояния авторизации...");
-                sleep(1000);
-                continue;
-            }
-
             if (state.equals(last)) {
                 sleep(100);
                 continue;
             }
-
             log.info("Текущее состояние авторизации: {}", state);
 
             try {
                 switch (state) {
-                    case "authorizationStateWaitTdlibParameters" -> {
-                        log.info("Отправка параметров TDLib...");
-                        sendTdParams();
-                    }
+                    case "authorizationStateWaitTdlibParameters" -> sendTdParams();
                     case "authorizationStateWaitPhoneNumber" -> sendPhoneNumber();
                     case "authorizationStateWaitCode" -> sendCodeWithRetry();
                     case "authorizationStateWaitPassword" -> sendPassword();
-                    case "authorizationStateReady" -> {
-                        authorized.set(true);
-                        log.info("Авторизация успешно завершена!");
-                    }
-                    case "authorizationStateClosed" -> {
-                        throw new RuntimeException("Авторизация закрыта");
-                    }
-                    case "authorizationStateLoggingOut" -> {
-                        throw new RuntimeException("Выход из системы");
-                    }
-                    default -> {
-                        log.info("Ожидание в состоянии: {}", state);
-                        sleep(1000);
-                    }
+                    case "authorizationStateReady" -> authorized.set(true);
+                    case "authorizationStateClosed" -> throw new RuntimeException("Авторизация закрыта");
+                    case "authorizationStateLoggingOut" -> throw new RuntimeException("Выход из системы");
+                    default -> sleep(300);
                 }
             } catch (Exception e) {
                 log.error("Ошибка обработки состояния {}: {}", state, e.getMessage(), e);
                 throw new RuntimeException("Ошибка авторизации в состоянии: " + state, e);
             }
-
             last = state;
-            sleep(100);
         }
-
-        if (!authorized.get()) {
-            throw new RuntimeException("Таймаут авторизации после " + timeout + " мс");
-        }
+        if (!authorized.get()) throw new RuntimeException("Таймаут авторизации после " + timeoutMs + " мс");
     }
 
     private void sendTdParams() {
-        ObjectNode params = Utils.obj("setTdlibParameters");
+        ObjectNode p = Utils.obj("setTdlibParameters");
 
-        // Сбор system_version, как в примере (Linux <kernel>)
-        String osName = System.getProperty("os.name");
-        String osVersion = System.getProperty("os.version");
-        String systemVersion = (osName != null ? osName : "OS") + " " + (osVersion != null ? osVersion : "");
+        String osName = System.getProperty("os.name", "OS");
+        String osVersion = System.getProperty("os.version", "");
+        String systemVersion = osName + " " + osVersion;
 
-        // Хвост вида apiId_phoneOnlyDigits
         String phoneDigits = (cfg.getAuth() != null && cfg.getAuth().getPhone() != null)
                 ? cfg.getAuth().getPhone().replaceAll("\\D", "")
                 : "unknown";
         String suffix = cfg.getTdlib().getApiId() + "_" + phoneDigits;
 
-        String dbBase = cfg.getTdlib().getDatabaseDirectory();
-        String filesBase = cfg.getTdlib().getFilesDirectory();
+        p.put("use_test_dc", cfg.getUseTestDc());
+        p.put("database_directory", cfg.getTdlib().getDatabaseDirectory() + "/" + suffix);
+        p.put("files_directory", cfg.getTdlib().getFilesDirectory() + "/" + suffix);
+        p.put("use_file_database", true);
+        p.put("use_chat_info_database", true);
+        p.put("use_message_database", true);
+        p.put("use_secret_chats", false);
+        p.put("api_id", cfg.getTdlib().getApiId());
+        p.put("api_hash", cfg.getTdlib().getApiHash());
+        p.put("system_language_code", cfg.getTdlib().getSystemLanguageCode());
+        p.put("device_model", cfg.getTdlib().getDeviceModel());
+        p.put("system_version", systemVersion);
+        p.put("application_version", cfg.getTdlib().getApplicationVersion());
+        p.put("enable_storage_optimizer", true);
+        p.put("ignore_file_names", true);
+        p.put("database_encryption_key", "");
 
-        params.put("use_test_dc", cfg.getUseTestDc());
-        params.put("database_directory", dbBase + "/" + suffix);
-        params.put("files_directory", filesBase + "/" + suffix);
-
-        // Рекомендуемые флаги / как в образце
-        params.put("use_file_database", true);
-        params.put("use_chat_info_database", true);
-        params.put("use_message_database", true);
-        params.put("use_secret_chats", false);
-
-        params.put("api_id", cfg.getTdlib().getApiId());
-        params.put("api_hash", cfg.getTdlib().getApiHash());
-        params.put("system_language_code", cfg.getTdlib().getSystemLanguageCode());
-        params.put("device_model", cfg.getTdlib().getDeviceModel());
-        params.put("system_version", systemVersion);
-        params.put("application_version", cfg.getTdlib().getApplicationVersion());
-        params.put("enable_storage_optimizer", true);
-        params.put("ignore_file_names", true);
-        params.put("database_encryption_key", ""); // при необходимости замените на реальный ключ
-
-        log.info("DEBUG setTdlibParameters JSON --> {}", params.toString());
-        client.send(params, TdJsonClient.Channel.AUTH);
+        log.info("DEBUG setTdlibParameters JSON --> {}", p.toString());
+        client.send(p, TdJsonClient.Channel.AUTH);
         log.info("Параметры TDLib отправлены");
     }
 
@@ -198,15 +148,12 @@ public class AuthFlow {
 
         ObjectNode req = Utils.obj("setAuthenticationPhoneNumber");
         req.put("phone_number", phone);
-
-        // ВАЖНО: настройки как в твоём «рабочем» примере
         ObjectNode settings = req.putObject("settings");
         settings.put("@type", "phoneNumberAuthenticationSettings");
         settings.put("allow_flash_call", false);
         settings.put("is_current_phone_number", true);
         settings.put("allow_sms_retriever_api", false);
 
-        // Отправляем с обработкой flood-wait (429) — максимум 60s ждём
         ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.AUTH);
         if ("error".equals(resp.path("@type").asText())) {
             int code = resp.path("code").asInt();
@@ -231,39 +178,14 @@ public class AuthFlow {
             if ("error".equals(resp.path("@type").asText())
                     && resp.path("code").asInt() == 400
                     && resp.path("message").asText().toLowerCase().contains("code")) {
-                if (cfg.getAuth() != null) {
-                    cfg.getAuth().setCode(null);
-                }
+                if (cfg.getAuth() != null) cfg.getAuth().setCode(null);
                 log.warn("Invalid code, try again");
                 continue;
             }
-
             log.info("Код отправлен");
             break;
         }
     }
-
-    private void sendCode() {
-        String code;
-        if (cfg.getAuth() != null && cfg.getAuth().getCode() != null) {
-            code = cfg.getAuth().getCode().trim();
-            cfg.getAuth().setCode(null); // чтобы при повторе запросить ввод заново
-        } else {
-            code = readValue("Enter code from Telegram: ");
-        }
-        ObjectNode req = Utils.obj("checkAuthenticationCode");
-        req.put("code", code);
-
-        ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.AUTH);
-        if ("error".equals(resp.path("@type").asText())) {
-            int c = resp.path("code").asInt();
-            String msg = resp.path("message").asText();
-            log.error("AUTH ERROR on code: code={} msg={}", c, msg);
-        } else {
-            log.info("AUTH DEBUG: code submitted");
-        }
-    }
-
 
     private void sendPassword() {
         String password = cfg.getAuth() != null && cfg.getAuth().getPass() != null
@@ -280,11 +202,10 @@ public class AuthFlow {
         if (console != null) {
             System.out.print(prompt);
             String input = console.readLine();
-            if (input != null) return input.trim();
+            return input == null ? "" : input.trim();
         }
         System.out.print(prompt);
-        try (java.io.BufferedReader reader =
-                     new java.io.BufferedReader(new java.io.InputStreamReader(System.in))) {
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(System.in))) {
             String line = reader.readLine();
             return line == null ? "" : line.trim();
         } catch (java.io.IOException e) {
@@ -293,7 +214,9 @@ public class AuthFlow {
     }
 
     private static void sleep(long ms) {
-        try { Thread.sleep(ms); } catch (InterruptedException ignored) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
         }
     }

@@ -13,7 +13,6 @@ public final class Utils {
         return node;
     }
 
-    /** {"@type":"formattedText","text": text} */
     public static ObjectNode formattedText(String text) {
         ObjectNode ft = MAPPER.createObjectNode();
         ft.put("@type", "formattedText");

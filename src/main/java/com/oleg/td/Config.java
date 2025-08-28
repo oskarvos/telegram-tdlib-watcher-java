@@ -12,9 +12,8 @@ public class Config {
     private String libPath;
     private String botUsername;
     private String welcomeMessage;
-
     private boolean useTestDc = false;
-    private boolean caseInsensitive = true; // только для логирования
+    private boolean caseInsensitive = true;
 
     public Tdlib getTdlib() { return tdlib; }
     public void setTdlib(Tdlib tdlib) { this.tdlib = tdlib; }
@@ -49,25 +48,18 @@ public class Config {
 
         public int getApiId() { return apiId; }
         public void setApiId(int apiId) { this.apiId = apiId; }
-
         public String getApiHash() { return apiHash; }
         public void setApiHash(String apiHash) { this.apiHash = apiHash; }
-
         public String getDatabaseDirectory() { return databaseDirectory; }
         public void setDatabaseDirectory(String databaseDirectory) { this.databaseDirectory = databaseDirectory; }
-
         public String getFilesDirectory() { return filesDirectory; }
         public void setFilesDirectory(String filesDirectory) { this.filesDirectory = filesDirectory; }
-
         public String getSystemLanguageCode() { return systemLanguageCode; }
         public void setSystemLanguageCode(String systemLanguageCode) { this.systemLanguageCode = systemLanguageCode; }
-
         public String getDeviceModel() { return deviceModel; }
         public void setDeviceModel(String deviceModel) { this.deviceModel = deviceModel; }
-
         public String getSystemVersion() { return systemVersion; }
         public void setSystemVersion(String systemVersion) { this.systemVersion = systemVersion; }
-
         public String getApplicationVersion() { return applicationVersion; }
         public void setApplicationVersion(String applicationVersion) { this.applicationVersion = applicationVersion; }
     }
@@ -79,10 +71,8 @@ public class Config {
 
         public String getPhone() { return phone; }
         public void setPhone(String phone) { this.phone = phone; }
-
         public String getCode() { return code; }
         public void setCode(String code) { this.code = code; }
-
         public String getPass() { return pass; }
         public void setPass(String pass) { this.pass = pass; }
     }

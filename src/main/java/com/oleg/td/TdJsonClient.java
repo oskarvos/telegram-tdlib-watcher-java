@@ -5,25 +5,18 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.jna.Library;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Component
 public class TdJsonClient {
     private static final Logger log = LoggerFactory.getLogger(TdJsonClient.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final Pattern FLOOD_WAIT = Pattern.compile("(\\d+)");
 
     public enum Channel { AUTH, MAIN }
 
@@ -40,39 +33,30 @@ public class TdJsonClient {
     private final Pointer client;
     private final TdLib tdLib;
 
-    private volatile boolean running = true;
-    private Thread receiverThread;
-
     public TdJsonClient(@Lazy UpdateRouter router, Config config) {
         this.router = router;
         this.config = config;
 
-        // Загрузка TDLib
         String libPath = config.getLibPath();
         if (libPath != null && !libPath.isEmpty()) {
-            // Фраза как в желаемом примере
             log.info("Loading TDLib from: {}", libPath);
             this.tdLib = Native.load(libPath, TdLib.class);
         } else {
             log.info("Loading TDLib from system library 'tdjson'");
             this.tdLib = Native.load("tdjson", TdLib.class);
         }
-
         this.client = tdLib.td_json_client_create();
         log.info("Create client {}", System.identityHashCode(this.client));
-
-        // Настроим логирование TDLib
         initTdlibLogging();
+        log.info("Поток получения обновлений TDLib запущен (single-threaded pump)");
     }
 
     private void initTdlibLogging() {
-        // Уровень подробности логов TDLib
         ObjectNode verbosity = MAPPER.createObjectNode();
         verbosity.put("@type", "setLogVerbosityLevel");
         verbosity.put("new_verbosity_level", 3);
         send(verbosity);
 
-        // Лог-стрим в "пустой" (без файлов)
         ObjectNode setLogStream = MAPPER.createObjectNode();
         setLogStream.put("@type", "setLogStream");
         ObjectNode empty = MAPPER.createObjectNode();
@@ -81,122 +65,77 @@ public class TdJsonClient {
         send(setLogStream);
     }
 
-    @PostConstruct
-    public void startReceiver() {
-        receiverThread = new Thread(() -> {
-            while (running) {
-                try {
-                    String update = receive(1.0);
-                    if (update != null && !update.trim().isEmpty()) {
-                        ObjectNode updateNode = (ObjectNode) MAPPER.readTree(update);
-                        router.handleUpdate(updateNode);
-                    }
-                } catch (Exception e) {
-                    if (running) {
-                        log.error("Ошибка при получении обновления TDLib", e);
-                    }
-                }
-            }
-        }, "TDLib-Receiver");
-        receiverThread.setDaemon(true);
-        receiverThread.start();
-        log.info("Поток получения обновлений TDLib запущен");
-    }
+    public void send(String request) { tdLib.td_json_client_send(client, request); }
+    public void send(String request, Channel channel) { send(request); }
+    public void send(ObjectNode req) { send(req.toString()); }
+    public void send(ObjectNode req, Channel channel) { send(req.toString(), channel); }
 
-    @PreDestroy
-    public void stopReceiver() {
-        running = false;
-        if (receiverThread != null) {
-            receiverThread.interrupt();
-            try {
-                receiverThread.join(1000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+    /** Single-threaded pump: receive once and dispatch updates (without @extra). */
+    public void pumpOnce(double timeoutSeconds) {
+        String raw = tdLib.td_json_client_receive(client, timeoutSeconds);
+        if (raw == null || raw.isBlank()) return;
+        try {
+            ObjectNode node = (ObjectNode) MAPPER.readTree(raw);
+            if (node.has("@extra")) return; // response to a request; handled where awaited
+            router.handleUpdate(node);
+        } catch (Exception e) {
+            log.error("Ошибка при обработке апдейта TDLib", e);
         }
-        close();
     }
 
-    public void send(String request) {
-        tdLib.td_json_client_send(client, request);
-    }
-
-    public void send(String request, Channel channel) {
-        send(request);
-    }
-
-    public void send(ObjectNode req) {
-        send(req.toString());
-    }
-
-    public void send(ObjectNode req, Channel channel) {
-        send(req.toString(), channel);
-    }
-
-    public ObjectNode requestWithFloodWaitSyncLimited(ObjectNode req, int limit, Channel channel) {
-        int remaining = Math.min(limit, 60);
+    /** Waits for reply to req (by @extra). Routes other updates synchronously. */
+    public ObjectNode requestWithFloodWaitSyncLimited(ObjectNode req, int limitSeconds, Channel channel) {
+        int remaining = Math.min(Math.max(limitSeconds, 0), 60);
         String extra = "req-" + extraId.incrementAndGet();
         req.put("@extra", extra);
 
-        BlockingQueue<ObjectNode> queue = new LinkedBlockingQueue<>();
-        Consumer<ObjectNode> handler = node -> {
-            if (extra.equals(node.path("@extra").asText())) {
-                queue.offer(node);
-            }
-        };
-        router.add(handler);
-        try {
+        while (true) {
+            send(req, channel);
+            long start = System.currentTimeMillis();
             while (true) {
-                send(req, channel);
-                ObjectNode resp;
-                try {
-                    resp = queue.take();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return MAPPER.createObjectNode();
-                }
-
-                String type = resp.path("@type").asText();
-                if ("error".equals(type) && resp.path("code").asInt() == 429) {
-                    int waitSec = extractFloodWait(resp.path("message").asText());
-                    if (waitSec <= 0) return resp;
-
-                    if (waitSec > remaining) {
-                        try { Thread.sleep(remaining * 1000L); } catch (InterruptedException ignored) {
-                            Thread.currentThread().interrupt();
-                        }
-                        remaining = 0;
-                        send(req, channel);
-                        try { return queue.take(); }
-                        catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            return MAPPER.createObjectNode();
-                        }
+                String raw = tdLib.td_json_client_receive(client, 2.0);
+                if (raw == null || raw.isBlank()) {
+                    if (System.currentTimeMillis() - start > 120_000L) {
+                        ObjectNode timeout = MAPPER.createObjectNode();
+                        timeout.put("@type", "error");
+                        timeout.put("code", 408);
+                        timeout.put("message", "Request timeout waiting for @extra=" + extra);
+                        return timeout;
                     }
-                    try { Thread.sleep(waitSec * 1000L); } catch (InterruptedException ignored) {
-                        Thread.currentThread().interrupt();
-                    }
-                    remaining -= waitSec;
                     continue;
                 }
-                return resp;
+                try {
+                    ObjectNode node = (ObjectNode) MAPPER.readTree(raw);
+                    if (extra.equals(node.path("@extra").asText(null))) {
+                        if ("error".equals(node.path("@type").asText()) && node.path("code").asInt() == 429) {
+                            int waitSec = extractFloodWait(node.path("message").asText());
+                            if (waitSec <= 0) return node;
+                            if (waitSec > remaining) {
+                                sleep(remaining * 1000L);
+                                remaining = 0;
+                                break; // one more send then return next response
+                            }
+                            sleep(waitSec * 1000L);
+                            remaining -= waitSec;
+                            break; // resend
+                        }
+                        return node; // success or non-429 error
+                    }
+                    if (!node.has("@extra")) router.handleUpdate(node); // broadcast true updates
+                } catch (Exception e) {
+                    log.error("Ошибка парсинга TDLib JSON", e);
+                }
             }
-        } finally {
-            router.remove(handler);
         }
     }
 
     public static int extractFloodWait(String message) {
-        var m = FLOOD_WAIT.matcher(message);
+        // simple greedy parse of integer seconds anywhere in message
+        var m = Pattern.compile("(\\d+)").matcher(message == null ? "" : message);
         if (m.find()) {
-            try { return Integer.parseInt(m.group(1)); }
-            catch (NumberFormatException ignored) {}
+            try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException ignored) { }
         }
         return -1;
-    }
-
-    public String receive(double timeout) {
-        return tdLib.td_json_client_receive(client, timeout);
     }
 
     public void close() {
@@ -205,4 +144,6 @@ public class TdJsonClient {
             log.info("TDLib клиент закрыт");
         }
     }
+
+    private static void sleep(long ms) { try { Thread.sleep(ms); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); } }
 }
