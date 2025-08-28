@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -30,6 +31,165 @@ public class ChatResolver {
     private static final Pattern P_PRIVATE_C = Pattern.compile("^/?c/(\\d+)(?:/.*)?$");
     // t.me/username
     private static final Pattern P_USERNAME = Pattern.compile("^/?([A-Za-z0-9_]{5,})/?$");
+
+    /**
+     * Универсальное разрешение ввода пользователя:
+     *  - "Id: 7184569562" или просто "7184569562" (chat_id или user_id)
+     *  - "First: Sparky" (а также "name: ...", "имя: ...")
+     *  - "@username"
+     *  - t.me/* (включая joinchat/+hash/c/..)
+     *  - "username" (без @)
+     */
+    public long resolveFlexible(String ref) {
+        String s = ref == null ? "" : ref.trim();
+        if (s.isEmpty()) throw new IllegalArgumentException("Пустая ссылка/идентификатор");
+
+        String lower = s.toLowerCase(Locale.ROOT);
+
+        // First: / Name: / Имя:
+        if (lower.startsWith("first:") || lower.startsWith("name:") || lower.startsWith("имя:")) {
+            String q = s.substring(s.indexOf(':') + 1).trim();
+            if (q.isEmpty()) throw new IllegalArgumentException("Не указано имя после 'First:'");
+            return resolveByFirstName(q);
+        }
+
+        // Id: <number>
+        if (lower.startsWith("id:")) {
+            String num = s.substring(s.indexOf(':') + 1).trim();
+            return resolveByNumeric(num);
+        }
+
+        // @username
+        if (s.startsWith("@")) {
+            return resolveUsernameOrThrow(s.substring(1));
+        }
+
+        // Голое число -> пробуем как chat_id, затем как user_id
+        if (s.startsWith("-") || Character.isDigit(s.charAt(0))) {
+            return resolveByNumeric(s);
+        }
+
+        // URL t.me / telegram.me
+        try {
+            URI uri = URI.create(s);
+            if (uri.getHost() != null &&
+                    (uri.getHost().equalsIgnoreCase("t.me") || uri.getHost().equalsIgnoreCase("telegram.me"))) {
+                return resolveOrJoin(s); // существующая логика
+            }
+        } catch (Exception ignore) {
+            // упадем в username
+        }
+
+        // иначе — пробуем как username без @
+        return resolveUsernameOrThrow(s);
+    }
+
+    /**
+     * Числовой ввод:
+     *  - если это валидный chat_id — вернём его;
+     *  - если это user_id — создадим приватный чат через createPrivateChat и вернём chat.id.
+     */
+    private long resolveByNumeric(String raw) {
+        long n;
+        try {
+            n = Long.parseLong(raw.trim());
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Некорректный числовой идентификатор: " + raw);
+        }
+
+        // Попытка получить чат напрямую
+        ObjectNode get = MAPPER.createObjectNode();
+        get.put("@type", "getChat");
+        get.put("chat_id", n);
+        ObjectNode getResp = client.requestWithFloodWaitSyncLimited(get, 60, TdJsonClient.Channel.MAIN);
+        if ("chat".equals(getResp.path("@type").asText())) {
+            log.info("ChatResolver: numeric '{}' распознан как chat_id={}", raw, n);
+            return n;
+        }
+
+        // Если не chat — пробуем как user_id создать приватный чат
+        ObjectNode cp = MAPPER.createObjectNode();
+        cp.put("@type", "createPrivateChat");
+        cp.put("user_id", n);
+        cp.put("force", true);
+
+        ObjectNode cpResp = client.requestWithFloodWaitSyncLimited(cp, 60, TdJsonClient.Channel.MAIN);
+        if ("chat".equals(cpResp.path("@type").asText())) {
+            long chatId = cpResp.path("id").asLong();
+            log.info("ChatResolver: '{}' распознан как user_id, создан приватный chat_id={}", raw, chatId);
+            return chatId;
+        }
+
+        String typ = cpResp.path("@type").asText();
+        String msg = cpResp.path("message").asText();
+        throw new IllegalArgumentException("Не удалось распознать '" + raw + "' как chat_id или user_id (ответ: " + typ + (msg == null ? "" : ", " + msg) + ")");
+    }
+
+    /**
+     * Поиск по имени: сначала ищем пользователей (searchUsers), потом публичные чаты (searchPublicChats).
+     * При нахождении пользователя — создаём приватный чат и проверяем title на включение строки поиска.
+     */
+    private long resolveByFirstName(String nameQuery) {
+        String q = nameQuery.trim();
+        if (q.isEmpty()) throw new IllegalArgumentException("Пустое имя для поиска");
+
+        // 1) Пользователи
+        ObjectNode su = MAPPER.createObjectNode();
+        su.put("@type", "searchUsers");
+        su.put("query", q);
+        su.put("limit", 20);
+        ObjectNode suResp = client.requestWithFloodWaitSyncLimited(su, 60, TdJsonClient.Channel.MAIN);
+        if ("users".equals(suResp.path("@type").asText()) && suResp.path("user_ids").isArray()) {
+            var arr = suResp.path("user_ids");
+            for (var idNode : arr) {
+                long uid = idNode.asLong(0);
+                if (uid == 0) continue;
+
+                ObjectNode cp = MAPPER.createObjectNode();
+                cp.put("@type", "createPrivateChat");
+                cp.put("user_id", uid);
+                cp.put("force", true);
+                ObjectNode cpResp = client.requestWithFloodWaitSyncLimited(cp, 60, TdJsonClient.Channel.MAIN);
+                if ("chat".equals(cpResp.path("@type").asText())) {
+                    String title = cpResp.path("title").asText("");
+                    if (!title.isBlank() && title.toLowerCase(Locale.ROOT).contains(q.toLowerCase(Locale.ROOT))) {
+                        long chatId = cpResp.path("id").asLong();
+                        log.info("ChatResolver: First:'{}' -> приватный чат '{}' ({})", q, title, chatId);
+                        return chatId;
+                    }
+                }
+            }
+        }
+
+        // 2) Публичные чаты/каналы
+        ObjectNode spc = MAPPER.createObjectNode();
+        spc.put("@type", "searchPublicChats");
+        spc.put("query", q);
+        ObjectNode spcResp = client.requestWithFloodWaitSyncLimited(spc, 60, TdJsonClient.Channel.MAIN);
+        if ("chats".equals(spcResp.path("@type").asText()) && spcResp.path("chat_ids").isArray()) {
+            var ids = spcResp.path("chat_ids");
+            for (var cid : ids) {
+                long chatId = cid.asLong(0);
+                if (chatId == 0) continue;
+
+                ObjectNode gc = MAPPER.createObjectNode();
+                gc.put("@type", "getChat");
+                gc.put("chat_id", chatId);
+                ObjectNode gcResp = client.requestWithFloodWaitSyncLimited(gc, 60, TdJsonClient.Channel.MAIN);
+                if ("chat".equals(gcResp.path("@type").asText())) {
+                    String title = gcResp.path("title").asText("");
+                    if (!title.isBlank() && title.toLowerCase(Locale.ROOT).contains(q.toLowerCase(Locale.ROOT))) {
+                        log.info("ChatResolver: First:'{}' -> публичный чат '{}' ({})", q, title, chatId);
+                        return chatId;
+                    }
+                }
+            }
+        }
+
+        throw new IllegalArgumentException("По запросу имени '" + q + "' не найден подходящий чат/пользователь");
+    }
+
+    /* ==================== ИМЕЮЩАЯСЯ ЛОГИКА (без изменений) ==================== */
 
     /**
      * Принимает:
@@ -116,7 +276,7 @@ public class ChatResolver {
     /**
      * Разруливаем username через searchPublicChat.
      */
-    private long resolveUsernameOrThrow(String usernameRaw) {
+    long resolveUsernameOrThrow(String usernameRaw) {
         String username = usernameRaw.replaceAll("^@+", "");
         ObjectNode req = MAPPER.createObjectNode();
         req.put("@type", "searchPublicChat");
@@ -175,9 +335,8 @@ public class ChatResolver {
         if ("error".equals(it)) {
             int code = impResp.path("code").asInt();
             String msg = impResp.path("message").asText();
-            // популярные случаи: INVITE_HASH_EXPIRED, USER_ALREADY_PARTICIPANT, INVITE_REQUEST_SENT
-            String lower = msg == null ? "" : msg.toLowerCase();
-            // если уже участник — попробуем ещё раз через check (иногда именно после error появляется chat_id)
+            String lower = msg == null ? "" : msg.toLowerCase(Locale.ROOT);
+            // если уже участник — повторный check может вернуть chat_id
             if (lower.contains("already") || lower.contains("participant")) {
                 ObjectNode recheck = MAPPER.createObjectNode();
                 recheck.put("@type", "checkChatInviteLink");

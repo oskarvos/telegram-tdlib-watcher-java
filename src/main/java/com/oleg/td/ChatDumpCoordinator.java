@@ -36,7 +36,7 @@ public class ChatDumpCoordinator {
         for (String chatRef : request.getChats()) {
             if (stopRequested) { log.info("Дамп прерван пользователем"); break; }
 
-            long chatId = resolver.resolveOrJoin(chatRef.trim());
+            long chatId = resolver.resolveFlexible(chatRef.trim()); // <--- обновлено
             log.info("Начинаем дамп чата {} (ref='{}')", chatId, chatRef);
 
             db.prepareSchema(chatId);
