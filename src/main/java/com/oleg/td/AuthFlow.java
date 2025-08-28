@@ -48,6 +48,11 @@ public class AuthFlow {
                     try { Thread.sleep(Math.max(0, waitTime) * 1000L); } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                     }
+                } else if (errorCode == 400 && errorMessage.toLowerCase().contains("code")
+                        && "authorizationStateWaitCode".equals(stateRef.get())) {
+                    log.warn("Неверный код, попробуйте снова");
+                    if (cfg.getAuth() != null) cfg.getAuth().setCode(null);
+                    sendCode();
                 }
                 return;
             }
@@ -70,8 +75,6 @@ public class AuthFlow {
 
         wired = true;
         log.info("AuthFlow успешно подключен");
-
-        // 👇 ДОБАВИТЬ ЭТО: не ждём первого апдейта, сразу спрашиваем текущее состояние
         client.send(Utils.obj("getAuthorizationState"), TdJsonClient.Channel.AUTH);
     }
 
@@ -80,8 +83,6 @@ public class AuthFlow {
         if (!wired) throw new IllegalStateException("AuthFlow не инициализирован. Сначала вызовите wireInto()");
 
         log.info("Начало процесса авторизации...");
-
-        // маленькая страховка
         client.send(Utils.obj("getAuthorizationState"), TdJsonClient.Channel.AUTH);
 
         String last = null;
@@ -117,7 +118,7 @@ public class AuthFlow {
                         sendTdParams();
                     }
                     case "authorizationStateWaitPhoneNumber" -> sendPhoneNumber();
-                    case "authorizationStateWaitCode" -> sendCode();
+                    case "authorizationStateWaitCode" -> sendCodeWithRetry();
                     case "authorizationStateWaitPassword" -> sendPassword();
                     case "authorizationStateReady" -> {
                         authorized.set(true);
@@ -194,21 +195,75 @@ public class AuthFlow {
         String phone = cfg.getAuth() != null && cfg.getAuth().getPhone() != null
                 ? cfg.getAuth().getPhone().trim()
                 : readValue("Enter phone number (+xxxxxxxxxxx): ");
+
         ObjectNode req = Utils.obj("setAuthenticationPhoneNumber");
         req.put("phone_number", phone);
-        client.send(req, TdJsonClient.Channel.AUTH);
-        log.info("AUTH DEBUG: phone submitted");
+
+        // ВАЖНО: настройки как в твоём «рабочем» примере
+        ObjectNode settings = req.putObject("settings");
+        settings.put("@type", "phoneNumberAuthenticationSettings");
+        settings.put("allow_flash_call", false);
+        settings.put("is_current_phone_number", true);
+        settings.put("allow_sms_retriever_api", false);
+
+        // Отправляем с обработкой flood-wait (429) — максимум 60s ждём
+        ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.AUTH);
+        if ("error".equals(resp.path("@type").asText())) {
+            int code = resp.path("code").asInt();
+            String msg = resp.path("message").asText();
+            log.error("AUTH ERROR on phone: code={} msg={}", code, msg);
+        } else {
+            log.info("AUTH DEBUG: phone submitted");
+            log.info("Номер телефона отправлен: {}", phone);
+        }
+    }
+
+    private void sendCodeWithRetry() {
+        while (true) {
+            String code = cfg.getAuth() != null && cfg.getAuth().getCode() != null
+                    ? cfg.getAuth().getCode().trim()
+                    : readValue("Enter code from Telegram: ");
+
+            ObjectNode req = Utils.obj("checkAuthenticationCode");
+            req.put("code", code);
+            ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.AUTH);
+
+            if ("error".equals(resp.path("@type").asText())
+                    && resp.path("code").asInt() == 400
+                    && resp.path("message").asText().toLowerCase().contains("code")) {
+                if (cfg.getAuth() != null) {
+                    cfg.getAuth().setCode(null);
+                }
+                log.warn("Invalid code, try again");
+                continue;
+            }
+
+            log.info("Код отправлен");
+            break;
+        }
     }
 
     private void sendCode() {
-        String code = cfg.getAuth() != null && cfg.getAuth().getCode() != null
-                ? cfg.getAuth().getCode().trim()
-                : readValue("Enter code from Telegram: ");
+        String code;
+        if (cfg.getAuth() != null && cfg.getAuth().getCode() != null) {
+            code = cfg.getAuth().getCode().trim();
+            cfg.getAuth().setCode(null); // чтобы при повторе запросить ввод заново
+        } else {
+            code = readValue("Enter code from Telegram: ");
+        }
         ObjectNode req = Utils.obj("checkAuthenticationCode");
         req.put("code", code);
-        client.send(req, TdJsonClient.Channel.AUTH);
-        log.info("Код отправлен");
+
+        ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.AUTH);
+        if ("error".equals(resp.path("@type").asText())) {
+            int c = resp.path("code").asInt();
+            String msg = resp.path("message").asText();
+            log.error("AUTH ERROR on code: code={} msg={}", c, msg);
+        } else {
+            log.info("AUTH DEBUG: code submitted");
+        }
     }
+
 
     private void sendPassword() {
         String password = cfg.getAuth() != null && cfg.getAuth().getPass() != null
