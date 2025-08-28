@@ -8,10 +8,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-/**
- * Координатор дампа чатов.
- * Только новые сообщения: останавливаемся, как только дошли до mid <= lastSavedId.
- */
 @Component
 public class ChatDumpCoordinator {
     private static final Logger log = LoggerFactory.getLogger(ChatDumpCoordinator.class);
@@ -45,10 +41,14 @@ public class ChatDumpCoordinator {
 
             db.prepareSchema(chatId);
 
-            final long lastSavedId = db.getLastSavedIdForChat(chatId);
+            // ключевое изменение: lastSavedId считаем по messages, а если их не сохраняем — по медиа
+            long lastSavedId = request.isMessages()
+                    ? db.getLastSavedMessageId(chatId)
+                    : db.getMaxMediaId(chatId);
+
             if (lastSavedId > 0) log.info("Чат {}: lastSavedId={}", chatId, lastSavedId);
 
-            long fromMessageId = 0; // берём с самых новых
+            long fromMessageId = 0; // 0 — начинать с последних
             boolean reachedAlreadySaved = false;
 
             while (!stopRequested && !reachedAlreadySaved) {
@@ -100,12 +100,8 @@ public class ChatDumpCoordinator {
         }
     }
 
-    /** Запрос на остановку дампа. */
-    public void stop() {
-        stopRequested = true;
-    }
+    public void stop() { stopRequested = true; }
 
-    /** Разобрать одно сообщение и сохранить его части в БД. */
     private void processMessage(long chatId, JsonNode msg, DumpRequest request) {
         long messageId = msg.path("id").asLong();
         long date = msg.path("date").asLong(0);
@@ -121,9 +117,9 @@ public class ChatDumpCoordinator {
         JsonNode content = msg.path("content");
         String ctype = content.path("@type").asText();
 
-        // 1) Текст + ссылки
+        // 1) текст + ссылки
         if ("messageText".equals(ctype)) {
-            JsonNode ft = content.path("text"); // formattedText
+            JsonNode ft = content.path("text");
             String plainText = ft.path("text").asText(null);
 
             if (request.isMessages()) db.saveMessage(chatId, messageId, date, senderId, replyTo, plainText);
@@ -132,7 +128,7 @@ public class ChatDumpCoordinator {
             if (request.isMessages()) db.saveMessage(chatId, messageId, date, senderId, replyTo, null);
         }
 
-        // 2) Фото
+        // 2) фото
         if ("messagePhoto".equals(ctype) && request.isPhotos()) {
             JsonNode photo = content.path("photo");
             JsonNode captionFT = content.path("caption");
@@ -154,7 +150,7 @@ public class ChatDumpCoordinator {
             if (request.isLinks()) extractLinksFromFormattedText(chatId, messageId, captionFT);
         }
 
-        // 3) Видео
+        // 3) видео
         if ("messageVideo".equals(ctype) && request.isVideos()) {
             JsonNode video = content.path("video");
             String caption = content.path("caption").path("text").asText(null);
@@ -173,7 +169,7 @@ public class ChatDumpCoordinator {
             if (request.isLinks()) extractLinksFromFormattedText(chatId, messageId, content.path("caption"));
         }
 
-        // 4) Голосовые/аудио
+        // 4) голос/аудио
         if ("messageVoiceNote".equals(ctype) && request.isMessages()) {
             JsonNode vn = content.path("voice_note");
             Integer duration = vn.path("duration").isInt() ? vn.path("duration").asInt() : null;
@@ -205,7 +201,6 @@ public class ChatDumpCoordinator {
         }
     }
 
-    /** Извлечь ссылки из formattedText.entities и сохранить. */
     private void extractLinksFromFormattedText(long chatId, long messageId, JsonNode formattedText) {
         if (formattedText == null || formattedText.isMissingNode()) return;
 
@@ -219,9 +214,7 @@ public class ChatDumpCoordinator {
                 int offset = e.path("offset").asInt(0);
                 int length = e.path("length").asInt(0);
                 String url = safeSubstring(fullText, offset, length);
-                if (url != null && !url.isBlank()) {
-                    db.saveLink(chatId, messageId, url, url);
-                }
+                if (url != null && !url.isBlank()) db.saveLink(chatId, messageId, url, url);
             } else if ("textEntityTypeTextUrl".equals(t)) {
                 String url = e.path("type").path("url").asText(null);
                 if (url != null && !url.isBlank()) {
