@@ -1,3 +1,8 @@
+// ============================================================================
+// File: src/main/java/com/oleg/td/AuthFlow.java
+// Назначение: Машина состояний авторизации TDLib. Работает строго в одном
+//              потоке: мы сами дергаем receive() через TdJsonClient.pumpOnce().
+// ============================================================================
 package com.oleg.td;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -9,6 +14,20 @@ import java.io.Console;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+/**
+ * Машина состояний авторизации.
+ * <p>
+ * Алгоритм (строго по заданной логике):
+ * <ol>
+ *   <li>wireInto() — подписка на updateAuthorizationState, отслеживание текущего состояния</li>
+ *   <li>authorizeBlocking() — цикл: pumpOnce() + реакция на состояния TDLib</li>
+ *   <li>Шаг A: authorizationStateWaitTdlibParameters → setTdlibParameters</li>
+ *   <li>Шаг B: authorizationStateWaitPhoneNumber → setAuthenticationPhoneNumber</li>
+ *   <li>Шаг C: authorizationStateWaitCode → checkAuthenticationCode</li>
+ *   <li>Шаг D: authorizationStateWaitPassword (если включена 2FA) → checkAuthenticationPassword</li>
+ *   <li>Готово: authorizationStateReady</li>
+ * </ol>
+ */
 @Component
 public class AuthFlow {
     private static final Logger log = LoggerFactory.getLogger(AuthFlow.class);
@@ -21,6 +40,11 @@ public class AuthFlow {
     private final AtomicReference<String> stateRef = new AtomicReference<>(null);
     private boolean wired = false;
 
+    /**
+     * @param client TDLib JSON клиент (обертка над JNA)
+     * @param cfg    Конфигурация приложения
+     * @param router Роутер апдейтов TDLib
+     */
     public AuthFlow(TdJsonClient client, Config cfg, UpdateRouter router) {
         this.client = client;
         this.cfg = cfg;
@@ -28,14 +52,15 @@ public class AuthFlow {
     }
 
     /**
-     * Subscribes to authorization updates.
+     * Подписка на апдейты авторизации через UpdateRouter.
+     * Должен быть вызван до authorizeBlocking().
      */
     public void wireInto() {
         if (wired) {
-            log.info("AuthFlow уже подключен");
+            log.info("AuthFlow уже подключён");
             return;
         }
-        log.info("Подключение AuthFlow к UpdateRouter...");
+        log.info("Подключение AuthFlow к UpdateRouter…");
 
         router.add(n -> {
             final String type = n.path("@type").asText();
@@ -43,10 +68,10 @@ public class AuthFlow {
                 var authState = n.path("authorization_state");
                 String state = authState.path("@type").asText();
                 stateRef.set(state);
-                log.info("AUTH DEBUG: state = {}", state);
+                log.info("AUTH STATE: {}", state);
                 if ("authorizationStateReady".equals(state)) {
                     authorized.set(true);
-                    log.info("Авторизация прошла успешно!");
+                    log.info("Авторизация прошла успешно");
                 } else if ("authorizationStateClosed".equals(state)) {
                     authorized.set(false);
                     log.info("Авторизация закрыта");
@@ -55,17 +80,18 @@ public class AuthFlow {
         });
 
         wired = true;
-        log.info("AuthFlow успешно подключен");
+        log.info("AuthFlow подключён");
         client.send(Utils.obj("getAuthorizationState"), TdJsonClient.Channel.AUTH);
     }
 
     /**
-     * Blocking state-machine. Single-threaded: we pump receive inside this loop.
+     * Блокирующая авторизация: цикл опроса TDLib и реакция на состояния.
+     * Выполняется в том же потоке, где вызвана.
      */
     public void authorizeBlocking() {
         if (!wired) throw new IllegalStateException("AuthFlow не инициализирован. Сначала вызовите wireInto()");
 
-        log.info("Начало процесса авторизации...");
+        log.info("Старт процесса авторизации…");
         client.send(Utils.obj("getAuthorizationState"), TdJsonClient.Channel.AUTH);
 
         String last = null;
@@ -73,7 +99,7 @@ public class AuthFlow {
         long timeoutMs = 300_000L;
 
         while (!authorized.get() && (System.currentTimeMillis() - startTime) < timeoutMs) {
-            client.pumpOnce(1.5); // pulls exactly one update (if any) in this thread
+            client.pumpOnce(1.5); // Разово читаем обновления TDLib
 
             String state = stateRef.get();
             if (state == null) {
@@ -107,6 +133,7 @@ public class AuthFlow {
         if (!authorized.get()) throw new RuntimeException("Таймаут авторизации после " + timeoutMs + " мс");
     }
 
+    /** Отправка параметров TDLib (Шаг A). */
     private void sendTdParams() {
         ObjectNode p = Utils.obj("setTdlibParameters");
 
@@ -136,15 +163,16 @@ public class AuthFlow {
         p.put("ignore_file_names", true);
         p.put("database_encryption_key", "");
 
-        log.info("DEBUG setTdlibParameters JSON --> {}", p.toString());
+        log.info("Отправляем setTdlibParameters: {}", p.toString());
         client.send(p, TdJsonClient.Channel.AUTH);
         log.info("Параметры TDLib отправлены");
     }
 
+    /** Отправка номера телефона (Шаг B). */
     private void sendPhoneNumber() {
         String phone = cfg.getAuth() != null && cfg.getAuth().getPhone() != null
                 ? cfg.getAuth().getPhone().trim()
-                : readValue("Enter phone number (+xxxxxxxxxxx): ");
+                : readValue("Введите номер телефона (+xxxxxxxxxxx): ");
 
         ObjectNode req = Utils.obj("setAuthenticationPhoneNumber");
         req.put("phone_number", phone);
@@ -158,18 +186,18 @@ public class AuthFlow {
         if ("error".equals(resp.path("@type").asText())) {
             int code = resp.path("code").asInt();
             String msg = resp.path("message").asText();
-            log.error("AUTH ERROR on phone: code={} msg={}", code, msg);
+            log.error("Ошибка при отправке номера: код={} сообщение={}", code, msg);
         } else {
-            log.info("AUTH DEBUG: phone submitted");
             log.info("Номер телефона отправлен: {}", phone);
         }
     }
 
+    /** Отправка кода подтверждения (Шаг C) с повтором при неверном коде. */
     private void sendCodeWithRetry() {
         while (true) {
             String code = cfg.getAuth() != null && cfg.getAuth().getCode() != null
                     ? cfg.getAuth().getCode().trim()
-                    : readValue("Enter code from Telegram: ");
+                    : readValue("Введите код из Telegram: ");
 
             ObjectNode req = Utils.obj("checkAuthenticationCode");
             req.put("code", code);
@@ -179,24 +207,29 @@ public class AuthFlow {
                     && resp.path("code").asInt() == 400
                     && resp.path("message").asText().toLowerCase().contains("code")) {
                 if (cfg.getAuth() != null) cfg.getAuth().setCode(null);
-                log.warn("Invalid code, try again");
+                log.warn("Неверный код, повторите ввод");
                 continue;
             }
-            log.info("Код отправлен");
+            log.info("Код подтверждения отправлен");
             break;
         }
     }
 
+    /** Отправка пароля 2FA (Шаг D, опционально). */
     private void sendPassword() {
         String password = cfg.getAuth() != null && cfg.getAuth().getPass() != null
                 ? cfg.getAuth().getPass().trim()
-                : readValue("Enter 2FA password: ");
+                : readValue("Введите пароль 2FA: ");
         ObjectNode req = Utils.obj("checkAuthenticationPassword");
         req.put("password", password);
         client.send(req, TdJsonClient.Channel.AUTH);
-        log.info("Пароль отправлен");
+        log.info("Пароль 2FA отправлен");
     }
 
+    /**
+     * Безопасное чтение значения из STDIN/консоли.
+     * @param prompt Подсказка для пользователя
+     */
     private String readValue(String prompt) {
         Console console = System.console();
         if (console != null) {
@@ -213,15 +246,11 @@ public class AuthFlow {
         }
     }
 
+    /** Пауза с обработкой InterruptedException. */
     private static void sleep(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-        }
+        try { Thread.sleep(ms); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
     }
 
-    public boolean isAuthorized() {
-        return authorized.get();
-    }
+    /** @return признак, что TDLib в состоянии authorizationStateReady. */
+    public boolean isAuthorized() { return authorized.get(); }
 }

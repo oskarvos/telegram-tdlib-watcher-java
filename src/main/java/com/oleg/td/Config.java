@@ -1,8 +1,15 @@
+// ============================================================================
+// File: src/main/java/com/oleg/td/Config.java
+// Назначение: Контейнер конфигурации (через application.properties).
+// ============================================================================
 package com.oleg.td;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+/**
+ * Конфигурация приложения (префикс td.*).
+ */
 @Component
 @ConfigurationProperties(prefix = "td")
 public class Config {
@@ -36,12 +43,15 @@ public class Config {
     public boolean isCaseInsensitive() { return caseInsensitive; }
     public void setCaseInsensitive(boolean caseInsensitive) { this.caseInsensitive = caseInsensitive; }
 
+    /**
+     * Параметры TDLib.
+     */
     public static class Tdlib {
         private int apiId;
         private String apiHash;
         private String databaseDirectory = "tdlib";
         private String filesDirectory = "tdlib/files";
-        private String systemLanguageCode = "en";
+        private String systemLanguageCode = "ru";
         private String deviceModel = "Java";
         private String systemVersion;
         private String applicationVersion = "1.0.4-debug";
@@ -64,6 +74,9 @@ public class Config {
         public void setApplicationVersion(String applicationVersion) { this.applicationVersion = applicationVersion; }
     }
 
+    /**
+     * Параметры авторизации (номер/код/пароль 2FA).
+     */
     public static class Auth {
         private String phone;
         private String code;

@@ -1,3 +1,7 @@
+// ============================================================================
+// File: src/main/java/com/oleg/td/DumpService.java
+// Назначение: Высокоуровневое управление процессом дампа и прогрессом.
+// ============================================================================
 package com.oleg.td;
 
 import org.slf4j.Logger;
@@ -6,60 +10,54 @@ import org.springframework.stereotype.Service;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * Сервис запуска/остановки дампа. Один активный дамп за раз.
+ */
 @Service
 public class DumpService {
     private static final Logger log = LoggerFactory.getLogger(DumpService.class);
-    private final AtomicBoolean running = new AtomicBoolean(false);
-    private int progress = 0;
 
-    private final TdJsonClient tdJsonClient;
+    private final AtomicBoolean running = new AtomicBoolean(false);
+    private volatile int progress = 0; // условные проценты (эвристика)
+
     private final AuthFlow authFlow;
     private final ChatDumpCoordinator coordinator;
 
-    public DumpService(TdJsonClient tdJsonClient, AuthFlow authFlow, ChatDumpCoordinator coordinator) {
-        this.tdJsonClient = tdJsonClient;
+    /**
+     * @param authFlow    Машина состояний авторизации
+     * @param coordinator Координатор дампа
+     */
+    public DumpService(AuthFlow authFlow, ChatDumpCoordinator coordinator) {
         this.authFlow = authFlow;
         this.coordinator = coordinator;
     }
 
+    /**
+     * Запускает дамп (если не запущен). Авторизация выполняется перед дампом.
+     */
     public synchronized void startDump(DumpRequest request) {
-        if (running.get()) {
-            log.warn("Dump already running");
-            return;
-        }
+        if (running.get()) { log.warn("Дамп уже запущен"); return; }
         running.set(true);
         progress = 0;
-
         try {
-            // Настраиваем обработчики авторизации
             authFlow.wireInto();
-
-            // Запускаем авторизацию в текущем потоке
             authFlow.authorizeBlocking();
-
-            if (!authFlow.isAuthorized()) {
-                log.error("Authorization failed");
-                return;
-            }
-
-            // После успешной авторизации начинаем дамп
+            if (!authFlow.isAuthorized()) { log.error("Авторизация не выполнена"); return; }
             coordinator.dumpChats(request, this::incrementProgress);
         } catch (Exception e) {
-            log.error("Dump failed", e);
+            log.error("Дамп завершился с ошибкой", e);
         } finally {
             running.set(false);
+            progress = 100;
         }
     }
 
-    public void stopDump() {
-        coordinator.stop();
-    }
+    /** Остановка дампа. */
+    public void stopDump() { coordinator.stop(); }
 
-    public DumpProgress getProgress() {
-        return new DumpProgress(progress, running.get());
-    }
+    /** Текущий прогресс. */
+    public DumpProgress getProgress() { return new DumpProgress(Math.min(progress, 100), running.get()); }
 
-    private synchronized void incrementProgress() {
-        progress++;
-    }
+    /** Эвристическое увеличение процентов (без знания общего числа сообщений). */
+    private synchronized void incrementProgress() { if (progress < 99) progress++; }
 }

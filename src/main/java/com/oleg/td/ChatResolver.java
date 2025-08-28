@@ -1,3 +1,8 @@
+// ============================================================================
+// File: src/main/java/com/oleg/td/ChatResolver.java
+// Назначение: Преобразует пользовательский ввод (chat_id / @username / t.me/…)
+//              в числовой chat_id. При необходимости присоединяется по инвайту.
+// ============================================================================
 package com.oleg.td;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -6,6 +11,9 @@ import org.springframework.stereotype.Component;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Резолвер чатов: ID, @username и t.me/…
+ */
 @Component
 public class ChatResolver {
     private static final Pattern TME_USERNAME = Pattern.compile("^(?:https?://)?t\\.me/(@?([A-Za-z0-9_]{5,}))/?$");
@@ -13,9 +21,13 @@ public class ChatResolver {
 
     private final TdJsonClient td;
 
+    /** @param td TDLib JSON клиент */
     public ChatResolver(TdJsonClient td) { this.td = td; }
 
-    /** Accepts: numeric chat_id | @username | t.me/username | t.me/+invite */
+    /**
+     * @param ref chat_id | @username | t.me/username | t.me/+invite
+     * @return числовой chat_id
+     */
     public long resolveOrJoin(String ref) {
         String s = ref.trim();
         try { if (s.matches("^-?\\d+$")) return Long.parseLong(s); } catch (NumberFormatException ignored) {}
