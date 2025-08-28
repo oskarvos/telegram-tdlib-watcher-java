@@ -6,59 +6,84 @@ import org.springframework.stereotype.Service;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * Сервис-обёртка: старт/стоп дампа и прогресс.
+ */
 @Service
 public class DumpService {
     private static final Logger log = LoggerFactory.getLogger(DumpService.class);
+
     private final AtomicBoolean running = new AtomicBoolean(false);
     private int progress = 0;
 
-    private final TdJsonClient tdJsonClient;
     private final AuthFlow authFlow;
     private final ChatDumpCoordinator coordinator;
+    private final ChatResolver resolver;
+    private final DatabaseManager db;
 
-    public DumpService(TdJsonClient tdJsonClient, AuthFlow authFlow, ChatDumpCoordinator coordinator) {
-        this.tdJsonClient = tdJsonClient;
+    public DumpService(AuthFlow authFlow, ChatDumpCoordinator coordinator, ChatResolver resolver, DatabaseManager db) {
         this.authFlow = authFlow;
         this.coordinator = coordinator;
+        this.resolver = resolver;
+        this.db = db;
     }
 
+    /**
+     * Старт дампа:
+     *  1) Подключаемся к TDLib (авторизация)
+     *  2) Для каждого чата создаём схему в БД
+     *  3) Запускаем координатор
+     */
     public synchronized void startDump(DumpRequest request) {
         if (running.get()) {
-            log.warn("Dump already running");
+            log.warn("Дамп уже выполняется");
             return;
         }
         running.set(true);
         progress = 0;
 
         try {
-            // Настраиваем обработчики авторизации
+            log.info("Инициализация авторизации TDLib...");
             authFlow.wireInto();
-
-            // Запускаем авторизацию в текущем потоке
             authFlow.authorizeBlocking();
 
             if (!authFlow.isAuthorized()) {
-                log.error("Authorization failed");
+                log.error("Авторизация не удалась — дамп прерван");
                 return;
             }
 
-            // После успешной авторизации начинаем дамп
+            // Создать схемы сразу при старте (как просили)
+            for (String ref : request.getChats()) {
+                try {
+                    long chatId = resolver.resolveOrJoin(ref);
+                    db.prepareSchema(chatId);
+                } catch (Exception ex) {
+                    log.error("Не удалось подготовить схему для '{}': {}", ref, ex.getMessage(), ex);
+                }
+            }
+
+            log.info("Запуск дампа чатов...");
             coordinator.dumpChats(request, this::incrementProgress);
+            log.info("Дамп завершён");
         } catch (Exception e) {
-            log.error("Dump failed", e);
+            log.error("Ошибка при выполнении дампа: {}", e.getMessage(), e);
         } finally {
             running.set(false);
         }
     }
 
+    /** Остановить дамп. */
     public void stopDump() {
         coordinator.stop();
+        log.info("Получен сигнал остановки дампа");
     }
 
+    /** Текущий прогресс. */
     public DumpProgress getProgress() {
         return new DumpProgress(progress, running.get());
     }
 
+    /** Инкремент — вызывается координатором на каждое обработанное сообщение. */
     private synchronized void incrementProgress() {
         progress++;
     }

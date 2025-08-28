@@ -332,34 +332,16 @@
 </div>
 
 <div class="footer">
-    <p>TDLib Chat Dump &copy; 2023</p>
+    <p>TDLib Chat Dump &copy; 2025</p>
 </div>
 
 <script>
-    // Эмуляция функций бэкенда для демонстрации
-    function simulateBackendRequest() {
-        return new Promise((resolve) => {
-            setTimeout(() => {
-                resolve({ success: true });
-            }, 800);
-        });
-    }
-
-    function simulateProgressCheck() {
-        return new Promise((resolve) => {
-            setTimeout(() => {
-                // Случайным образом определяем, завершен ли процесс
-                const isRunning = Math.random() > 0.7 ? false : true;
-                resolve({
-                    running: isRunning,
-                    progress: isRunning ? Math.min(100, Math.floor(Math.random() * 10) + 1 + parseInt(document.getElementById('progress-value').textContent)) : 100
-                });
-            }, 600);
-        });
-    }
-
     async function startDump() {
-        const chats = document.getElementById('chats').value.split(/\n+/);
+        const chats = document.getElementById('chats').value
+            .split(/\n+/)
+            .map(s => s.trim())
+            .filter(Boolean);
+
         const request = {
             chats: chats,
             photos: document.getElementById('photos').checked,
@@ -368,111 +350,78 @@
             messages: document.getElementById('messages').checked
         };
 
-        // Проверяем, что выбран хотя бы один чат
-        if (request.chats.length === 0 || request.chats[0].trim() === '') {
-            document.getElementById('status').textContent = 'Ошибка: Не указаны чаты для обработки';
-            document.getElementById('status').style.background = '#ffecec';
-            document.getElementById('status').style.color = '#e74c3c';
+        if (request.chats.length === 0) {
+            setStatus('Ошибка: не указаны чаты для обработки', '#ffecec', '#e74c3c');
             return;
         }
-
-        // Проверяем, что выбран хотя бы один тип контента
         if (!request.photos && !request.videos && !request.links && !request.messages) {
-            document.getElementById('status').textContent = 'Ошибка: Не выбран ни один тип контента';
-            document.getElementById('status').style.background = '#ffecec';
-            document.getElementById('status').style.color = '#e74c3c';
+            setStatus('Ошибка: не выбран ни один тип контента', '#ffecec', '#e74c3c');
             return;
         }
 
         document.getElementById('progress-bar').classList.remove('green');
-        document.getElementById('status').textContent = 'Начинаем процесс дампа...';
-        document.getElementById('status').style.background = '#edf7ff';
-        document.getElementById('status').style.color = '#2c3e50';
+        setStatus('Начинаем процесс дампа...', '#edf7ff', '#2c3e50');
+        setProgress(0);
 
         try {
-            // В реальном приложении здесь был бы вызов API
-            // await fetch('/start', {...});
-            await simulateBackendRequest();
+            const res = await fetch('/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(request)
+            });
+            if (!res.ok) throw new Error('Сервер вернул ошибку ' + res.status);
 
-            document.getElementById('status').textContent = 'Обработка...';
+            setStatus('Обработка...', '#edf7ff', '#2c3e50');
             poll();
-        } catch (error) {
-            document.getElementById('status').textContent = 'Ошибка: ' + error.message;
-            document.getElementById('status').style.background = '#ffecec';
-            document.getElementById('status').style.color = '#e74c3c';
+        } catch (e) {
+            setStatus('Ошибка запуска: ' + e.message, '#ffecec', '#e74c3c');
         }
     }
 
     async function stopDump() {
-        document.getElementById('status').textContent = 'Останавливаем...';
-        document.getElementById('status').style.background = '#fff4e6';
-        document.getElementById('status').style.color = '#e67e22';
+        setStatus('Останавливаем...', '#fff4e6', '#e67e22');
         try {
-            // В реальном приложении здесь был бы вызов API
-            // await fetch('/stop', {method: 'POST'});
-            await simulateBackendRequest();
-            document.getElementById('status').textContent = 'Остановлено';
-            document.getElementById('status').style.background = '#ffecec';
-            document.getElementById('status').style.color = '#e74c3c';
-        } catch (error) {
-            document.getElementById('status').textContent = 'Ошибка: ' + error.message;
-            document.getElementById('status').style.background = '#ffecec';
-            document.getElementById('status').style.color = '#e74c3c';
+            const res = await fetch('/stop', {method: 'POST'});
+            if (!res.ok) throw new Error('Сервер вернул ошибку ' + res.status);
+            setStatus('Остановлено', '#ffecec', '#e74c3c');
+        } catch (e) {
+            setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c');
         }
     }
 
     async function poll() {
         try {
-            // В реальном приложении здесь был бы вызов API
-            // const res = await fetch('/progress');
-            // const data = await res.json();
-            const data = await simulateProgressCheck();
+            const res = await fetch('/progress');
+            if (!res.ok) throw new Error('Сервер вернул ошибку ' + res.status);
+            const data = await res.json();
+
+            const p = Math.max(0, Math.min(100, data.percent || 0));
+            setProgress(p);
 
             if (data.running) {
-                // Обновляем прогресс
-                document.getElementById('progress-bar').style.width = data.progress + '%';
-                document.getElementById('progress-value').textContent = data.progress + '%';
-                document.getElementById('status').textContent = 'Обработка... ' + data.progress + '%';
-
+                setStatus('Обработка... ' + p + '%', '#edf7ff', '#2c3e50');
                 setTimeout(poll, 1000);
             } else {
-                document.getElementById('progress-bar').style.width = '100%';
-                document.getElementById('progress-value').textContent = '100%';
-                document.getElementById('progress-bar').classList.add('green');
-                document.getElementById('status').textContent = 'Успешно завершено!';
-                document.getElementById('status').style.background = '#e7f6ec';
-                document.getElementById('status').style.color = '#27ae60';
+                setProgress(100, true);
+                setStatus('Успешно завершено!', '#e7f6ec', '#27ae60');
             }
-        } catch (error) {
-            document.getElementById('status').textContent = 'Ошибка: ' + error.message;
-            document.getElementById('status').style.background = '#ffecec';
-            document.getElementById('status').style.color = '#e74c3c';
+        } catch (e) {
+            setStatus('Ошибка запроса прогресса: ' + e.message, '#ffecec', '#e74c3c');
         }
     }
 
-    // Добавляем обработчики для улучшения UX
-    document.addEventListener('DOMContentLoaded', function() {
-        const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-        checkboxes.forEach(checkbox => {
-            checkbox.addEventListener('change', function() {
-                if (this.checked) {
-                    this.parentElement.style.background = '#e7f6ec';
-                } else {
-                    this.parentElement.style.background = '#f8f9fa';
-                }
-            });
-        });
+    function setStatus(text, bg, color) {
+        const el = document.getElementById('status');
+        el.textContent = text;
+        el.style.background = bg;
+        el.style.color = color;
+    }
 
-        // Добавляем красивый фокус для текстовой области
-        const textarea = document.getElementById('chats');
-        textarea.addEventListener('focus', function() {
-            this.style.boxShadow = '0 0 0 3px rgba(106, 17, 203, 0.2)';
-        });
-
-        textarea.addEventListener('blur', function() {
-            this.style.boxShadow = 'none';
-        });
-    });
+    function setProgress(val, done) {
+        document.getElementById('progress-bar').style.width = val + '%';
+        document.getElementById('progress-value').textContent = val + '%';
+        if (done) document.getElementById('progress-bar').classList.add('green');
+    }
 </script>
 </body>
 </html>

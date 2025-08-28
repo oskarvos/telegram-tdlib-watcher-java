@@ -2,6 +2,12 @@ package com.oleg.td;
 
 import org.springframework.web.bind.annotation.*;
 
+/**
+ * Простой REST-контроллер:
+ *  - POST /start    — старт дампа
+ *  - POST /stop     — останов
+ *  - GET  /progress — прогресс
+ */
 @RestController
 public class DumpController {
     private final DumpService dumpService;
