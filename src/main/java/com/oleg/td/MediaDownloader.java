@@ -1,105 +1,90 @@
 package com.oleg.td;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Скачивает файлы TDLib по file_id и ждёт событие updateFile.
- * Логика:
- *  - отправляем метод downloadFile {file_id, priority, offset, limit, synchronous=false}
- *  - ждём updateFile, где придёт file.local.path и флаги завершения
- *  - возвращаем локальный путь к файлу
- *
- * Потокобезопасен: на каждый file_id создаётся свой CompletableFuture.
+ * Простая синхронная загрузка через TDLib:
+ *  - downloadFile(..., synchronous=true) -> TDLib блочно вернёт "file" с локальным путём
+ *  - кэш по file_id, чтобы не качать одно и то же
  */
 @Component
 public class MediaDownloader {
     private static final Logger log = LoggerFactory.getLogger(MediaDownloader.class);
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final TdJsonClient td;
-    private final UpdateRouter router;
+    private final TdJsonClient client;
+    private final ConcurrentHashMap<Integer, String> cache = new ConcurrentHashMap<>();
 
-    /** Ожидающие скачивания: file_id -> future(localPath) */
-    private final Map<Integer, CompletableFuture<String>> waiters = new ConcurrentHashMap<>();
-
-    public MediaDownloader(TdJsonClient td, UpdateRouter router) {
-        this.td = td;
-        this.router = router;
-
-        // Подписываемся на updateFile один раз
-        router.add(update -> {
-            if (!"updateFile".equals(update.path("@type").asText())) return;
-
-            try {
-                var file = update.path("file");
-                int fileId = file.path("id").asInt(-1);
-                if (fileId < 0) return;
-
-                var local = file.path("local");
-                boolean completed = local.path("is_downloading_completed").asBoolean(false);
-                boolean canBeDownloaded = file.path("can_be_downloaded").asBoolean(true);
-                String path = local.path("path").asText(null);
-
-                // Если либо загрузка завершена, либо файл уже локально доступен — резолвим
-                if (completed || (path != null && !path.isBlank())) {
-                    var fut = waiters.remove(fileId);
-                    if (fut != null && !fut.isDone()) {
-                        fut.complete(path);
-                        log.info("Загрузка файла file_id={} завершена, путь: {}", fileId, path);
-                    }
-                } else if (!canBeDownloaded) {
-                    // Файл недоступен для скачивания — фейлим ожидателя, если есть
-                    var fut = waiters.remove(fileId);
-                    if (fut != null && !fut.isDone()) {
-                        fut.complete(null);
-                        log.warn("Файл file_id={} недоступен для скачивания", fileId);
-                    }
-                }
-            } catch (Exception e) {
-                log.error("Ошибка обработки updateFile: {}", e.getMessage(), e);
-            }
-        });
+    public MediaDownloader(TdJsonClient client) {
+        this.client = client;
     }
 
     /**
-     * Скачивает файл (если ещё не скачан) и возвращает локальный путь.
-     * @param fileId TDLib file.id (int)
-     * @return локальный путь (или null, если скачать не удалось)
+     * Скачивает файл и возвращает локальный путь (или null, если не удалось).
+     * Блокирующая, но быстрая — без ожидания updateFile.
      */
     public String downloadBlocking(int fileId) {
-        try {
-            // Если уже есть ожидатель — переиспользуем
-            var fut = waiters.computeIfAbsent(fileId, id -> {
-                // Создаём новый ожидатель
-                var f = new CompletableFuture<String>();
-                // Отправляем команду скачивания
-                ObjectNode req = Utils.obj("downloadFile");
-                req.put("file_id", id);
-                req.put("priority", 32);     // высокая, но не максимальная
-                req.put("offset", 0);
-                req.put("limit", 0);         // 0 = весь файл
-                req.put("synchronous", false);
-                td.send(req, TdJsonClient.Channel.MAIN);
-                log.info("Запрошено скачивание файла file_id={}", id);
-                return f;
-            });
+        if (fileId <= 0) return null;
 
-            // Ждём до 2 минут
-            return fut.get(120, java.util.concurrent.TimeUnit.SECONDS);
-        } catch (java.util.concurrent.TimeoutException te) {
-            waiters.remove(fileId);
-            log.warn("Таймаут скачивания file_id={}", fileId);
-            return null;
-        } catch (Exception e) {
-            waiters.remove(fileId);
-            log.error("Ошибка скачивания file_id={}: {}", fileId, e.getMessage(), e);
-            return null;
+        // кэш
+        String cached = cache.get(fileId);
+        if (cached != null && !cached.isBlank()) {
+            return cached;
         }
+
+        try {
+            // 1) Синхронная загрузка
+            ObjectNode dl = MAPPER.createObjectNode();
+            dl.put("@type", "downloadFile");
+            dl.put("file_id", fileId);
+            dl.put("priority", 32);   // максимум
+            dl.put("offset", 0);
+            dl.put("limit", 0);       // 0 = целиком
+            dl.put("synchronous", true);
+
+            ObjectNode resp = client.requestWithFloodWaitSyncLimited(dl, 300, TdJsonClient.Channel.MAIN);
+            if (!"file".equals(resp.path("@type").asText())) {
+                log.warn("downloadFile: неожиданный ответ: {}", resp.path("@type").asText());
+                return null;
+            }
+
+            JsonNode local = resp.path("local");
+            String path = local.path("path").asText(null);
+            boolean completed = local.path("is_downloading_completed").asBoolean(false);
+
+            if (completed && path != null && !path.isBlank()) {
+                cache.putIfAbsent(fileId, path);
+                log.debug("file_id={} скачан: {}", fileId, path);
+                return path;
+            }
+
+            // 2) На всякий случай уточним состояние через getFile
+            ObjectNode gf = MAPPER.createObjectNode();
+            gf.put("@type", "getFile");
+            gf.put("file_id", fileId);
+            ObjectNode resp2 = client.requestWithFloodWaitSyncLimited(gf, 120, TdJsonClient.Channel.MAIN);
+
+            JsonNode local2 = resp2.path("local");
+            String path2 = local2.path("path").asText(null);
+            boolean completed2 = local2.path("is_downloading_completed").asBoolean(false);
+
+            if (completed2 && path2 != null && !path2.isBlank()) {
+                cache.putIfAbsent(fileId, path2);
+                log.debug("file_id={} скачан (через getFile): {}", fileId, path2);
+                return path2;
+            }
+
+            log.warn("Не удалось получить путь после downloadFile/getFile (file_id={})", fileId);
+        } catch (Exception e) {
+            log.warn("Ошибка скачивания file_id={}: {}", fileId, e.toString());
+        }
+        return null;
     }
 }
