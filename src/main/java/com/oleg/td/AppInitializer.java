@@ -8,7 +8,8 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class AppInitializer {
-    private static final Logger log = LoggerFactory.getLogger(AppInitializer.class);
+    // Чтобы первая строка была как в примере: [main] INFO com.oleg.td.App - ...
+    private static final Logger log = LoggerFactory.getLogger("com.oleg.td.App");
 
     private final AuthFlow authFlow;
     private final Config config;
@@ -20,29 +21,24 @@ public class AppInitializer {
 
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {
-        log.info("=== ИНИЦИАЛИЗАЦИЯ TDLib ===");
-        log.info("CONFIG: api_id={}, has_api_hash={}, db_dir={}, files_dir={}, case_insensitive=true",
+        // Ваша целевая строка CONFIG
+        log.info("CONFIG: api_id={}, has_api_hash={}, db_dir={}, files_dir={}, case_insensitive={}",
                 config.getTdlib().getApiId(),
                 config.getTdlib().getApiHash() != null && !config.getTdlib().getApiHash().isEmpty(),
                 config.getTdlib().getDatabaseDirectory(),
-                config.getTdlib().getFilesDirectory());
+                config.getTdlib().getFilesDirectory(),
+                config.isCaseInsensitive()
+        );
 
-        log.info("API ID: {}", config.getTdlib().getApiId());
-        log.info("База данных: {}", config.getTdlib().getDatabaseDirectory());
-        log.info("Телефон: {}", config.getAuth().getPhone());
-        log.info("Группы: {}", config.getGroups());
-
-        // Настраиваем обработчики авторизации
-        authFlow.wireInto();
-
-        // Запускаем авторизацию
         try {
+            // Подключаем обработчики авторизации
+            authFlow.wireInto();
+
+            // Запускаем блокирующую авторизацию
             authFlow.authorizeBlocking();
             log.info("✅ Авторизация успешно завершена!");
-
         } catch (Exception e) {
-            log.error("❌ Ошибка авторизации: {}", e.getMessage());
-            log.error("Ошибка авторизации", e);
+            log.error("❌ Ошибка авторизации: {}", e.getMessage(), e);
         }
     }
 }

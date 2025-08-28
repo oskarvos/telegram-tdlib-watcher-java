@@ -47,18 +47,38 @@ public class TdJsonClient {
         this.router = router;
         this.config = config;
 
-        // Инициализация TDLib
+        // Загрузка TDLib
         String libPath = config.getLibPath();
         if (libPath != null && !libPath.isEmpty()) {
-            log.info("Загрузка TDLib из: {}", libPath);
+            // Фраза как в желаемом примере
+            log.info("Loading TDLib from: {}", libPath);
             this.tdLib = Native.load(libPath, TdLib.class);
         } else {
-            log.info("Загрузка TDLib по умолчанию");
+            log.info("Loading TDLib from system library 'tdjson'");
             this.tdLib = Native.load("tdjson", TdLib.class);
         }
 
         this.client = tdLib.td_json_client_create();
         log.info("Create client {}", System.identityHashCode(this.client));
+
+        // Настроим логирование TDLib
+        initTdlibLogging();
+    }
+
+    private void initTdlibLogging() {
+        // Уровень подробности логов TDLib
+        ObjectNode verbosity = MAPPER.createObjectNode();
+        verbosity.put("@type", "setLogVerbosityLevel");
+        verbosity.put("new_verbosity_level", 3);
+        send(verbosity);
+
+        // Лог-стрим в "пустой" (без файлов)
+        ObjectNode setLogStream = MAPPER.createObjectNode();
+        setLogStream.put("@type", "setLogStream");
+        ObjectNode empty = MAPPER.createObjectNode();
+        empty.put("@type", "logStreamEmpty");
+        setLogStream.set("log_stream", empty);
+        send(setLogStream);
     }
 
     @PostConstruct
@@ -68,13 +88,12 @@ public class TdJsonClient {
                 try {
                     String update = receive(1.0);
                     if (update != null && !update.trim().isEmpty()) {
-                        ObjectNode updateNode = MAPPER.readValue(update, ObjectNode.class);
+                        ObjectNode updateNode = (ObjectNode) MAPPER.readTree(update);
                         router.handleUpdate(updateNode);
-                        log.debug("Получено обновление: {}", update);
                     }
                 } catch (Exception e) {
                     if (running) {
-                        log.error("Ошибка при получении обновления", e);
+                        log.error("Ошибка при получении обновления TDLib", e);
                     }
                 }
             }
@@ -99,7 +118,6 @@ public class TdJsonClient {
     }
 
     public void send(String request) {
-        log.debug("Отправка запроса: {}", request);
         tdLib.td_json_client_send(client, request);
     }
 
@@ -141,19 +159,16 @@ public class TdJsonClient {
                 String type = resp.path("@type").asText();
                 if ("error".equals(type) && resp.path("code").asInt() == 429) {
                     int waitSec = extractFloodWait(resp.path("message").asText());
-                    if (waitSec <= 0) {
-                        return resp;
-                    }
+                    if (waitSec <= 0) return resp;
+
                     if (waitSec > remaining) {
-                        log.warn("Flood wait {}s превышает оставшийся лимит {}s; ожидаем только {}s", waitSec, remaining, remaining);
                         try { Thread.sleep(remaining * 1000L); } catch (InterruptedException ignored) {
                             Thread.currentThread().interrupt();
                         }
                         remaining = 0;
                         send(req, channel);
-                        try {
-                            return queue.take();
-                        } catch (InterruptedException e) {
+                        try { return queue.take(); }
+                        catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                             return MAPPER.createObjectNode();
                         }
@@ -172,12 +187,10 @@ public class TdJsonClient {
     }
 
     public static int extractFloodWait(String message) {
-        Matcher m = FLOOD_WAIT.matcher(message);
+        var m = FLOOD_WAIT.matcher(message);
         if (m.find()) {
-            try {
-                return Integer.parseInt(m.group(1));
-            } catch (NumberFormatException ignored) {
-            }
+            try { return Integer.parseInt(m.group(1)); }
+            catch (NumberFormatException ignored) {}
         }
         return -1;
     }
