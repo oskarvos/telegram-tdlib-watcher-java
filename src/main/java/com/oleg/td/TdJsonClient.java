@@ -58,7 +58,7 @@ public class TdJsonClient {
         }
 
         this.client = tdLib.td_json_client_create();
-        log.info("TDLib клиент создан успешно");
+        log.info("Create client {}", System.identityHashCode(this.client));
     }
 
     @PostConstruct
@@ -69,7 +69,7 @@ public class TdJsonClient {
                     String update = receive(1.0);
                     if (update != null && !update.trim().isEmpty()) {
                         ObjectNode updateNode = MAPPER.readValue(update, ObjectNode.class);
-                        router.handleUpdate(updateNode); // Изменено с route на handleUpdate
+                        router.handleUpdate(updateNode);
                         log.debug("Получено обновление: {}", update);
                     }
                 } catch (Exception e) {

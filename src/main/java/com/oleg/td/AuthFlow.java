@@ -1,6 +1,8 @@
 package com.oleg.td;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import java.io.Console;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -8,6 +10,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @Component
 public class AuthFlow {
+    private static final Logger log = LoggerFactory.getLogger(AuthFlow.class);
+
     private final TdJsonClient client;
     private final Config cfg;
     private final UpdateRouter router;
@@ -27,26 +31,26 @@ public class AuthFlow {
      */
     public void wireInto() {
         if (wired) {
-            System.out.println("AuthFlow уже подключен");
+            log.info("AuthFlow уже подключен");
             return;
         }
 
-        System.out.println("Подключение AuthFlow к UpdateRouter...");
+        log.info("Подключение AuthFlow к UpdateRouter...");
 
         router.add(n -> {
             String type = n.path("@type").asText();
-            System.out.println("Получен апдейт: " + n.toString());
+            log.debug("Получен апдейт: {}", n.toString());
 
             // ОБРАБОТКА ОШИБОК
             if ("error".equals(type)) {
                 int errorCode = n.path("code").asInt();
                 String errorMessage = n.path("message").asText();
-                System.err.println("Ошибка TDLib: " + errorCode + " - " + errorMessage);
+                log.error("Ошибка TDLib: {} - {}", errorCode, errorMessage);
 
                 // Обработка Flood Wait
                 if (errorCode == 429) {
-                    int waitTime = TdJsonClient.extractFloodWait(errorMessage); // Используем статический метод
-                    System.out.println("Flood wait: " + waitTime + " секунд");
+                    int waitTime = TdJsonClient.extractFloodWait(errorMessage);
+                    log.info("Flood wait: {} секунд", waitTime);
                     try {
                         Thread.sleep(waitTime * 1000L);
                     } catch (InterruptedException e) {
@@ -59,21 +63,21 @@ public class AuthFlow {
             if ("updateAuthorizationState".equals(type)) {
                 ObjectNode authState = (ObjectNode) n.path("authorization_state");
                 String state = authState.path("@type").asText();
-                System.out.println("Обновление состояния авторизации: " + state);
+                log.info("AUTH DEBUG: state = {}", state);
                 stateRef.set(state);
 
                 if ("authorizationStateReady".equals(state)) {
                     authorized.set(true);
-                    System.out.println("Авторизация прошла успешно!");
+                    log.info("Авторизация прошла успешно!");
                 } else if ("authorizationStateClosed".equals(state)) {
                     authorized.set(false);
-                    System.out.println("Авторизация закрыта");
+                    log.info("Авторизация закрыта");
                 }
             }
         });
 
         wired = true;
-        System.out.println("AuthFlow успешно подключен");
+        log.info("AuthFlow успешно подключен");
     }
 
     /**
@@ -84,7 +88,7 @@ public class AuthFlow {
             throw new IllegalStateException("AuthFlow не инициализирован. Сначала вызовите wireInto()");
         }
 
-        System.out.println("Начало процесса авторизации...");
+        log.info("Начало процесса авторизации...");
 
         String last = null;
         long startTime = System.currentTimeMillis();
@@ -94,7 +98,7 @@ public class AuthFlow {
             String state = stateRef.get();
 
             if (state == null) {
-                System.out.println("Ожидание состояния авторизации...");
+                log.info("Ожидание состояния авторизации...");
                 sleep(1000);
                 continue;
             }
@@ -104,40 +108,40 @@ public class AuthFlow {
                 continue;
             }
 
-            System.out.println("Текущее состояние авторизации: " + state);
+            log.info("Текущее состояние авторизации: {}", state);
 
             try {
                 switch (state) {
                     case "authorizationStateWaitTdlibParameters":
-                        System.out.println("Отправка параметров TDLib...");
+                        log.info("Отправка параметров TDLib...");
                         sendTdParams();
                         break;
                     case "authorizationStateWaitPhoneNumber":
                         sendPhoneNumber();
                         break;
                     case "authorizationStateWaitCode":
-                        sendCode(); // Здесь терминал будет ждать ввод кода
+                        sendCode();
                         break;
                     case "authorizationStateWaitPassword":
-                        sendPassword(); // Для 2FA пароля
+                        sendPassword();
                         break;
                     case "authorizationStateReady":
                         authorized.set(true);
-                        System.out.println("Авторизация успешно завершена!");
+                        log.info("Авторизация успешно завершена!");
                         break;
                     case "authorizationStateClosed":
-                        System.err.println("Авторизация закрыта TDLib");
+                        log.error("Авторизация закрыта TDLib");
                         throw new RuntimeException("Авторизация закрыта");
                     case "authorizationStateLoggingOut":
-                        System.err.println("Выход из системы");
+                        log.error("Выход из системы");
                         throw new RuntimeException("Выход из системы");
                     default:
-                        System.out.println("Ожидание в состоянии: " + state);
+                        log.info("Ожидание в состоянии: {}", state);
                         sleep(1000);
                         break;
                 }
             } catch (Exception e) {
-                System.err.println("Ошибка обработки состояния " + state + ": " + e.getMessage());
+                log.error("Ошибка обработки состояния {}: {}", state, e.getMessage());
                 throw new RuntimeException("Ошибка авторизации в состоянии: " + state, e);
             }
 
@@ -152,7 +156,7 @@ public class AuthFlow {
 
     private void sendTdParams() {
         ObjectNode params = Utils.obj("setTdlibParameters");
-        params.put("use_test_dc", cfg.getTdlib().getUseTestDc()); // Исправлено на getUseTestDc()
+        params.put("use_test_dc", false);
         params.put("database_directory", cfg.getTdlib().getDatabaseDirectory());
         params.put("files_directory", cfg.getTdlib().getFilesDirectory());
         params.put("api_id", cfg.getTdlib().getApiId());
@@ -164,9 +168,9 @@ public class AuthFlow {
         params.put("enable_storage_optimizer", true);
         params.put("ignore_file_names", false);
 
-        System.out.println("ОТПРАВКА ПАРАМЕТРОВ TDLib: " + params.toString());
+        log.info("DEBUG setTdlibParameters JSON --> {}", params.toString());
         client.send(params, TdJsonClient.Channel.AUTH);
-        System.out.println("Параметры TDLib отправлены.");
+        log.info("Параметры TDLib отправлены");
     }
 
     private void sendPhoneNumber() {
@@ -175,7 +179,8 @@ public class AuthFlow {
         ObjectNode req = Utils.obj("setAuthenticationPhoneNumber");
         req.put("phone_number", phone);
         client.send(req, TdJsonClient.Channel.AUTH);
-        System.out.println("Номер телефона отправлен: " + phone);
+        log.info("AUTH DEBUG: phone submitted");
+        log.info("Номер телефона отправлен: {}", phone);
     }
 
     private void sendCode() {
@@ -184,7 +189,7 @@ public class AuthFlow {
         ObjectNode req = Utils.obj("checkAuthenticationCode");
         req.put("code", code);
         client.send(req, TdJsonClient.Channel.AUTH);
-        System.out.println("Код отправлен.");
+        log.info("Код отправлен");
     }
 
     private void sendPassword() {
@@ -193,7 +198,7 @@ public class AuthFlow {
         ObjectNode req = Utils.obj("checkAuthenticationPassword");
         req.put("password", password);
         client.send(req, TdJsonClient.Channel.AUTH);
-        System.out.println("Пароль отправлен.");
+        log.info("Пароль отправлен");
     }
 
     private String readValue(String prompt) {
