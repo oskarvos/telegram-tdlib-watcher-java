@@ -9,12 +9,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Координатор дампа чатов.
- * Здесь:
- *  - по каждому чату создаём схему (таблицы)
- *  - запрашиваем историю частями (limit=100)
- *  - для каждого сообщения разбираем content.@type и сохраняем в нужную таблицу
- *  - извлекаем ссылки из formattedText.entities
+ * Координатор дампа чатов:
+ *  - создаёт схему под чат
+ *  - постранично запрашивает историю
+ *  - сохраняет сообщения/медиа/ссылки
  */
 @Component
 public class ChatDumpCoordinator {
@@ -24,20 +22,21 @@ public class ChatDumpCoordinator {
     private final TdJsonClient client;
     private final ChatResolver resolver;
     private final DatabaseManager db;
+    private final MediaDownloader downloader;
 
     private volatile boolean stopRequested = false;
 
-    public ChatDumpCoordinator(TdJsonClient client, ChatResolver resolver, DatabaseManager databaseManager) {
+    public ChatDumpCoordinator(TdJsonClient client,
+                               ChatResolver resolver,
+                               DatabaseManager databaseManager,
+                               MediaDownloader downloader) {
         this.client = client;
         this.resolver = resolver;
         this.db = databaseManager;
+        this.downloader = downloader;
     }
 
-    /**
-     * Запускает выгрузку для набора чатов.
-     * @param request          параметры дампа (список чатов и чекбоксы)
-     * @param progressCallback колбэк для инкремента прогресса
-     */
+    /** Запускает выгрузку для набора чатов. */
     public void dumpChats(DumpRequest request, Runnable progressCallback) {
         stopRequested = false;
 
@@ -50,11 +49,10 @@ public class ChatDumpCoordinator {
             long chatId = resolver.resolveOrJoin(chatRef.trim());
             log.info("Начинаем дамп чата {} (ref='{}')", chatId, chatRef);
 
-            // Создать (если нет) все таблицы под этот чат
+            // Создать/мигрировать таблицы под этот чат
             db.prepareSchema(chatId);
 
-            // Идём по истории
-            long fromMessageId = 0; // 0 = брать с последнего (по TDLib)
+            long fromMessageId = 0; // 0 = начать с последнего (TDLib)
             while (!stopRequested) {
                 ObjectNode req = MAPPER.createObjectNode();
                 req.put("@type", "getChatHistory");
@@ -64,7 +62,8 @@ public class ChatDumpCoordinator {
                 req.put("limit", 100);
                 req.put("only_local", false);
 
-                ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.MAIN);
+                ObjectNode resp = client.requestWithFloodWaitSyncLimited(
+                        req, 60, TdJsonClient.Channel.MAIN);
 
                 if (!"messages".equals(resp.path("@type").asText())) {
                     log.warn("Ответ TDLib отличен от 'messages': {}", resp.path("@type").asText());
@@ -79,9 +78,8 @@ public class ChatDumpCoordinator {
 
                 for (JsonNode msg : messages) {
                     if (stopRequested) break;
-
                     try {
-                        processMessage(chatId, msg, request); // сохранить во все нужные таблицы
+                        processMessage(chatId, msg, request);
                         if (progressCallback != null) progressCallback.run();
                     } catch (Exception ex) {
                         long mid = msg.path("id").asLong();
@@ -89,7 +87,7 @@ public class ChatDumpCoordinator {
                     }
                 }
 
-                // Продолжаем от самого "старого" id из текущей пачки (TDLib сортирует по убыванию)
+                // Продолжаем от самого старого id из текущей пачки (TDLib сортирует по убыванию)
                 fromMessageId = messages.get(messages.size() - 1).path("id").asLong();
             }
 
@@ -102,13 +100,10 @@ public class ChatDumpCoordinator {
         stopRequested = true;
     }
 
-    /**
-     * Разобрать одно сообщение и сохранить его части в БД.
-     */
+    /** Разобрать одно сообщение и сохранить его части в БД. */
     private void processMessage(long chatId, JsonNode msg, DumpRequest request) {
         long messageId = msg.path("id").asLong();
         long date = msg.path("date").asLong(0);
-        // sender_id может быть объектом различных типов (user, chat, etc.). Сохраним как строку JSON.
         String senderId = msg.path("sender_id").isMissingNode() ? null : msg.path("sender_id").toString();
 
         Long replyTo = null;
@@ -134,7 +129,7 @@ public class ChatDumpCoordinator {
                 extractLinksFromFormattedText(chatId, messageId, ft);
             }
         } else {
-            // Если не текст — всё равно сохраним базовую запись в messages, но без текста
+            // Если не текст — всё равно сохраним запись в messages, но без текста
             if (request.isMessages()) {
                 db.saveMessage(chatId, messageId, date, senderId, replyTo, null);
             }
@@ -146,20 +141,21 @@ public class ChatDumpCoordinator {
             JsonNode captionFT = content.path("caption");
             String caption = captionFT.path("text").asText(null);
 
-            // Берём самый большой размер
             JsonNode sizes = photo.path("sizes");
             JsonNode best = sizes.isArray() && sizes.size() > 0 ? sizes.get(sizes.size() - 1) : null;
-            Integer w = best == null ? null : best.path("width").isInt() ? best.path("width").asInt() : null;
-            Integer h = best == null ? null : best.path("height").isInt() ? best.path("height").asInt() : null;
+            Integer w = best == null ? null : (best.path("width").isInt() ? best.path("width").asInt() : null);
+            Integer h = best == null ? null : (best.path("height").isInt() ? best.path("height").asInt() : null);
 
-            // file — объект TDLib: id (int), remote.id (string) и т.п.
             JsonNode fileNode = best == null ? null : best.path("photo");
-            Integer fileId = fileNode == null ? null : (fileNode.path("id").isInt() ? fileNode.path("id").asInt() : null);
-            String remoteId = (fileNode == null ? null : fileNode.path("remote").path("id").asText(null));
+            Integer fileId = (fileNode == null || !fileNode.path("id").isInt()) ? null : fileNode.path("id").asInt();
+            String remoteId = fileNode == null ? null : fileNode.path("remote").path("id").asText(null);
 
-            db.savePhoto(chatId, messageId, fileId, remoteId, w, h, caption);
+            String filePath = null;
+            if (fileId != null) {
+                filePath = downloader.downloadBlocking(fileId);
+            }
+            db.savePhoto(chatId, messageId, fileId, remoteId, w, h, caption, filePath);
 
-            // Из подписи тоже извлекаем ссылки, если нужно
             if (request.isLinks()) extractLinksFromFormattedText(chatId, messageId, captionFT);
         }
 
@@ -175,12 +171,16 @@ public class ChatDumpCoordinator {
             Integer fileId = fileNode.path("id").isInt() ? fileNode.path("id").asInt() : null;
             String remoteId = fileNode.path("remote").path("id").asText(null);
 
-            db.saveVideo(chatId, messageId, fileId, remoteId, duration, w, h, caption);
+            String filePath = null;
+            if (fileId != null) {
+                filePath = downloader.downloadBlocking(fileId);
+            }
+            db.saveVideo(chatId, messageId, fileId, remoteId, duration, w, h, caption, filePath);
+
             if (request.isLinks()) extractLinksFromFormattedText(chatId, messageId, content.path("caption"));
         }
 
-        // 4) Голосовые/аудио
-        // TDLib различает messageVoiceNote и messageAudio; добавим базовую поддержку.
+        // 4) Голосовые/аудио (сохраняем и трек, и путь, и MIME)
         if ("messageVoiceNote".equals(ctype) && request.isMessages()) {
             JsonNode vn = content.path("voice_note");
             Integer duration = vn.path("duration").isInt() ? vn.path("duration").asInt() : null;
@@ -189,8 +189,13 @@ public class ChatDumpCoordinator {
             String remoteId = fileNode.path("remote").path("id").asText(null);
             String mime = vn.path("mime_type").asText(null);
 
-            db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime);
+            String filePath = null;
+            if (fileId != null) {
+                filePath = downloader.downloadBlocking(fileId);
+            }
+            db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime, filePath);
         }
+
         if ("messageAudio".equals(ctype) && request.isMessages()) {
             JsonNode au = content.path("audio");
             Integer duration = au.path("duration").isInt() ? au.path("duration").asInt() : null;
@@ -199,11 +204,12 @@ public class ChatDumpCoordinator {
             String remoteId = fileNode.path("remote").path("id").asText(null);
             String mime = au.path("mime_type").asText(null);
 
-            db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime);
+            String filePath = null;
+            if (fileId != null) {
+                filePath = downloader.downloadBlocking(fileId);
+            }
+            db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime, filePath);
         }
-
-        // 5) Для нетекстовых сообщений могут быть подписи с ссылками — мы учли фото/видео выше.
-        // 6) При необходимости можно дописать messageDocument, messageAnimation и т.д.
     }
 
     /** Извлечь ссылки из formattedText.entities и сохранить. */
@@ -216,7 +222,6 @@ public class ChatDumpCoordinator {
 
         for (JsonNode e : entities) {
             String t = e.path("type").path("@type").asText();
-            // Поддерживаем URL-сущности (обычные и textUrl)
             if ("textEntityTypeUrl".equals(t)) {
                 int offset = e.path("offset").asInt(0);
                 int length = e.path("length").asInt(0);
@@ -227,7 +232,6 @@ public class ChatDumpCoordinator {
             } else if ("textEntityTypeTextUrl".equals(t)) {
                 String url = e.path("type").path("url").asText(null);
                 if (url != null && !url.isBlank()) {
-                    // в контексте сохраним видимый текст
                     int offset = e.path("offset").asInt(0);
                     int length = e.path("length").asInt(0);
                     String context = safeSubstring(fullText, offset, length);

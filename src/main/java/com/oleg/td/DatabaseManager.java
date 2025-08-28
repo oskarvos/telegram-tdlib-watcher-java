@@ -8,73 +8,95 @@ import java.sql.*;
 
 /**
  * Менеджер БД: создаёт/мигрирует таблицы и сохраняет данные.
- * Теперь для медиа-таблиц добавлен столбец file_path — локальный путь к скачанному файлу.
+ * Для каждой сущности используются отдельные таблицы per-chat.
+ * Имя таблицы строится безопасно: chat_<abs(chatId)>_<suffix>, экранируется для SQLite.
  */
 @Component
 public class DatabaseManager {
     private static final Logger log = LoggerFactory.getLogger(DatabaseManager.class);
     private final String url = "jdbc:sqlite:tdlib.db";
 
-    public void prepareSchema(long chatId) {
-        final String p = "chat_" + chatId;
+    /** Кавычки для идентификаторов SQLite (двойные). */
+    private static String qIdent(String ident) {
+        return "\"" + ident.replace("\"", "\"\"") + "\"";
+    }
 
-        final String createMessages = "CREATE TABLE IF NOT EXISTS " + p + "_messages (" +
-                "id INTEGER PRIMARY KEY," +
-                "date INTEGER," +
-                "sender_id TEXT," +
-                "reply_to INTEGER," +
-                "text TEXT" +
-                ")";
-        final String createPhotos = "CREATE TABLE IF NOT EXISTS " + p + "_photos (" +
-                "message_id INTEGER," +
-                "file_id INTEGER," +
-                "remote_id TEXT," +
-                "width INTEGER," +
-                "height INTEGER," +
-                "caption TEXT," +
-                "file_path TEXT," +
-                "PRIMARY KEY (message_id)" +
-                ")";
-        final String createVideos = "CREATE TABLE IF NOT EXISTS " + p + "_videos (" +
-                "message_id INTEGER," +
-                "file_id INTEGER," +
-                "remote_id TEXT," +
-                "duration INTEGER," +
-                "width INTEGER," +
-                "height INTEGER," +
-                "caption TEXT," +
-                "file_path TEXT," +
-                "PRIMARY KEY (message_id)" +
-                ")";
-        final String createAudio = "CREATE TABLE IF NOT EXISTS " + p + "_audio (" +
-                "message_id INTEGER," +
-                "file_id INTEGER," +
-                "remote_id TEXT," +
-                "duration INTEGER," +
-                "mime_type TEXT," +
-                "file_path TEXT," +
-                "PRIMARY KEY (message_id)" +
-                ")";
-        final String createLinks = "CREATE TABLE IF NOT EXISTS " + p + "_links (" +
-                "message_id INTEGER," +
-                "url TEXT," +
-                "context TEXT" +
-                ")";
-        final String idxLinks = "CREATE INDEX IF NOT EXISTS " + p + "_links_idx ON " + p + "_links(url)";
+    /** Безопасное имя таблицы для чата и суффикса. */
+    private static String table(long chatId, String suffix) {
+        return qIdent("chat_" + Math.abs(chatId) + "_" + suffix);
+    }
+
+    public void prepareSchema(long chatId) {
+        final String tMessages = table(chatId, "messages");
+        final String tPhotos   = table(chatId, "photos");
+        final String tVideos   = table(chatId, "videos");
+        final String tAudio    = table(chatId, "audio");
+        final String tLinks    = table(chatId, "links");
+        final String idxLinks  = qIdent("idx_" + Math.abs(chatId) + "_links_url");
+
+        final String createMessages = "CREATE TABLE IF NOT EXISTS " + tMessages + " ("
+                + "id INTEGER PRIMARY KEY,"
+                + "date INTEGER,"
+                + "sender_id TEXT,"
+                + "reply_to INTEGER,"
+                + "text TEXT"
+                + ")";
+
+        final String createPhotos = "CREATE TABLE IF NOT EXISTS " + tPhotos + " ("
+                + "message_id INTEGER,"
+                + "file_id INTEGER,"
+                + "remote_id TEXT,"
+                + "width INTEGER,"
+                + "height INTEGER,"
+                + "caption TEXT,"
+                + "file_path TEXT,"
+                + "PRIMARY KEY (message_id)"
+                + ")";
+
+        final String createVideos = "CREATE TABLE IF NOT EXISTS " + tVideos + " ("
+                + "message_id INTEGER,"
+                + "file_id INTEGER,"
+                + "remote_id TEXT,"
+                + "duration INTEGER,"
+                + "width INTEGER,"
+                + "height INTEGER,"
+                + "caption TEXT,"
+                + "file_path TEXT,"
+                + "PRIMARY KEY (message_id)"
+                + ")";
+
+        final String createAudio = "CREATE TABLE IF NOT EXISTS " + tAudio + " ("
+                + "message_id INTEGER,"
+                + "file_id INTEGER,"
+                + "remote_id TEXT,"
+                + "duration INTEGER,"
+                + "mime_type TEXT,"
+                + "file_path TEXT,"
+                + "PRIMARY KEY (message_id)"
+                + ")";
+
+        final String createLinks = "CREATE TABLE IF NOT EXISTS " + tLinks + " ("
+                + "message_id INTEGER,"
+                + "url TEXT,"
+                + "context TEXT"
+                + ")";
+
+        final String createLinksIdx = "CREATE INDEX IF NOT EXISTS " + idxLinks + " ON " + tLinks + " (url)";
 
         try (Connection c = DriverManager.getConnection(url);
              Statement s = c.createStatement()) {
+
             s.execute(createMessages);
             s.execute(createPhotos);
             s.execute(createVideos);
             s.execute(createAudio);
             s.execute(createLinks);
-            s.execute(idxLinks);
+            s.execute(createLinksIdx);
 
             // Простая миграция: если таблица была создана ранее — пытаемся добавить file_path
-            addColumnIfMissing(c, p + "_photos", "file_path", "TEXT");
-            addColumnIfMissing(c, p + "_videos", "file_path", "TEXT");
-            addColumnIfMissing(c, p + "_audio",  "file_path", "TEXT");
+            addColumnIfMissing(c, tPhotos, "file_path", "TEXT");
+            addColumnIfMissing(c, tVideos, "file_path", "TEXT");
+            addColumnIfMissing(c, tAudio,  "file_path", "TEXT");
 
             log.info("БД: схема для чата {} готова", chatId);
         } catch (SQLException e) {
@@ -82,91 +104,103 @@ public class DatabaseManager {
         }
     }
 
-    private void addColumnIfMissing(Connection c, String table, String col, String type) {
-        try (PreparedStatement ps = c.prepareStatement("PRAGMA table_info(" + table + ")")) {
+    private void addColumnIfMissing(Connection c, String quotedTable, String col, String type) {
+        // quotedTable уже в кавычках (qIdent)
+        try (PreparedStatement ps = c.prepareStatement("PRAGMA table_info(" + quotedTable + ")")) {
             try (ResultSet rs = ps.executeQuery()) {
                 boolean exists = false;
                 while (rs.next()) {
                     if (col.equalsIgnoreCase(rs.getString("name"))) {
-                        exists = true; break;
+                        exists = true;
+                        break;
                     }
                 }
                 if (!exists) {
                     try (Statement s = c.createStatement()) {
-                        s.execute("ALTER TABLE " + table + " ADD COLUMN " + col + " " + type);
-                        log.info("БД: для {} добавлен столбец {}", table, col);
+                        s.execute("ALTER TABLE " + quotedTable + " ADD COLUMN " + col + " " + type);
+                        log.info("БД: для {} добавлен столбец {}", quotedTable, col);
                     }
                 }
             }
         } catch (SQLException e) {
-            log.warn("БД: не удалось проверить/добавить столбец {} в {}: {}", col, table, e.getMessage());
+            log.warn("БД: не удалось проверить/добавить столбец {} в {}: {}", col, quotedTable, e.getMessage());
         }
     }
 
     public void saveMessage(long chatId, long messageId, long date, String senderId, Long replyTo, String text) {
-        final String p = "chat_" + chatId;
-        final String sql = "INSERT OR IGNORE INTO " + p + "_messages(id, date, sender_id, reply_to, text) VALUES(?,?,?,?,?)";
+        final String tMessages = table(chatId, "messages");
+        final String sql = "INSERT OR IGNORE INTO " + tMessages
+                + " (id, date, sender_id, reply_to, text) VALUES (?,?,?,?,?)";
         try (Connection c = DriverManager.getConnection(url);
              PreparedStatement st = c.prepareStatement(sql)) {
             st.setLong(1, messageId);
             st.setLong(2, date);
-            st.setString(3, senderId);
+            if (senderId == null) st.setNull(3, Types.VARCHAR); else st.setString(3, senderId);
             if (replyTo == null) st.setNull(4, Types.INTEGER); else st.setLong(4, replyTo);
-            st.setString(5, text);
+            if (text == null) st.setNull(5, Types.VARCHAR); else st.setString(5, text);
             st.executeUpdate();
         } catch (SQLException e) {
             log.error("БД: ошибка сохранения сообщения {} для чата {}: {}", messageId, chatId, e.getMessage(), e);
         }
     }
 
-    public void savePhoto(long chatId, long messageId, Integer fileId, String remoteId, Integer w, Integer h, String caption, String filePath) {
-        final String p = "chat_" + chatId;
-        final String sql = "INSERT OR REPLACE INTO " + p + "_photos(message_id, file_id, remote_id, width, height, caption, file_path) VALUES(?,?,?,?,?,?,?)";
+    public void savePhoto(long chatId, long messageId, Integer fileId, String remoteId,
+                          Integer w, Integer h, String caption, String filePath) {
+        final String tPhotos = table(chatId, "photos");
+        final String sql = "INSERT OR REPLACE INTO " + tPhotos
+                + " (message_id, file_id, remote_id, width, height, caption, file_path)"
+                + " VALUES (?,?,?,?,?,?,?)";
         try (Connection c = DriverManager.getConnection(url);
              PreparedStatement st = c.prepareStatement(sql)) {
             st.setLong(1, messageId);
             if (fileId == null) st.setNull(2, Types.INTEGER); else st.setInt(2, fileId);
-            st.setString(3, remoteId);
+            if (remoteId == null) st.setNull(3, Types.VARCHAR); else st.setString(3, remoteId);
             if (w == null) st.setNull(4, Types.INTEGER); else st.setInt(4, w);
             if (h == null) st.setNull(5, Types.INTEGER); else st.setInt(5, h);
-            st.setString(6, caption);
-            st.setString(7, filePath);
+            if (caption == null) st.setNull(6, Types.VARCHAR); else st.setString(6, caption);
+            if (filePath == null) st.setNull(7, Types.VARCHAR); else st.setString(7, filePath);
             st.executeUpdate();
         } catch (SQLException e) {
             log.error("БД: ошибка сохранения фото (msg_id={}) для чата {}: {}", messageId, chatId, e.getMessage(), e);
         }
     }
 
-    public void saveVideo(long chatId, long messageId, Integer fileId, String remoteId, Integer duration, Integer w, Integer h, String caption, String filePath) {
-        final String p = "chat_" + chatId;
-        final String sql = "INSERT OR REPLACE INTO " + p + "_videos(message_id, file_id, remote_id, duration, width, height, caption, file_path) VALUES(?,?,?,?,?,?,?,?)";
+    public void saveVideo(long chatId, long messageId, Integer fileId, String remoteId,
+                          Integer duration, Integer w, Integer h, String caption, String filePath) {
+        final String tVideos = table(chatId, "videos");
+        final String sql = "INSERT OR REPLACE INTO " + tVideos
+                + " (message_id, file_id, remote_id, duration, width, height, caption, file_path)"
+                + " VALUES (?,?,?,?,?,?,?,?)";
         try (Connection c = DriverManager.getConnection(url);
              PreparedStatement st = c.prepareStatement(sql)) {
             st.setLong(1, messageId);
             if (fileId == null) st.setNull(2, Types.INTEGER); else st.setInt(2, fileId);
-            st.setString(3, remoteId);
+            if (remoteId == null) st.setNull(3, Types.VARCHAR); else st.setString(3, remoteId);
             if (duration == null) st.setNull(4, Types.INTEGER); else st.setInt(4, duration);
             if (w == null) st.setNull(5, Types.INTEGER); else st.setInt(5, w);
             if (h == null) st.setNull(6, Types.INTEGER); else st.setInt(6, h);
-            st.setString(7, caption);
-            st.setString(8, filePath);
+            if (caption == null) st.setNull(7, Types.VARCHAR); else st.setString(7, caption);
+            if (filePath == null) st.setNull(8, Types.VARCHAR); else st.setString(8, filePath);
             st.executeUpdate();
         } catch (SQLException e) {
             log.error("БД: ошибка сохранения видео (msg_id={}) для чата {}: {}", messageId, chatId, e.getMessage(), e);
         }
     }
 
-    public void saveAudio(long chatId, long messageId, Integer fileId, String remoteId, Integer duration, String mime, String filePath) {
-        final String p = "chat_" + chatId;
-        final String sql = "INSERT OR REPLACE INTO " + p + "_audio(message_id, file_id, remote_id, duration, mime_type, file_path) VALUES(?,?,?,?,?,?)";
+    public void saveAudio(long chatId, long messageId, Integer fileId, String remoteId,
+                          Integer duration, String mime, String filePath) {
+        final String tAudio = table(chatId, "audio");
+        final String sql = "INSERT OR REPLACE INTO " + tAudio
+                + " (message_id, file_id, remote_id, duration, mime_type, file_path)"
+                + " VALUES (?,?,?,?,?,?)";
         try (Connection c = DriverManager.getConnection(url);
              PreparedStatement st = c.prepareStatement(sql)) {
             st.setLong(1, messageId);
             if (fileId == null) st.setNull(2, Types.INTEGER); else st.setInt(2, fileId);
-            st.setString(3, remoteId);
+            if (remoteId == null) st.setNull(3, Types.VARCHAR); else st.setString(3, remoteId);
             if (duration == null) st.setNull(4, Types.INTEGER); else st.setInt(4, duration);
-            st.setString(5, mime);
-            st.setString(6, filePath);
+            if (mime == null) st.setNull(5, Types.VARCHAR); else st.setString(5, mime);
+            if (filePath == null) st.setNull(6, Types.VARCHAR); else st.setString(6, filePath);
             st.executeUpdate();
         } catch (SQLException e) {
             log.error("БД: ошибка сохранения аудио (msg_id={}) для чата {}: {}", messageId, chatId, e.getMessage(), e);
@@ -174,13 +208,13 @@ public class DatabaseManager {
     }
 
     public void saveLink(long chatId, long messageId, String urlStr, String context) {
-        final String p = "chat_" + chatId;
-        final String sql = "INSERT INTO " + p + "_links(message_id, url, context) VALUES(?,?,?)";
+        final String tLinks = table(chatId, "links");
+        final String sql = "INSERT INTO " + tLinks + " (message_id, url, context) VALUES (?,?,?)";
         try (Connection c = DriverManager.getConnection(url);
              PreparedStatement st = c.prepareStatement(sql)) {
             st.setLong(1, messageId);
-            st.setString(2, urlStr);
-            st.setString(3, context);
+            if (urlStr == null) st.setNull(2, Types.VARCHAR); else st.setString(2, urlStr);
+            if (context == null) st.setNull(3, Types.VARCHAR); else st.setString(3, context);
             st.executeUpdate();
         } catch (SQLException e) {
             log.error("БД: ошибка сохранения ссылки (msg_id={}) для чата {}: {}", messageId, chatId, e.getMessage(), e);
