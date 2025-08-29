@@ -1,10 +1,46 @@
-FROM gradle:8.7-jdk21-alpine AS build
-WORKDIR /app
+# ===== 1) Сборка JAR (Gradle, без Alpine) =====
+FROM gradle:8.7-jdk21 AS app-build
+WORKDIR /home/gradle/src
+# Оптимизация кэша: сначала файлы сборки
+COPY build.gradle settings.gradle gradle.properties* ./
+COPY gradle ./gradle
+RUN gradle --version
+# Затем исходники
 COPY . .
+# Собираем fat-jar (bootJar)
 RUN gradle bootJar --no-daemon
 
-FROM eclipse-temurin:21-jre
+# ===== 2) Сборка TDLib (Ubuntu, glibc) =====
+FROM ubuntu:24.04 AS tdlib-build
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake g++ make zlib1g-dev libssl-dev libsqlite3-dev libzstd-dev ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN git clone --depth 1 https://github.com/tdlib/td.git
+WORKDIR /src/td
+RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. \
+ && cmake --build . --target tdjson -j"$(nproc)"
+
+# ===== 3) Runtime: JRE + зависимости TDLib =====
+FROM eclipse-temurin:21-jre-jammy
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 zlib1g libsqlite3-0 libzstd1 ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
-COPY --from=build /app/build/libs/*.jar app.jar
+# Кладём приложение
+COPY --from=app-build /home/gradle/src/build/libs/*.jar /app/app.jar
+
+# Кладём TDLib внутрь образа
+COPY --from=tdlib-build /src/td/build/libtdjson.so /opt/tdlib/libtdjson.so
+
+# Пути для загрузки нативной либы
+ENV LD_LIBRARY_PATH=/opt/tdlib
+# ВАЖНО: приложение должно читать td.lib-path из системного свойства.
+# Здесь укажем дефолт для Docker.
+ENV JAVA_TOOL_OPTIONS="-Dtd.lib-path=/opt/tdlib/libtdjson.so -Djna.nosys=false"
+
 EXPOSE 8080
-ENTRYPOINT ["java","-jar","app.jar"]
+ENTRYPOINT ["java","-jar","/app/app.jar"]
