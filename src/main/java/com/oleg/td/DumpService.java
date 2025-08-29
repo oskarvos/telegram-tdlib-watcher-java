@@ -30,9 +30,9 @@ public class DumpService {
 
     /**
      * Старт дампа:
-     *  1) Подключаемся к TDLib (авторизация)
-     *  2) Для каждого чата создаём схему в БД
-     *  3) Запускаем координатор
+     * 1) Подключаемся к TDLib (авторизация)
+     * 2) Для каждого чата создаём схему в БД
+     * 3) Запускаем координатор
      */
     public synchronized void startDump(DumpRequest request) {
         if (running.get()) {
@@ -72,18 +72,24 @@ public class DumpService {
         }
     }
 
-    /** Остановить дамп. */
+    /**
+     * Остановить дамп.
+     */
     public void stopDump() {
         coordinator.stop();
         log.info("Получен сигнал остановки дампа");
     }
 
-    /** Текущий прогресс. */
+    /**
+     * Текущий прогресс.
+     */
     public DumpProgress getProgress() {
         return new DumpProgress(progress, running.get());
     }
 
-    /** Инкремент — вызывается координатором на каждое обработанное сообщение. */
+    /**
+     * Инкремент — вызывается координатором на каждое обработанное сообщение.
+     */
     private synchronized void incrementProgress() {
         progress++;
     }

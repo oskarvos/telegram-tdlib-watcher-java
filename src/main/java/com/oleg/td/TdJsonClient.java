@@ -18,12 +18,15 @@ public class TdJsonClient {
     private static final Logger log = LoggerFactory.getLogger(TdJsonClient.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    public enum Channel { AUTH, MAIN }
+    public enum Channel {AUTH, MAIN}
 
     private interface TdLib extends Library {
         Pointer td_json_client_create();
+
         void td_json_client_send(Pointer client, String request);
+
         String td_json_client_receive(Pointer client, double timeout);
+
         void td_json_client_destroy(Pointer client);
     }
 
@@ -65,12 +68,25 @@ public class TdJsonClient {
         send(setLogStream);
     }
 
-    public void send(String request) { tdLib.td_json_client_send(client, request); }
-    public void send(String request, Channel channel) { send(request); }
-    public void send(ObjectNode req) { send(req.toString()); }
-    public void send(ObjectNode req, Channel channel) { send(req.toString(), channel); }
+    public void send(String request) {
+        tdLib.td_json_client_send(client, request);
+    }
 
-    /** Single-threaded pump: receive once and dispatch updates (without @extra). */
+    public void send(String request, Channel channel) {
+        send(request);
+    }
+
+    public void send(ObjectNode req) {
+        send(req.toString());
+    }
+
+    public void send(ObjectNode req, Channel channel) {
+        send(req.toString(), channel);
+    }
+
+    /**
+     * Single-threaded pump: receive once and dispatch updates (without @extra).
+     */
     public void pumpOnce(double timeoutSeconds) {
         String raw = tdLib.td_json_client_receive(client, timeoutSeconds);
         if (raw == null || raw.isBlank()) return;
@@ -83,7 +99,9 @@ public class TdJsonClient {
         }
     }
 
-    /** Waits for reply to req (by @extra). Routes other updates synchronously. */
+    /**
+     * Waits for reply to req (by @extra). Routes other updates synchronously.
+     */
     public ObjectNode requestWithFloodWaitSyncLimited(ObjectNode req, int limitSeconds, Channel channel) {
         int remaining = Math.min(Math.max(limitSeconds, 0), 60);
         String extra = "req-" + extraId.incrementAndGet();
@@ -133,7 +151,10 @@ public class TdJsonClient {
         // simple greedy parse of integer seconds anywhere in message
         var m = Pattern.compile("(\\d+)").matcher(message == null ? "" : message);
         if (m.find()) {
-            try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException ignored) { }
+            try {
+                return Integer.parseInt(m.group(1));
+            } catch (NumberFormatException ignored) {
+            }
         }
         return -1;
     }
@@ -145,5 +166,11 @@ public class TdJsonClient {
         }
     }
 
-    private static void sleep(long ms) { try { Thread.sleep(ms); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); } }
+    private static void sleep(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+    }
 }

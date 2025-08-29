@@ -34,11 +34,11 @@ public class ChatResolver {
 
     /**
      * Универсальное разрешение ввода пользователя:
-     *  - "Id: 7184569562" или просто "7184569562" (chat_id или user_id)
-     *  - "First: Sparky" (а также "name: ...", "имя: ...")
-     *  - "@username"
-     *  - t.me/* (включая joinchat/+hash/c/..)
-     *  - "username" (без @)
+     * - "Id: 7184569562" или просто "7184569562" (chat_id или user_id)
+     * - "First: Sparky" (а также "name: ...", "имя: ...")
+     * - "@username"
+     * - t.me/* (включая joinchat/+hash/c/..)
+     * - "username" (без @)
      */
     public long resolveFlexible(String ref) {
         String s = ref == null ? "" : ref.trim();
@@ -86,8 +86,8 @@ public class ChatResolver {
 
     /**
      * Числовой ввод:
-     *  - если это валидный chat_id — вернём его;
-     *  - если это user_id — создадим приватный чат через createPrivateChat и вернём chat.id.
+     * - если это валидный chat_id — вернём его;
+     * - если это user_id — создадим приватный чат через createPrivateChat и вернём chat.id.
      */
     private long resolveByNumeric(String raw) {
         long n;

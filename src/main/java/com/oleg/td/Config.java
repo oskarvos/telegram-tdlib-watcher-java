@@ -15,26 +15,61 @@ public class Config {
     private boolean useTestDc = false;
     private boolean caseInsensitive = true;
 
-    public Tdlib getTdlib() { return tdlib; }
-    public void setTdlib(Tdlib tdlib) { this.tdlib = tdlib; }
+    public Tdlib getTdlib() {
+        return tdlib;
+    }
 
-    public Auth getAuth() { return auth; }
-    public void setAuth(Auth auth) { this.auth = auth; }
+    public void setTdlib(Tdlib tdlib) {
+        this.tdlib = tdlib;
+    }
 
-    public String getLibPath() { return libPath; }
-    public void setLibPath(String libPath) { this.libPath = libPath; }
+    public Auth getAuth() {
+        return auth;
+    }
 
-    public String getBotUsername() { return botUsername; }
-    public void setBotUsername(String botUsername) { this.botUsername = botUsername; }
+    public void setAuth(Auth auth) {
+        this.auth = auth;
+    }
 
-    public String getWelcomeMessage() { return welcomeMessage; }
-    public void setWelcomeMessage(String welcomeMessage) { this.welcomeMessage = welcomeMessage; }
+    public String getLibPath() {
+        return libPath;
+    }
 
-    public boolean getUseTestDc() { return useTestDc; }
-    public void setUseTestDc(boolean useTestDc) { this.useTestDc = useTestDc; }
+    public void setLibPath(String libPath) {
+        this.libPath = libPath;
+    }
 
-    public boolean isCaseInsensitive() { return caseInsensitive; }
-    public void setCaseInsensitive(boolean caseInsensitive) { this.caseInsensitive = caseInsensitive; }
+    public String getBotUsername() {
+        return botUsername;
+    }
+
+    public void setBotUsername(String botUsername) {
+        this.botUsername = botUsername;
+    }
+
+    public String getWelcomeMessage() {
+        return welcomeMessage;
+    }
+
+    public void setWelcomeMessage(String welcomeMessage) {
+        this.welcomeMessage = welcomeMessage;
+    }
+
+    public boolean getUseTestDc() {
+        return useTestDc;
+    }
+
+    public void setUseTestDc(boolean useTestDc) {
+        this.useTestDc = useTestDc;
+    }
+
+    public boolean isCaseInsensitive() {
+        return caseInsensitive;
+    }
+
+    public void setCaseInsensitive(boolean caseInsensitive) {
+        this.caseInsensitive = caseInsensitive;
+    }
 
     public static class Tdlib {
         private int apiId;
@@ -46,22 +81,69 @@ public class Config {
         private String systemVersion;
         private String applicationVersion = "1.0.4-debug";
 
-        public int getApiId() { return apiId; }
-        public void setApiId(int apiId) { this.apiId = apiId; }
-        public String getApiHash() { return apiHash; }
-        public void setApiHash(String apiHash) { this.apiHash = apiHash; }
-        public String getDatabaseDirectory() { return databaseDirectory; }
-        public void setDatabaseDirectory(String databaseDirectory) { this.databaseDirectory = databaseDirectory; }
-        public String getFilesDirectory() { return filesDirectory; }
-        public void setFilesDirectory(String filesDirectory) { this.filesDirectory = filesDirectory; }
-        public String getSystemLanguageCode() { return systemLanguageCode; }
-        public void setSystemLanguageCode(String systemLanguageCode) { this.systemLanguageCode = systemLanguageCode; }
-        public String getDeviceModel() { return deviceModel; }
-        public void setDeviceModel(String deviceModel) { this.deviceModel = deviceModel; }
-        public String getSystemVersion() { return systemVersion; }
-        public void setSystemVersion(String systemVersion) { this.systemVersion = systemVersion; }
-        public String getApplicationVersion() { return applicationVersion; }
-        public void setApplicationVersion(String applicationVersion) { this.applicationVersion = applicationVersion; }
+        public int getApiId() {
+            return apiId;
+        }
+
+        public void setApiId(int apiId) {
+            this.apiId = apiId;
+        }
+
+        public String getApiHash() {
+            return apiHash;
+        }
+
+        public void setApiHash(String apiHash) {
+            this.apiHash = apiHash;
+        }
+
+        public String getDatabaseDirectory() {
+            return databaseDirectory;
+        }
+
+        public void setDatabaseDirectory(String databaseDirectory) {
+            this.databaseDirectory = databaseDirectory;
+        }
+
+        public String getFilesDirectory() {
+            return filesDirectory;
+        }
+
+        public void setFilesDirectory(String filesDirectory) {
+            this.filesDirectory = filesDirectory;
+        }
+
+        public String getSystemLanguageCode() {
+            return systemLanguageCode;
+        }
+
+        public void setSystemLanguageCode(String systemLanguageCode) {
+            this.systemLanguageCode = systemLanguageCode;
+        }
+
+        public String getDeviceModel() {
+            return deviceModel;
+        }
+
+        public void setDeviceModel(String deviceModel) {
+            this.deviceModel = deviceModel;
+        }
+
+        public String getSystemVersion() {
+            return systemVersion;
+        }
+
+        public void setSystemVersion(String systemVersion) {
+            this.systemVersion = systemVersion;
+        }
+
+        public String getApplicationVersion() {
+            return applicationVersion;
+        }
+
+        public void setApplicationVersion(String applicationVersion) {
+            this.applicationVersion = applicationVersion;
+        }
     }
 
     public static class Auth {
@@ -69,11 +151,28 @@ public class Config {
         private String code;
         private String pass;
 
-        public String getPhone() { return phone; }
-        public void setPhone(String phone) { this.phone = phone; }
-        public String getCode() { return code; }
-        public void setCode(String code) { this.code = code; }
-        public String getPass() { return pass; }
-        public void setPass(String pass) { this.pass = pass; }
+        public String getPhone() {
+            return phone;
+        }
+
+        public void setPhone(String phone) {
+            this.phone = phone;
+        }
+
+        public String getCode() {
+            return code;
+        }
+
+        public void setCode(String code) {
+            this.code = code;
+        }
+
+        public String getPass() {
+            return pass;
+        }
+
+        public void setPass(String pass) {
+            this.pass = pass;
+        }
     }
 }

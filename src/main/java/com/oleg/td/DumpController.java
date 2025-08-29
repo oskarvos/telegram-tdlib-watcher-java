@@ -1,12 +1,15 @@
 package com.oleg.td;
 
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Простой REST-контроллер:
- *  - POST /start    — старт дампа
- *  - POST /stop     — останов
- *  - GET  /progress — прогресс
+ * - POST /start    — старт дампа
+ * - POST /stop     — останов
+ * - GET  /progress — прогресс
  */
 @RestController
 public class DumpController {

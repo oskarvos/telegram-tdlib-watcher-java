@@ -6,22 +6,17 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
-
 @Component
 public class AppInitializer {
     // Keep logger name for desired prefix
     private static final Logger log = LoggerFactory.getLogger("com.oleg.td.App");
-
-
     private final AuthFlow authFlow;
     private final Config config;
-
 
     public AppInitializer(AuthFlow authFlow, Config config) {
         this.authFlow = authFlow;
         this.config = config;
     }
-
 
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {
@@ -32,8 +27,6 @@ public class AppInitializer {
                 config.getTdlib().getFilesDirectory(),
                 config.isCaseInsensitive()
         );
-
-
         try {
             authFlow.wireInto();
             authFlow.authorizeBlocking();

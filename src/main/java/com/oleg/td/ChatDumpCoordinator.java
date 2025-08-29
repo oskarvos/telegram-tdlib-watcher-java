@@ -34,7 +34,10 @@ public class ChatDumpCoordinator {
         stopRequested = false;
 
         for (String chatRef : request.getChats()) {
-            if (stopRequested) { log.info("Дамп прерван пользователем"); break; }
+            if (stopRequested) {
+                log.info("Дамп прерван пользователем");
+                break;
+            }
 
             long chatId = resolver.resolveFlexible(chatRef.trim()); // <--- обновлено
             log.info("Начинаем дамп чата {} (ref='{}')", chatId, chatRef);
@@ -100,7 +103,9 @@ public class ChatDumpCoordinator {
         }
     }
 
-    public void stop() { stopRequested = true; }
+    public void stop() {
+        stopRequested = true;
+    }
 
     private void processMessage(long chatId, JsonNode msg, DumpRequest request) {
         long messageId = msg.path("id").asLong();
@@ -123,7 +128,7 @@ public class ChatDumpCoordinator {
             String plainText = ft.path("text").asText(null);
 
             if (request.isMessages()) db.saveMessage(chatId, messageId, date, senderId, replyTo, plainText);
-            if (request.isLinks())    extractLinksFromFormattedText(chatId, messageId, ft);
+            if (request.isLinks()) extractLinksFromFormattedText(chatId, messageId, ft);
         } else {
             if (request.isMessages()) db.saveMessage(chatId, messageId, date, senderId, replyTo, null);
         }
@@ -136,12 +141,12 @@ public class ChatDumpCoordinator {
 
             JsonNode sizes = photo.path("sizes");
             JsonNode best = sizes.isArray() && sizes.size() > 0 ? sizes.get(sizes.size() - 1) : null;
-            Integer w = best == null ? null : (best.path("width").isInt()  ? best.path("width").asInt()  : null);
+            Integer w = best == null ? null : (best.path("width").isInt() ? best.path("width").asInt() : null);
             Integer h = best == null ? null : (best.path("height").isInt() ? best.path("height").asInt() : null);
 
             JsonNode fileNode = best == null ? null : best.path("photo");
-            Integer fileId  = fileNode == null ? null : (fileNode.path("id").isInt() ? fileNode.path("id").asInt() : null);
-            String  remoteId = fileNode == null ? null : fileNode.path("remote").path("id").asText(null);
+            Integer fileId = fileNode == null ? null : (fileNode.path("id").isInt() ? fileNode.path("id").asInt() : null);
+            String remoteId = fileNode == null ? null : fileNode.path("remote").path("id").asText(null);
 
             String filePath = null;
             if (fileId != null) filePath = downloader.downloadBlocking(fileId);

@@ -13,7 +13,9 @@ import java.sql.*;
 public class DatabaseManager {
     private static final Logger log = LoggerFactory.getLogger(DatabaseManager.class);
 
-    /** каталог с файлами БД чатов: tdlib/db/chat_<absId>.db */
+    /**
+     * каталог с файлами БД чатов: tdlib/db/chat_<absId>.db
+     */
     private final Path dbDir = Paths.get("tdlib", "db");
 
     public DatabaseManager() {
@@ -23,8 +25,6 @@ public class DatabaseManager {
             log.warn("БД: не удалось создать каталог {}: {}", dbDir, e.toString());
         }
     }
-
-    /* ================= helpers ================= */
 
     private static String qIdent(String ident) {
         return "\"" + ident.replace("\"", "\"\"") + "\"";
@@ -46,11 +46,11 @@ public class DatabaseManager {
 
     public void prepareSchema(long chatId) {
         final String tMessages = qIdent("messages");
-        final String tPhotos   = qIdent("photos");
-        final String tVideos   = qIdent("videos");
-        final String tAudio    = qIdent("audio");
-        final String tLinks    = qIdent("links");
-        final String iLinks    = qIdent("links_idx");
+        final String tPhotos = qIdent("photos");
+        final String tVideos = qIdent("videos");
+        final String tAudio = qIdent("audio");
+        final String tLinks = qIdent("links");
+        final String iLinks = qIdent("links_idx");
 
         final String createMessages = "CREATE TABLE IF NOT EXISTS " + tMessages + " (" +
                 "id INTEGER PRIMARY KEY," +
@@ -103,7 +103,7 @@ public class DatabaseManager {
 
             addColumnIfMissing(c, "photos", "file_path", "TEXT");
             addColumnIfMissing(c, "videos", "file_path", "TEXT");
-            addColumnIfMissing(c, "audio",  "file_path", "TEXT");
+            addColumnIfMissing(c, "audio", "file_path", "TEXT");
 
             log.info("БД: [{}] схема готова: {}", chatId, dbPath(chatId));
         } catch (SQLException e) {
@@ -115,7 +115,10 @@ public class DatabaseManager {
         try (PreparedStatement ps = c.prepareStatement("PRAGMA table_info(" + qIdent(table) + ")");
              ResultSet rs = ps.executeQuery()) {
             boolean exists = false;
-            while (rs.next()) if (col.equalsIgnoreCase(rs.getString("name"))) { exists = true; break; }
+            while (rs.next()) if (col.equalsIgnoreCase(rs.getString("name"))) {
+                exists = true;
+                break;
+            }
             if (!exists) {
                 try (Statement s = c.createStatement()) {
                     s.execute("ALTER TABLE " + qIdent(table) + " ADD COLUMN " + col + " " + type);
@@ -129,7 +132,9 @@ public class DatabaseManager {
 
     /* ============ incremental helpers ============ */
 
-    /** MAX(id) из messages; если строк нет — 0. */
+    /**
+     * MAX(id) из messages; если строк нет — 0.
+     */
     public long getLastSavedMessageId(long chatId) {
         final String sql = "SELECT COALESCE(MAX(id),0) FROM " + qIdent("messages");
         try (Connection c = open(chatId); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
@@ -139,21 +144,25 @@ public class DatabaseManager {
         }
     }
 
-    /** MAX(message_id) по медиа-таблицам (на случай если сообщения не сохраняли). */
+    /**
+     * MAX(message_id) по медиа-таблицам (на случай если сообщения не сохраняли).
+     */
     public long getMaxMediaId(long chatId) {
         long max = 0;
         try (Connection c = open(chatId); Statement s = c.createStatement()) {
             max = Math.max(max, scalarLong(s, "SELECT COALESCE(MAX(message_id),0) FROM " + qIdent("photos")));
             max = Math.max(max, scalarLong(s, "SELECT COALESCE(MAX(message_id),0) FROM " + qIdent("videos")));
             max = Math.max(max, scalarLong(s, "SELECT COALESCE(MAX(message_id),0) FROM " + qIdent("audio")));
-        } catch (SQLException ignored) {}
+        } catch (SQLException ignored) {
+        }
         return max;
     }
 
     private long scalarLong(Statement s, String sql) {
         try (ResultSet rs = s.executeQuery(sql)) {
             if (rs.next()) return rs.getLong(1);
-        } catch (SQLException ignored) {}
+        } catch (SQLException ignored) {
+        }
         return 0L;
     }
 
@@ -166,7 +175,8 @@ public class DatabaseManager {
             st.setLong(1, messageId);
             st.setLong(2, date);
             st.setString(3, senderId);
-            if (replyTo == null) st.setNull(4, Types.INTEGER); else st.setLong(4, replyTo);
+            if (replyTo == null) st.setNull(4, Types.INTEGER);
+            else st.setLong(4, replyTo);
             st.setString(5, text);
             st.executeUpdate();
         } catch (SQLException e) {
@@ -180,10 +190,13 @@ public class DatabaseManager {
                 "(message_id, file_id, remote_id, width, height, caption, file_path) VALUES(?,?,?,?,?,?,?)";
         try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
             st.setLong(1, messageId);
-            if (fileId == null) st.setNull(2, Types.INTEGER); else st.setInt(2, fileId);
+            if (fileId == null) st.setNull(2, Types.INTEGER);
+            else st.setInt(2, fileId);
             st.setString(3, remoteId);
-            if (w == null) st.setNull(4, Types.INTEGER); else st.setInt(4, w);
-            if (h == null) st.setNull(5, Types.INTEGER); else st.setInt(5, h);
+            if (w == null) st.setNull(4, Types.INTEGER);
+            else st.setInt(4, w);
+            if (h == null) st.setNull(5, Types.INTEGER);
+            else st.setInt(5, h);
             st.setString(6, caption);
             st.setString(7, filePath);
             st.executeUpdate();
@@ -198,11 +211,15 @@ public class DatabaseManager {
                 "(message_id, file_id, remote_id, duration, width, height, caption, file_path) VALUES(?,?,?,?,?,?,?,?)";
         try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
             st.setLong(1, messageId);
-            if (fileId == null) st.setNull(2, Types.INTEGER); else st.setInt(2, fileId);
+            if (fileId == null) st.setNull(2, Types.INTEGER);
+            else st.setInt(2, fileId);
             st.setString(3, remoteId);
-            if (duration == null) st.setNull(4, Types.INTEGER); else st.setInt(4, duration);
-            if (w == null) st.setNull(5, Types.INTEGER); else st.setInt(5, w);
-            if (h == null) st.setNull(6, Types.INTEGER); else st.setInt(6, h);
+            if (duration == null) st.setNull(4, Types.INTEGER);
+            else st.setInt(4, duration);
+            if (w == null) st.setNull(5, Types.INTEGER);
+            else st.setInt(5, w);
+            if (h == null) st.setNull(6, Types.INTEGER);
+            else st.setInt(6, h);
             st.setString(7, caption);
             st.setString(8, filePath);
             st.executeUpdate();
@@ -217,9 +234,11 @@ public class DatabaseManager {
                 "(message_id, file_id, remote_id, duration, mime_type, file_path) VALUES(?,?,?,?,?,?)";
         try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
             st.setLong(1, messageId);
-            if (fileId == null) st.setNull(2, Types.INTEGER); else st.setInt(2, fileId);
+            if (fileId == null) st.setNull(2, Types.INTEGER);
+            else st.setInt(2, fileId);
             st.setString(3, remoteId);
-            if (duration == null) st.setNull(4, Types.INTEGER); else st.setInt(4, duration);
+            if (duration == null) st.setNull(4, Types.INTEGER);
+            else st.setInt(4, duration);
             st.setString(5, mime);
             st.setString(6, filePath);
             st.executeUpdate();
