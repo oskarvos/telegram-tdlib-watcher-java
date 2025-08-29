@@ -1,20 +1,22 @@
 # ===== 1) Сборка JAR (Gradle, без Alpine) =====
 FROM gradle:8.7-jdk21 AS app-build
 WORKDIR /home/gradle/src
-# Оптимизация кэша: сначала файлы сборки
+# Оптимизация кэша
 COPY build.gradle settings.gradle gradle.properties* ./
 COPY gradle ./gradle
 RUN gradle --version
-# Затем исходники
+# Исходники
 COPY . .
-# Собираем fat-jar (bootJar)
 RUN gradle bootJar --no-daemon
 
 # ===== 2) Сборка TDLib (Ubuntu, glibc) =====
-FROM ubuntu:24.04 AS tdlib-build
+FROM ubuntu:22.04 AS tdlib-build
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git cmake g++ make zlib1g-dev libssl-dev libsqlite3-dev libzstd-dev ca-certificates \
+    git cmake g++ make \
+    zlib1g-dev libssl-dev libsqlite3-dev libzstd-dev \
+    gperf \
+    ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 RUN git clone --depth 1 https://github.com/tdlib/td.git
@@ -30,17 +32,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-# Кладём приложение
-COPY --from=app-build /home/gradle/src/build/libs/*.jar /app/app.jar
+COPY --from=app-build   /home/gradle/src/build/libs/*.jar /app/app.jar
+COPY --from=tdlib-build /src/td/build/libtdjson.so        /opt/tdlib/libtdjson.so
 
-# Кладём TDLib внутрь образа
-COPY --from=tdlib-build /src/td/build/libtdjson.so /opt/tdlib/libtdjson.so
-
-# Пути для загрузки нативной либы
 ENV LD_LIBRARY_PATH=/opt/tdlib
-# ВАЖНО: приложение должно читать td.lib-path из системного свойства.
-# Здесь укажем дефолт для Docker.
 ENV JAVA_TOOL_OPTIONS="-Dtd.lib-path=/opt/tdlib/libtdjson.so -Djna.nosys=false"
-
 EXPOSE 8080
 ENTRYPOINT ["java","-jar","/app/app.jar"]
