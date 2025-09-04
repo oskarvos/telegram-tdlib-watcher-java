@@ -39,19 +39,18 @@ public class ChatDumpCoordinator {
                 break;
             }
 
-            long chatId = resolver.resolveFlexible(chatRef.trim()); // <--- обновлено
+            long chatId = resolver.resolveFlexible(chatRef.trim());
             log.info("Начинаем дамп чата {} (ref='{}')", chatId, chatRef);
 
             db.prepareSchema(chatId);
 
-            // ключевое изменение: lastSavedId считаем по messages, а если их не сохраняем — по медиа
             long lastSavedId = request.isMessages()
                     ? db.getLastSavedMessageId(chatId)
                     : db.getMaxMediaId(chatId);
 
             if (lastSavedId > 0) log.info("Чат {}: lastSavedId={}", chatId, lastSavedId);
 
-            long fromMessageId = 0; // 0 — начинать с последних
+            long fromMessageId = 0;
             boolean reachedAlreadySaved = false;
 
             while (!stopRequested && !reachedAlreadySaved) {
@@ -175,7 +174,7 @@ public class ChatDumpCoordinator {
         }
 
         // 4) голос/аудио
-        if ("messageVoiceNote".equals(ctype) && request.isMessages()) {
+        if ("messageVoiceNote".equals(ctype) && request.isAudio()) {
             JsonNode vn = content.path("voice_note");
             Integer duration = vn.path("duration").isInt() ? vn.path("duration").asInt() : null;
 
@@ -190,7 +189,7 @@ public class ChatDumpCoordinator {
             db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime, filePath);
         }
 
-        if ("messageAudio".equals(ctype) && request.isMessages()) {
+        if ("messageAudio".equals(ctype) && request.isAudio()) {
             JsonNode au = content.path("audio");
             Integer duration = au.path("duration").isInt() ? au.path("duration").asInt() : null;
 
@@ -203,6 +202,25 @@ public class ChatDumpCoordinator {
             if (fileId != null) filePath = downloader.downloadBlocking(fileId);
 
             db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime, filePath);
+        }
+
+        // 5) документы (текстовые файлы и другие форматы)
+        if ("messageDocument".equals(ctype) && request.isDocuments()) {
+            JsonNode doc = content.path("document");
+            String caption = content.path("caption").path("text").asText(null);
+            String fileName = doc.path("file_name").asText(null);
+            String mimeType = doc.path("mime_type").asText(null);
+            Integer fileSize = doc.path("size").isInt() ? doc.path("size").asInt() : null;
+
+            JsonNode fileNode = doc.path("document");
+            Integer fileId = fileNode.path("id").isInt() ? fileNode.path("id").asInt() : null;
+            String remoteId = fileNode.path("remote").path("id").asText(null);
+
+            String filePath = null;
+            if (fileId != null) filePath = downloader.downloadBlocking(fileId);
+
+            db.saveDocument(chatId, messageId, fileId, remoteId, fileName, mimeType, fileSize, caption, filePath);
+            if (request.isLinks()) extractLinksFromFormattedText(chatId, messageId, content.path("caption"));
         }
     }
 

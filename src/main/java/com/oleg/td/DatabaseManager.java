@@ -49,6 +49,7 @@ public class DatabaseManager {
         final String tPhotos = qIdent("photos");
         final String tVideos = qIdent("videos");
         final String tAudio = qIdent("audio");
+        final String tDocuments = qIdent("documents");
         final String tLinks = qIdent("links");
         final String iLinks = qIdent("links_idx");
 
@@ -86,6 +87,16 @@ public class DatabaseManager {
                 "mime_type TEXT," +
                 "file_path TEXT" +
                 ")";
+        final String createDocuments = "CREATE TABLE IF NOT EXISTS " + tDocuments + " (" +
+                "message_id INTEGER PRIMARY KEY," +
+                "file_id INTEGER," +
+                "remote_id TEXT," +
+                "file_name TEXT," +
+                "mime_type TEXT," +
+                "file_size INTEGER," +
+                "caption TEXT," +
+                "file_path TEXT" +
+                ")";
         final String createLinks = "CREATE TABLE IF NOT EXISTS " + tLinks + " (" +
                 "message_id INTEGER," +
                 "url TEXT," +
@@ -98,12 +109,14 @@ public class DatabaseManager {
             s.execute(createPhotos);
             s.execute(createVideos);
             s.execute(createAudio);
+            s.execute(createDocuments);
             s.execute(createLinks);
             s.execute(idxLinks);
 
             addColumnIfMissing(c, "photos", "file_path", "TEXT");
             addColumnIfMissing(c, "videos", "file_path", "TEXT");
             addColumnIfMissing(c, "audio", "file_path", "TEXT");
+            addColumnIfMissing(c, "documents", "file_path", "TEXT");
 
             log.info("БД: [{}] схема готова: {}", chatId, dbPath(chatId));
         } catch (SQLException e) {
@@ -153,6 +166,7 @@ public class DatabaseManager {
             max = Math.max(max, scalarLong(s, "SELECT COALESCE(MAX(message_id),0) FROM " + qIdent("photos")));
             max = Math.max(max, scalarLong(s, "SELECT COALESCE(MAX(message_id),0) FROM " + qIdent("videos")));
             max = Math.max(max, scalarLong(s, "SELECT COALESCE(MAX(message_id),0) FROM " + qIdent("audio")));
+            max = Math.max(max, scalarLong(s, "SELECT COALESCE(MAX(message_id),0) FROM " + qIdent("documents")));
         } catch (SQLException ignored) {
         }
         return max;
@@ -166,7 +180,6 @@ public class DatabaseManager {
         return 0L;
     }
 
-    /* ============ upserts ============ */
 
     public void saveMessage(long chatId, long messageId, long date, String senderId, Long replyTo, String text) {
         final String sql = "INSERT OR IGNORE INTO " + qIdent("messages") +
@@ -244,6 +257,28 @@ public class DatabaseManager {
             st.executeUpdate();
         } catch (SQLException e) {
             log.error("БД: ошибка сохранения аудио (msg_id={}) для чата {}: {}", messageId, chatId, e.getMessage(), e);
+        }
+    }
+
+    public void saveDocument(long chatId, long messageId, Integer fileId, String remoteId,
+                             String fileName, String mimeType, Integer fileSize,
+                             String caption, String filePath) {
+        final String sql = "INSERT OR REPLACE INTO " + qIdent("documents") +
+                "(message_id, file_id, remote_id, file_name, mime_type, file_size, caption, file_path) VALUES(?,?,?,?,?,?,?,?)";
+        try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setLong(1, messageId);
+            if (fileId == null) st.setNull(2, Types.INTEGER);
+            else st.setInt(2, fileId);
+            st.setString(3, remoteId);
+            st.setString(4, fileName);
+            st.setString(5, mimeType);
+            if (fileSize == null) st.setNull(6, Types.INTEGER);
+            else st.setInt(6, fileSize);
+            st.setString(7, caption);
+            st.setString(8, filePath);
+            st.executeUpdate();
+        } catch (SQLException e) {
+            log.error("БД: ошибка сохранения документа (msg_id={}) для чата {}: {}", messageId, chatId, e.getMessage(), e);
         }
     }
 

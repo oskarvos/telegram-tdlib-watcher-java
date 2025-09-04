@@ -157,6 +157,13 @@
             box-shadow: 0 7px 15px rgba(106, 17, 203, 0.4);
         }
 
+        #startBtn:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
         #stopBtn {
             background: #ffffff;
             color: #e74c3c;
@@ -168,6 +175,15 @@
             color: white;
             transform: translateY(-3px);
             box-shadow: 0 7px 15px rgba(231, 76, 60, 0.4);
+        }
+
+        #stopBtn:disabled {
+            background: #f8f9fa;
+            color: #cccccc;
+            border-color: #cccccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
         }
 
         .progress-container {
@@ -253,6 +269,25 @@
             opacity: 0.8;
         }
 
+        .chat-list {
+            margin-top: 10px;
+            max-height: 150px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 10px;
+            background: #f8f9fa;
+        }
+
+        .chat-item {
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .chat-item:last-child {
+            border-bottom: none;
+        }
+
         @media (max-width: 600px) {
             .checkbox-group {
                 grid-template-columns: 1fr;
@@ -277,33 +312,44 @@
 
     <div class="form-group">
         <label for="chats">Ссылки или ID чатов (по одному на строку):</label>
-        <textarea id="chats" placeholder="Введите ссылки или ID чатов, по одному на строку"></textarea>
+        <textarea id="chats" placeholder="Введите ссылки или ID чатов, по одному на строку. Например:
+https://t.me/chatname
+@username
+123456789"></textarea>
     </div>
 
     <div class="checkbox-group">
         <div class="checkbox-item">
-            <input type="checkbox" id="photos">
+            <input type="checkbox" id="photos" checked>
             <label for="photos">Фотографии</label>
         </div>
         <div class="checkbox-item">
-            <input type="checkbox" id="videos">
+            <input type="checkbox" id="videos" checked>
             <label for="videos">Видео</label>
         </div>
         <div class="checkbox-item">
-            <input type="checkbox" id="links">
+            <input type="checkbox" id="audio" checked>
+            <label for="audio">Аудио</label>
+        </div>
+        <div class="checkbox-item">
+            <input type="checkbox" id="documents" checked>
+            <label for="documents">Документы</label>
+        </div>
+        <div class="checkbox-item">
+            <input type="checkbox" id="links" checked>
             <label for="links">Ссылки</label>
         </div>
         <div class="checkbox-item">
-            <input type="checkbox" id="messages">
+            <input type="checkbox" id="messages" checked>
             <label for="messages">Сообщения</label>
         </div>
     </div>
 
     <div class="buttons">
-        <button id="startBtn" onclick="startDump()">
+        <button id="startBtn">
             <i class="fas fa-play-circle"></i> Начать дамп
         </button>
-        <button id="stopBtn" onclick="stopDump()">
+        <button id="stopBtn" disabled>
             <i class="fas fa-stop-circle"></i> Остановить
         </button>
     </div>
@@ -319,6 +365,11 @@
         <div class="status" id="status">Готово к началу</div>
     </div>
 
+    <div id="activeChats" style="display: none; margin-top: 20px;">
+        <h3>Обрабатываемые чаты:</h3>
+        <div class="chat-list" id="chatList"></div>
+    </div>
+
     <div class="instructions">
         <h3><i class="fas fa-info-circle"></i> Как использовать:</h3>
         <ul>
@@ -327,6 +378,7 @@
             <li>Нажмите "Начать дамп" для запуска процесса</li>
             <li>Следите за прогрессом в индикаторе выполнения</li>
             <li>Нажмите "Остановить" для отмены операции</li>
+            <li>Данные сохраняются в локальную базу данных SQLite</li>
         </ul>
     </div>
 </div>
@@ -336,7 +388,17 @@
 </div>
 
 <script>
+    let isProcessing = false;
+    let pollingInterval = null;
+
+    document.addEventListener('DOMContentLoaded', function() {
+        document.getElementById('startBtn').addEventListener('click', startDump);
+        document.getElementById('stopBtn').addEventListener('click', stopDump);
+    });
+
     async function startDump() {
+        if (isProcessing) return;
+
         const chats = document.getElementById('chats').value
             .split(/\n+/)
             .map(s => s.trim())
@@ -346,6 +408,8 @@
             chats: chats,
             photos: document.getElementById('photos').checked,
             videos: document.getElementById('videos').checked,
+            audio: document.getElementById('audio').checked,
+            documents: document.getElementById('documents').checked,
             links: document.getElementById('links').checked,
             messages: document.getElementById('messages').checked
         };
@@ -354,60 +418,120 @@
             setStatus('Ошибка: не указаны чаты для обработки', '#ffecec', '#e74c3c');
             return;
         }
-        if (!request.photos && !request.videos && !request.links && !request.messages) {
+        if (!request.photos && !request.videos && !request.audio &&
+            !request.documents && !request.links && !request.messages) {
             setStatus('Ошибка: не выбран ни один тип контента', '#ffecec', '#e74c3c');
             return;
         }
 
+        // Показать список обрабатываемых чатов
+        const chatList = document.getElementById('chatList');
+        chatList.innerHTML = '';
+        request.chats.forEach(chat => {
+            const div = document.createElement('div');
+            div.className = 'chat-item';
+            div.textContent = chat;
+            chatList.appendChild(div);
+        });
+        document.getElementById('activeChats').style.display = 'block';
+
+        // Блокировка интерфейса
+        toggleUIState(true);
         document.getElementById('progress-bar').classList.remove('green');
         setStatus('Начинаем процесс дампа...', '#edf7ff', '#2c3e50');
         setProgress(0);
 
         try {
-            const res = await fetch('/start', {
+            const res = await fetch('/dump/start', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(request)
             });
-            if (!res.ok) throw new Error('Сервер вернул ошибку ' + res.status);
+
+            if (!res.ok) {
+                const errorText = await res.text();
+                throw new Error(errorText || `Сервер вернул ошибку ${res.status}`);
+            }
 
             setStatus('Обработка...', '#edf7ff', '#2c3e50');
-            poll();
+
+            // Запуск опроса статуса
+            if (pollingInterval) clearInterval(pollingInterval);
+            pollingInterval = setInterval(pollProgress, 1000);
+
         } catch (e) {
             setStatus('Ошибка запуска: ' + e.message, '#ffecec', '#e74c3c');
+            toggleUIState(false);
         }
     }
 
     async function stopDump() {
         setStatus('Останавливаем...', '#fff4e6', '#e67e22');
         try {
-            const res = await fetch('/stop', {method: 'POST'});
+            const res = await fetch('/dump/stop', {method: 'POST'});
             if (!res.ok) throw new Error('Сервер вернул ошибку ' + res.status);
+
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
+
             setStatus('Остановлено', '#ffecec', '#e74c3c');
+            toggleUIState(false);
         } catch (e) {
             setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c');
         }
     }
 
-    async function poll() {
+    async function pollProgress() {
         try {
-            const res = await fetch('/progress');
+            const res = await fetch('/dump/progress');
             if (!res.ok) throw new Error('Сервер вернул ошибку ' + res.status);
+
             const data = await res.json();
+
+            // Если процесс завершен, прекращаем опрос
+            if (!data.running) {
+                if (pollingInterval) {
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                }
+                toggleUIState(false);
+
+                if (data.percent === 100) {
+                    setProgress(100, true);
+                    setStatus('Успешно завершено!', '#e7f6ec', '#27ae60');
+                } else {
+                    setStatus('Процесс прерван', '#ffecec', '#e74c3c');
+                }
+                return;
+            }
 
             const p = Math.max(0, Math.min(100, data.percent || 0));
             setProgress(p);
+            setStatus('Обработка... ' + p + '%', '#edf7ff', '#2c3e50');
 
-            if (data.running) {
-                setStatus('Обработка... ' + p + '%', '#edf7ff', '#2c3e50');
-                setTimeout(poll, 1000);
-            } else {
-                setProgress(100, true);
-                setStatus('Успешно завершено!', '#e7f6ec', '#27ae60');
-            }
         } catch (e) {
+            console.error('Ошибка запроса прогресса:', e);
             setStatus('Ошибка запроса прогресса: ' + e.message, '#ffecec', '#e74c3c');
+
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
+            toggleUIState(false);
         }
+    }
+
+    function toggleUIState(processing) {
+        isProcessing = processing;
+        document.getElementById('startBtn').disabled = processing;
+        document.getElementById('stopBtn').disabled = !processing;
+        document.getElementById('chats').disabled = processing;
+
+        // Блокировка чекбоксов
+        const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach(cb => cb.disabled = processing);
     }
 
     function setStatus(text, bg, color) {

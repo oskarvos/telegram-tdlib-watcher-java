@@ -6,6 +6,8 @@ public class DumpRequest {
     private List<String> chats;
     private boolean photos;
     private boolean videos;
+    private boolean audio;
+    private boolean documents;
     private boolean links;
     private boolean messages;
 
@@ -31,6 +33,22 @@ public class DumpRequest {
 
     public void setVideos(boolean videos) {
         this.videos = videos;
+    }
+
+    public boolean isAudio() {
+        return audio;
+    }
+
+    public void setAudio(boolean audio) {
+        this.audio = audio;
+    }
+
+    public boolean isDocuments() {
+        return documents;
+    }
+
+    public void setDocuments(boolean documents) {
+        this.documents = documents;
     }
 
     public boolean isLinks() {
