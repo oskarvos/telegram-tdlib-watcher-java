@@ -8,6 +8,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.*;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Component
 public class DatabaseManager {
@@ -287,5 +290,105 @@ public class DatabaseManager {
         } catch (SQLException e) {
             log.error("БД: ошибка сохранения ссылки (msg_id={}) для чата {}: {}", messageId, chatId, e.getMessage(), e);
         }
+    }
+
+    public void prepareMonitorSchema() {
+        final String tMonitorResults = qIdent("monitor_results");
+
+        final String createMonitorResults = "CREATE TABLE IF NOT EXISTS " + tMonitorResults + " (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                "chat_id INTEGER," +
+                "chat_title TEXT," +
+                "message_id INTEGER," +
+                "message_date TEXT," + // ISO format
+                "keyword TEXT," +
+                "message_text TEXT," +
+                "sender_id TEXT," +
+                "sender_name TEXT," +
+                "found_date TEXT," + // When we found it
+                "UNIQUE(chat_id, message_id, keyword)" +
+                ")";
+
+        final String idxMonitorChat = "CREATE INDEX IF NOT EXISTS monitor_chat_idx ON " + tMonitorResults + "(chat_id)";
+        final String idxMonitorKeyword = "CREATE INDEX IF NOT EXISTS monitor_keyword_idx ON " + tMonitorResults + "(keyword)";
+        final String idxMonitorDate = "CREATE INDEX IF NOT EXISTS monitor_date_idx ON " + tMonitorResults + "(message_date)";
+
+        try (Connection c = open(0); Statement s = c.createStatement()) { // Use chat_id 0 for monitor DB
+            s.execute(createMonitorResults);
+            s.execute(idxMonitorChat);
+            s.execute(idxMonitorKeyword);
+            s.execute(idxMonitorDate);
+            log.info("БД: схема мониторинга готова");
+        } catch (SQLException e) {
+            log.error("БД: ошибка подготовки схемы мониторинга: {}", e.getMessage(), e);
+        }
+    }
+
+    public void saveMonitorResult(MonitorResult result) {
+        final String sql = "INSERT OR IGNORE INTO " + qIdent("monitor_results") +
+                "(chat_id, chat_title, message_id, message_date, keyword, message_text, sender_id, sender_name, found_date) " +
+                "VALUES(?,?,?,?,?,?,?,?,?)";
+
+        try (Connection c = open(0); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setLong(1, result.getChatId());
+            st.setString(2, result.getChatTitle());
+            st.setLong(3, result.getMessageId());
+            st.setString(4, result.getMessageDate().toString());
+            st.setString(5, result.getKeyword());
+            st.setString(6, result.getMessageText());
+            st.setString(7, result.getSenderId());
+            st.setString(8, result.getSenderName());
+            st.setString(9, LocalDateTime.now().toString());
+
+            st.executeUpdate();
+        } catch (SQLException e) {
+            log.error("БД: ошибка сохранения результата мониторинга: {}", e.getMessage(), e);
+        }
+    }
+
+    public List<MonitorResult> getMonitorResults(String keywordFilter, LocalDateTime dateFrom, LocalDateTime dateTo) {
+        List<MonitorResult> results = new ArrayList<>();
+        String sql = "SELECT * FROM " + qIdent("monitor_results") + " WHERE 1=1";
+        List<Object> params = new ArrayList<>();
+
+        if (keywordFilter != null && !keywordFilter.isEmpty()) {
+            sql += " AND keyword LIKE ?";
+            params.add("%" + keywordFilter + "%");
+        }
+        if (dateFrom != null) {
+            sql += " AND message_date >= ?";
+            params.add(dateFrom.toString());
+        }
+        if (dateTo != null) {
+            sql += " AND message_date <= ?";
+            params.add(dateTo.toString());
+        }
+        sql += " ORDER BY message_date DESC";
+
+        try (Connection c = open(0); PreparedStatement st = c.prepareStatement(sql)) {
+            for (int i = 0; i < params.size(); i++) {
+                st.setObject(i + 1, params.get(i));
+            }
+
+            try (ResultSet rs = st.executeQuery()) {
+                while (rs.next()) {
+                    MonitorResult result = new MonitorResult();
+                    result.setChatId(rs.getLong("chat_id"));
+                    result.setChatTitle(rs.getString("chat_title"));
+                    result.setMessageId(rs.getLong("message_id"));
+                    result.setMessageDate(LocalDateTime.parse(rs.getString("message_date")));
+                    result.setKeyword(rs.getString("keyword"));
+                    result.setMessageText(rs.getString("message_text"));
+                    result.setSenderId(rs.getString("sender_id"));
+                    result.setSenderName(rs.getString("sender_name"));
+
+                    results.add(result);
+                }
+            }
+        } catch (SQLException e) {
+            log.error("БД: ошибка получения результатов мониторинга: {}", e.getMessage(), e);
+        }
+
+        return results;
     }
 }

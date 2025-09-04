@@ -12,10 +12,14 @@ public class AppInitializer {
     private static final Logger log = LoggerFactory.getLogger("com.oleg.td.App");
     private final AuthFlow authFlow;
     private final Config config;
+    private final ChatMonitor chatMonitor;
+    private final DatabaseManager db;
 
-    public AppInitializer(AuthFlow authFlow, Config config) {
+    public AppInitializer(AuthFlow authFlow, Config config, ChatMonitor chatMonitor, DatabaseManager db) {
         this.authFlow = authFlow;
         this.config = config;
+        this.chatMonitor = chatMonitor;
+        this.db = db;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -30,6 +34,10 @@ public class AppInitializer {
         try {
             authFlow.wireInto();
             authFlow.authorizeBlocking();
+
+            // Инициализация схемы мониторинга
+            db.prepareMonitorSchema();
+
             log.info("✅ Авторизация успешно завершена!");
         } catch (Exception e) {
             log.error("❌ Ошибка авторизации: {}", e.getMessage(), e);

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TDLib Дамп Чатов</title>
+    <title>TDLib Дамп и Мониторинг Чатов</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
@@ -46,7 +46,7 @@
             background: linear-gradient(90deg, #6a11cb, #2575fc);
         }
 
-        h1 {
+        h1, h2 {
             text-align: center;
             margin-bottom: 25px;
             color: #2c3e50;
@@ -75,9 +75,8 @@
             font-size: 16px;
         }
 
-        textarea {
+        textarea, input[type="text"], input[type="number"] {
             width: 100%;
-            height: 160px;
             padding: 15px;
             border: 2px solid #ddd;
             border-radius: 8px;
@@ -86,7 +85,7 @@
             transition: all 0.3s;
         }
 
-        textarea:focus {
+        textarea:focus, input:focus {
             outline: none;
             border-color: #6a11cb;
             box-shadow: 0 0 0 3px rgba(106, 17, 203, 0.2);
@@ -147,27 +146,37 @@
             gap: 10px;
         }
 
-        #startBtn {
+        #startBtn, #startMonitorBtn {
             background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
             color: white;
         }
 
-        #startBtn:hover {
+        #startBtn:hover, #startMonitorBtn:hover {
             transform: translateY(-3px);
             box-shadow: 0 7px 15px rgba(106, 17, 203, 0.4);
         }
 
-        #stopBtn {
+        #stopBtn, #stopMonitorBtn {
             background: #ffffff;
             color: #e74c3c;
             border: 2px solid #e74c3c;
         }
 
-        #stopBtn:hover {
+        #stopBtn:hover, #stopMonitorBtn:hover {
             background: #e74c3c;
             color: white;
             transform: translateY(-3px);
             box-shadow: 0 7px 15px rgba(231, 76, 60, 0.4);
+        }
+
+        #showResultsBtn {
+            background: #27ae60;
+            color: white;
+        }
+
+        #showResultsBtn:hover {
+            background: #219a52;
+            transform: translateY(-3px);
         }
 
         .progress-container {
@@ -186,7 +195,7 @@
             font-weight: 500;
         }
 
-        #progress {
+        #progress, #monitorProgress {
             width: 100%;
             height: 24px;
             background-color: #e0e0e0;
@@ -194,7 +203,7 @@
             overflow: hidden;
         }
 
-        #progress-bar {
+        #progress-bar, #monitorProgress-bar {
             height: 100%;
             width: 0;
             background: linear-gradient(90deg, #6a11cb, #2575fc);
@@ -202,7 +211,7 @@
             border-radius: 12px;
         }
 
-        #progress-bar.green {
+        #progress-bar.green, #monitorProgress-bar.green {
             background: linear-gradient(90deg, #2ecc71, #27ae60);
         }
 
@@ -258,12 +267,41 @@
             margin-top: 15px;
         }
 
-        .text-document-extensions input {
-            width: 100%;
-            padding: 10px;
+        .mode-switcher {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .mode-switcher button {
+            padding: 12px 20px;
+            background: #34495e;
+            color: white;
+        }
+
+        .mode-switcher button:hover {
+            background: #2c3e50;
+        }
+
+        .mode-switcher button.active {
+            background: #6a11cb;
+        }
+
+        .results-container {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
             border-radius: 8px;
-            border: 2px solid #ddd;
-            font-size: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .result-item {
+            padding: 15px;
+            margin-bottom: 10px;
+            background: white;
+            border-radius: 8px;
+            border-left: 4px solid #6a11cb;
         }
 
         @media (max-width: 768px) {
@@ -288,7 +326,12 @@
     </style>
 </head>
 <body>
-<div class="container">
+<div class="mode-switcher">
+    <button id="dumpModeBtn" class="active" onclick="showDumpMode()">Режим выгрузки</button>
+    <button id="monitorModeBtn" onclick="showMonitorMode()">Режим мониторинга</button>
+</div>
+
+<div class="container" id="dumpContainer">
     <div class="logo">
         <i class="fab fa-telegram"></i>
     </div>
@@ -355,16 +398,7 @@
         <h3><i class="fas fa-info-circle"></i> Как использовать:</h3>
         <ul>
             <li>Введите ссылки или ID чатов (по одному на строку)</li>
-            <li>Выберите, какой контент нужно сохранить:
-                <ul>
-                    <li><strong>Фотографии</strong> - изображения (JPG, PNG, GIF)</li>
-                    <li><strong>Видео</strong> - видеофайлы (MP4, AVI, MOV)</li>
-                    <li><strong>Ссылки</strong> - URL из сообщений</li>
-                    <li><strong>Сообщения</strong> - текстовые сообщения</li>
-                    <li><strong>Текстовые документы</strong> - TXT, PDF, DOC, код (.py, .cpp, .java), скрипты (.bat, .sh)</li>
-                    <li><strong>Аудио файлы</strong> - MP3, WAV, OGG, голосовые сообщения, аудио документы</li>
-                </ul>
-            </li>
+            <li>Выберите, какой контент нужно сохранить</li>
             <li>Нажмите "Начать дамп" для запуска процесса</li>
             <li>Следите за прогрессом в индикаторе выполнения</li>
             <li>Нажмите "Остановить" для отмены операции</li>
@@ -372,11 +406,91 @@
     </div>
 </div>
 
+<div class="container" id="monitorContainer" style="display: none;">
+    <div class="logo">
+        <i class="fas fa-search"></i>
+    </div>
+    <h2>Мониторинг чатов</h2>
+
+    <div class="form-group">
+        <label for="monitorChats">Чаты для мониторинга (по одному на строку):</label>
+        <textarea id="monitorChats" placeholder="Введите ссылки или ID чатов для мониторинга"></textarea>
+    </div>
+
+    <div class="form-group">
+        <label for="monitorKeywords">Ключевые слова (по одному на строку):</label>
+        <textarea id="monitorKeywords" placeholder="Введите ключевые слова для поиска"></textarea>
+    </div>
+
+    <div class="checkbox-group">
+        <div class="checkbox-item">
+            <input type="checkbox" id="caseSensitive">
+            <label for="caseSensitive">Чувствительность к регистру</label>
+        </div>
+        <div class="checkbox-item">
+            <input type="checkbox" id="regexMode">
+            <label for="regexMode">Регулярные выражения</label>
+        </div>
+    </div>
+
+    <div class="form-group">
+        <label for="checkInterval">Интервал проверки (минуты):</label>
+        <input type="number" id="checkInterval" value="5" min="1" max="60">
+    </div>
+
+    <div class="buttons">
+        <button id="startMonitorBtn" onclick="startMonitoring()">
+            <i class="fas fa-play"></i> Запустить мониторинг
+        </button>
+        <button id="stopMonitorBtn" onclick="stopMonitoring()">
+            <i class="fas fa-stop"></i> Остановить
+        </button>
+        <button id="showResultsBtn" onclick="showResults()">
+            <i class="fas fa-list"></i> Показать результаты
+        </button>
+    </div>
+
+    <div class="progress-container">
+        <div class="progress-label">
+            <span>Статус мониторинга:</span>
+            <span id="monitorStatusText">Не активен</span>
+        </div>
+        <div id="monitorProgress">
+            <div id="monitorProgress-bar"></div>
+        </div>
+        <div class="status" id="monitorStatus">Мониторинг не запущен</div>
+    </div>
+
+    <div id="monitorResults" class="results-container" style="display: none;">
+        <h3>Результаты мониторинга</h3>
+        <div id="resultsList"></div>
+    </div>
+</div>
+
 <div class="footer">
-    <p>TDLib Chat Dump &copy; 2025</p>
+    <p>TDLib Chat Dump & Monitor &copy; 2025</p>
 </div>
 
 <script>
+    // Переменные для управления интервалами
+    let dumpPollInterval = null;
+    let monitorPollInterval = null;
+
+    function showDumpMode() {
+        document.getElementById('dumpContainer').style.display = 'block';
+        document.getElementById('monitorContainer').style.display = 'none';
+        document.getElementById('dumpModeBtn').classList.add('active');
+        document.getElementById('monitorModeBtn').classList.remove('active');
+    }
+
+    function showMonitorMode() {
+        document.getElementById('dumpContainer').style.display = 'none';
+        document.getElementById('monitorContainer').style.display = 'block';
+        document.getElementById('dumpModeBtn').classList.remove('active');
+        document.getElementById('monitorModeBtn').classList.add('active');
+    }
+
+    // Функции для режима дампа
     function toggleTextDocumentExtensions() {
         const textDocs = document.getElementById('textDocuments');
         const extensionsField = document.querySelector('.text-document-extensions');
@@ -420,10 +534,16 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(request)
             });
-            if (!res.ok) throw new Error('Сервер вернул ошибку ' + res.status);
+
+            if (!res.ok) {
+                const errorText = await res.text();
+                throw new Error(errorText || 'Сервер вернул ошибку ' + res.status);
+            }
 
             setStatus('Обработка...', '#edf7ff', '#2c3e50');
-            poll();
+            // Останавливаем предыдущий интервал, если он был
+            if (dumpPollInterval) clearInterval(dumpPollInterval);
+            dumpPollInterval = setInterval(pollDumpProgress, 1000);
         } catch (e) {
             setStatus('Ошибка запуска: ' + e.message, '#ffecec', '#e74c3c');
         }
@@ -435,34 +555,158 @@
             const res = await fetch('/stop', {method: 'POST'});
             if (!res.ok) throw new Error('Сервер вернул ошибку ' + res.status);
             setStatus('Остановлено', '#ffecec', '#e74c3c');
+            if (dumpPollInterval) clearInterval(dumpPollInterval);
         } catch (e) {
             setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c');
         }
     }
 
-    async function poll() {
+    async function pollDumpProgress() {
         try {
             const res = await fetch('/progress');
             if (!res.ok) throw new Error('Сервер вернул ошибку ' + res.status);
-            const data = await res.json();
 
+            const data = await res.json();
             const p = Math.max(0, Math.min(100, data.percent || 0));
             setProgress(p);
 
             if (data.running) {
                 setStatus('Обработка... ' + p + '%', '#edf7ff', '#2c3e50');
-                setTimeout(poll, 1000);
             } else {
                 setProgress(100, true);
                 setStatus('Успешно завершено!', '#e7f6ec', '#27ae60');
+                if (dumpPollInterval) clearInterval(dumpPollInterval);
             }
         } catch (e) {
             setStatus('Ошибка запроса прогресса: ' + e.message, '#ffecec', '#e74c3c');
+            if (dumpPollInterval) clearInterval(dumpPollInterval);
         }
     }
 
+    // Функции для режима мониторинга
+    async function startMonitoring() {
+        const chats = document.getElementById('monitorChats').value.split('\n')
+            .map(s => s.trim())
+            .filter(Boolean);
+        const keywords = document.getElementById('monitorKeywords').value.split('\n')
+            .map(s => s.trim())
+            .filter(Boolean);
+        const caseSensitive = document.getElementById('caseSensitive').checked;
+        const regexMode = document.getElementById('regexMode').checked;
+        const interval = parseInt(document.getElementById('checkInterval').value);
+
+        if (chats.length === 0) {
+            alert('Ошибка: не указаны чаты для мониторинга');
+            return;
+        }
+        if (keywords.length === 0) {
+            alert('Ошибка: не указаны ключевые слова');
+            return;
+        }
+
+        const config = {
+            monitoredChats: chats,
+            keywords: keywords,
+            caseSensitive: caseSensitive,
+            regexMode: regexMode,
+            checkIntervalMinutes: interval
+        };
+
+        try {
+            const response = await fetch('/api/monitor/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(config)
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || 'Ошибка сервера: ' + response.status);
+            }
+
+            const result = await response.text();
+            alert(result);
+            setMonitorStatus('Мониторинг запущен', '#e7f6ec', '#27ae60');
+
+            // Запускаем опрос статуса мониторинга
+            if (monitorPollInterval) clearInterval(monitorPollInterval);
+            monitorPollInterval = setInterval(pollMonitorStatus, 2000);
+
+        } catch (error) {
+            alert('Ошибка: ' + error.message);
+            setMonitorStatus('Ошибка запуска', '#ffecec', '#e74c3c');
+        }
+    }
+
+    async function stopMonitoring() {
+        try {
+            const response = await fetch('/api/monitor/stop', {method: 'POST'});
+            const result = await response.text();
+            alert(result);
+            setMonitorStatus('Мониторинг остановлен', '#fff4e6', '#e67e22');
+            if (monitorPollInterval) clearInterval(monitorPollInterval);
+        } catch (error) {
+            alert('Ошибка: ' + error.message);
+        }
+    }
+
+    async function pollMonitorStatus() {
+        try {
+            const response = await fetch('/api/monitor/status');
+            if (response.ok) {
+                const status = await response.json();
+                document.getElementById('monitorStatusText').textContent =
+                    status.monitoring ? 'Активен' : 'Не активен';
+            }
+        } catch (error) {
+            console.error('Ошибка опроса статуса мониторинга:', error);
+        }
+    }
+
+    async function showResults() {
+        try {
+            const response = await fetch('/api/monitor/results');
+            if (!response.ok) throw new Error('Ошибка сервера: ' + response.status);
+
+            const results = await response.json();
+            const resultsList = document.getElementById('resultsList');
+            resultsList.innerHTML = '';
+
+            if (results.length === 0) {
+                resultsList.innerHTML = '<p>Совпадений не найдено</p>';
+                document.getElementById('monitorResults').style.display = 'block';
+                return;
+            }
+
+            results.forEach(result => {
+                const div = document.createElement('div');
+                div.className = 'result-item';
+                div.innerHTML = `
+                    <strong>${result.chatTitle || 'Неизвестный чат'}</strong> - ${result.keyword}
+                    <br><small>${new Date(result.messageDate).toLocaleString('ru-RU')}</small>
+                    <p>${result.messageText || 'Нет текста'}</p>
+                    <small>Отправитель: ${result.senderName || 'Неизвестен'}</small>
+                    <hr>
+                `;
+                resultsList.appendChild(div);
+            });
+
+            document.getElementById('monitorResults').style.display = 'block';
+        } catch (error) {
+            alert('Ошибка получения результатов: ' + error.message);
+        }
+    }
+
+    // Вспомогательные функции
     function setStatus(text, bg, color) {
         const el = document.getElementById('status');
+        el.textContent = text;
+        el.style.background = bg;
+        el.style.color = color;
+    }
+
+    function setMonitorStatus(text, bg, color) {
+        const el = document.getElementById('monitorStatus');
         el.textContent = text;
         el.style.background = bg;
         el.style.color = color;
@@ -484,13 +728,18 @@
             textDocuments: document.getElementById('textDocuments').checked,
             audio: document.getElementById('audio').checked,
             chats: document.getElementById('chats').value,
-            textDocumentExtensions: document.getElementById('textExtensions').value
+            textDocumentExtensions: document.getElementById('textExtensions').value,
+            monitorChats: document.getElementById('monitorChats').value,
+            monitorKeywords: document.getElementById('monitorKeywords').value,
+            caseSensitive: document.getElementById('caseSensitive').checked,
+            regexMode: document.getElementById('regexMode').checked,
+            checkInterval: document.getElementById('checkInterval').value
         };
-        localStorage.setItem('tdlibDumpSettings', JSON.stringify(settings));
+        localStorage.setItem('tdlibSettings', JSON.stringify(settings));
     }
 
     function loadSettings() {
-        const saved = localStorage.getItem('tdlibDumpSettings');
+        const saved = localStorage.getItem('tdlibSettings');
         if (saved) {
             const settings = JSON.parse(saved);
             document.getElementById('photos').checked = settings.photos;
@@ -501,18 +750,40 @@
             document.getElementById('audio').checked = settings.audio;
             document.getElementById('chats').value = settings.chats || '';
             document.getElementById('textExtensions').value = settings.textDocumentExtensions || '';
+            document.getElementById('monitorChats').value = settings.monitorChats || '';
+            document.getElementById('monitorKeywords').value = settings.monitorKeywords || '';
+            document.getElementById('caseSensitive').checked = settings.caseSensitive || false;
+            document.getElementById('regexMode').checked = settings.regexMode || false;
+            document.getElementById('checkInterval').value = settings.checkInterval || 5;
+
+            // Показать/скрыть поле расширений
+            toggleTextDocumentExtensions();
         }
     }
 
     // Загрузка настроек при загрузке страницы
-    document.addEventListener('DOMContentLoaded', loadSettings);
-
-    // Сохранение настроек при изменении
-    document.querySelectorAll('input').forEach(input => {
-        input.addEventListener('change', saveSettings);
+    document.addEventListener('DOMContentLoaded', function() {
+        loadSettings();
+        showDumpMode(); // Показываем режим дампа по умолчанию
     });
 
-    document.getElementById('chats').addEventListener('input', saveSettings);
+    // Сохранение настроек при изменении
+    const inputsToWatch = [
+        'photos', 'videos', 'links', 'messages', 'textDocuments', 'audio',
+        'chats', 'textExtensions', 'monitorChats', 'monitorKeywords',
+        'caseSensitive', 'regexMode', 'checkInterval'
+    ];
+
+    inputsToWatch.forEach(id => {
+        const element = document.getElementById(id);
+        if (element) {
+            if (element.type === 'checkbox' || element.type === 'number') {
+                element.addEventListener('change', saveSettings);
+            } else {
+                element.addEventListener('input', saveSettings);
+            }
+        }
+    });
 </script>
 </body>
 </html>
