@@ -29,10 +29,22 @@ public class ChatDumpCoordinator {
             "bat", "sh", "cmd", "ps1", "md", "csv", "log", "ini", "cfg", "conf"
     );
 
+    // Список аудио форматов для загрузки
+    private static final Set<String> AUDIO_DOCUMENT_EXTENSIONS = Set.of(
+            "mp3", "wav", "ogg", "flac", "m4a", "aac", "wma", "aiff", "aif", "amr",
+            "opus", "mid", "midi", "mp2", "ac3", "ra", "rm", "wv", "ape", "tta"
+    );
+
     private static final Set<String> TEXT_MIME_TYPES = Set.of(
             "text/plain", "application/pdf", "application/msword",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "application/rtf", "application/vnd.oasis.opendocument.text"
+    );
+
+    private static final Set<String> AUDIO_MIME_TYPES = Set.of(
+            "audio/mpeg", "audio/wav", "audio/ogg", "audio/flac", "audio/x-flac",
+            "audio/mp4", "audio/aac", "audio/x-ms-wma", "audio/aiff", "audio/x-aiff",
+            "audio/amr", "audio/midi", "audio/x-midi", "audio/x-ape", "audio/x-wav"
     );
 
     public ChatDumpCoordinator(TdJsonClient client,
@@ -148,7 +160,6 @@ public class ChatDumpCoordinator {
     }
 
     private void processMessage(long chatId, JsonNode msg, DumpRequest request) {
-        // ... существующий код без изменений ...
         long messageId = msg.path("id").asLong();
         long date = msg.path("date").asLong(0);
         String senderId = msg.path("sender_id").isMissingNode() ? null : msg.path("sender_id").toString();
@@ -216,7 +227,7 @@ public class ChatDumpCoordinator {
         }
 
         // 4) голос/аудио
-        if ("messageVoiceNote".equals(ctype) && request.isMessages()) {
+        if ("messageVoiceNote".equals(ctype) && request.isAudio()) {
             JsonNode vn = content.path("voice_note");
             Integer duration = vn.path("duration").isInt() ? vn.path("duration").asInt() : null;
 
@@ -231,7 +242,7 @@ public class ChatDumpCoordinator {
             db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime, filePath);
         }
 
-        if ("messageAudio".equals(ctype) && request.isMessages()) {
+        if ("messageAudio".equals(ctype) && request.isAudio()) {
             JsonNode au = content.path("audio");
             Integer duration = au.path("duration").isInt() ? au.path("duration").asInt() : null;
 
@@ -246,8 +257,8 @@ public class ChatDumpCoordinator {
             db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime, filePath);
         }
 
-        // 5) Документы (текстовые файлы)
-        if ("messageDocument".equals(ctype) && request.isDocuments()) {
+        // 5) Документы - разделяем на текстовые и аудио
+        if ("messageDocument".equals(ctype)) {
             JsonNode document = content.path("document");
             String caption = content.path("caption").path("text").asText(null);
 
@@ -257,27 +268,33 @@ public class ChatDumpCoordinator {
             String fileName = document.path("file_name").asText(null);
             String mimeType = document.path("mime_type").asText(null);
 
-            // Проверяем, является ли файл текстовым
+            // Проверяем тип документа
             boolean isTextDocument = isTextDocument(fileName, mimeType);
+            boolean isAudioDocument = isAudioDocument(fileName, mimeType);
 
-            if (isTextDocument) {
-                String filePath = null;
-                if (fileId != null) {
-                    filePath = downloader.downloadBlocking(fileId);
-                }
+            String filePath = null;
+            if (fileId != null) {
+                filePath = downloader.downloadBlocking(fileId);
+            }
 
+            if (isTextDocument && request.isTextDocuments()) {
                 db.saveDocument(chatId, messageId, fileId, remoteId, fileName, mimeType, filePath);
                 if (request.isLinks()) extractLinksFromFormattedText(chatId, messageId, content.path("caption"));
-
                 log.debug("Сохранён текстовый документ: {} (msg_id={})", fileName, messageId);
-            } else {
-                log.debug("Пропущен нетекстовый документ: {} (msg_id={})", fileName, messageId);
+            }
+            else if (isAudioDocument && request.isAudio()) {
+                // Для аудио документов сохраняем в таблицу audio
+                Integer duration = null; // У документов может не быть длительности
+                db.saveAudio(chatId, messageId, fileId, remoteId, duration, mimeType, filePath);
+                log.debug("Сохранён аудио документ: {} (msg_id={})", fileName, messageId);
+            }
+            else {
+                log.debug("Пропущен документ (не текст и не аудио): {} (msg_id={})", fileName, messageId);
             }
         }
     }
 
     private boolean isTextDocument(String fileName, String mimeType) {
-        // ... существующий код без изменений ...
         if (fileName != null) {
             String ext = getFileExtension(fileName).toLowerCase();
             if (TEXT_DOCUMENT_EXTENSIONS.contains(ext)) {
@@ -295,15 +312,31 @@ public class ChatDumpCoordinator {
         return false;
     }
 
+    private boolean isAudioDocument(String fileName, String mimeType) {
+        if (fileName != null) {
+            String ext = getFileExtension(fileName).toLowerCase();
+            if (AUDIO_DOCUMENT_EXTENSIONS.contains(ext)) {
+                return true;
+            }
+        }
+
+        if (mimeType != null) {
+            String baseMimeType = mimeType.split(";")[0].trim();
+            if (AUDIO_MIME_TYPES.contains(baseMimeType) || baseMimeType.startsWith("audio/")) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private String getFileExtension(String fileName) {
-        // ... существующий код без изменений ...
         if (fileName == null) return "";
         int dotIndex = fileName.lastIndexOf('.');
         return (dotIndex == -1) ? "" : fileName.substring(dotIndex + 1);
     }
 
     private void extractLinksFromFormattedText(long chatId, long messageId, JsonNode formattedText) {
-        // ... существующий код без изменений ...
         if (formattedText == null || formattedText.isMissingNode()) return;
 
         String fullText = formattedText.path("text").asText("");
@@ -330,7 +363,6 @@ public class ChatDumpCoordinator {
     }
 
     private static String safeSubstring(String s, int offset, int length) {
-        // ... существующий код без изменений ...
         if (s == null || offset < 0 || length <= 0 || offset >= s.length()) return null;
         int end = Math.min(s.length(), offset + length);
         return s.substring(offset, end);

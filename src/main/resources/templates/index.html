@@ -26,7 +26,7 @@
 
         .container {
             width: 100%;
-            max-width: 650px;
+            max-width: 750px;
             background-color: white;
             border-radius: 16px;
             box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
@@ -94,7 +94,7 @@
 
         .checkbox-group {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: repeat(3, 1fr);
             gap: 15px;
             margin: 25px 0;
         }
@@ -253,6 +253,12 @@
             opacity: 0.8;
         }
 
+        @media (max-width: 768px) {
+            .checkbox-group {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
         @media (max-width: 600px) {
             .checkbox-group {
                 grid-template-columns: 1fr;
@@ -282,24 +288,28 @@
 
     <div class="checkbox-group">
         <div class="checkbox-item">
-            <input type="checkbox" id="photos">
+            <input type="checkbox" id="photos" checked>
             <label for="photos">Фотографии</label>
         </div>
         <div class="checkbox-item">
-            <input type="checkbox" id="videos">
+            <input type="checkbox" id="videos" checked>
             <label for="videos">Видео</label>
         </div>
         <div class="checkbox-item">
-            <input type="checkbox" id="links">
+            <input type="checkbox" id="links" checked>
             <label for="links">Ссылки</label>
         </div>
         <div class="checkbox-item">
-            <input type="checkbox" id="messages">
+            <input type="checkbox" id="messages" checked>
             <label for="messages">Сообщения</label>
         </div>
         <div class="checkbox-item">
-            <input type="checkbox" id="documents">
-            <label for="documents">Текстовые документы</label>
+            <input type="checkbox" id="textDocuments" checked>
+            <label for="textDocuments">Текстовые документы</label>
+        </div>
+        <div class="checkbox-item">
+            <input type="checkbox" id="audio" checked>
+            <label for="audio">Аудио файлы</label>
         </div>
     </div>
 
@@ -329,13 +339,12 @@
             <li>Введите ссылки или ID чатов (по одному на строку)</li>
             <li>Выберите, какой контент нужно сохранить:
                 <ul>
-                    <li><strong>Фотографии</strong> - изображения</li>
-                    <li><strong>Видео</strong> - видеофайлы</li>
+                    <li><strong>Фотографии</strong> - изображения (JPG, PNG, GIF)</li>
+                    <li><strong>Видео</strong> - видеофайлы (MP4, AVI, MOV)</li>
                     <li><strong>Ссылки</strong> - URL из сообщений</li>
                     <li><strong>Сообщения</strong> - текстовые сообщения</li>
-                    <li><strong>Текстовые документы</strong> - TXT, PDF, DOC, код (.py, .cpp, .java), скрипты (.bat,
-                        .sh)
-                    </li>
+                    <li><strong>Текстовые документы</strong> - TXT, PDF, DOC, код (.py, .cpp, .java), скрипты (.bat, .sh)</li>
+                    <li><strong>Аудио файлы</strong> - MP3, WAV, OGG, голосовые сообщения, аудио документы</li>
                 </ul>
             </li>
             <li>Нажмите "Начать дамп" для запуска процесса</li>
@@ -362,14 +371,16 @@
             videos: document.getElementById('videos').checked,
             links: document.getElementById('links').checked,
             messages: document.getElementById('messages').checked,
-            documents: document.getElementById('documents').checked // Добавлено
+            textDocuments: document.getElementById('textDocuments').checked,
+            audio: document.getElementById('audio').checked
         };
 
         if (request.chats.length === 0) {
             setStatus('Ошибка: не указаны чаты для обработки', '#ffecec', '#e74c3c');
             return;
         }
-        if (!request.photos && !request.videos && !request.links && !request.messages) {
+        if (!request.photos && !request.videos && !request.links &&
+            !request.messages && !request.textDocuments && !request.audio) {
             setStatus('Ошибка: не выбран ни один тип контента', '#ffecec', '#e74c3c');
             return;
         }
@@ -437,6 +448,44 @@
         document.getElementById('progress-value').textContent = val + '%';
         if (done) document.getElementById('progress-bar').classList.add('green');
     }
+
+    // Автоматическое сохранение настроек в localStorage
+    function saveSettings() {
+        const settings = {
+            photos: document.getElementById('photos').checked,
+            videos: document.getElementById('videos').checked,
+            links: document.getElementById('links').checked,
+            messages: document.getElementById('messages').checked,
+            textDocuments: document.getElementById('textDocuments').checked,
+            audio: document.getElementById('audio').checked,
+            chats: document.getElementById('chats').value
+        };
+        localStorage.setItem('tdlibDumpSettings', JSON.stringify(settings));
+    }
+
+    function loadSettings() {
+        const saved = localStorage.getItem('tdlibDumpSettings');
+        if (saved) {
+            const settings = JSON.parse(saved);
+            document.getElementById('photos').checked = settings.photos;
+            document.getElementById('videos').checked = settings.videos;
+            document.getElementById('links').checked = settings.links;
+            document.getElementById('messages').checked = settings.messages;
+            document.getElementById('textDocuments').checked = settings.textDocuments;
+            document.getElementById('audio').checked = settings.audio;
+            document.getElementById('chats').value = settings.chats || '';
+        }
+    }
+
+    // Загрузка настроек при загрузке страницы
+    document.addEventListener('DOMContentLoaded', loadSettings);
+
+    // Сохранение настроек при изменении
+    document.querySelectorAll('input').forEach(input => {
+        input.addEventListener('change', saveSettings);
+    });
+
+    document.getElementById('chats').addEventListener('input', saveSettings);
 </script>
 </body>
 </html>

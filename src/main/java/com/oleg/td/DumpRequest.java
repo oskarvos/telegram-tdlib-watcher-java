@@ -3,21 +3,16 @@ package com.oleg.td;
 import java.util.List;
 
 public class DumpRequest {
+
     private List<String> chats;
     private boolean photos;
     private boolean videos;
     private boolean links;
     private boolean messages;
-    private boolean documents;
+    private boolean textDocuments;
+    private boolean audio;
 
-    public List<String> getChats() {
-        return chats;
-    }
-
-    public void setChats(List<String> chats) {
-        this.chats = chats;
-    }
-
+    // геттеры и сеттеры
     public boolean isPhotos() {
         return photos;
     }
@@ -50,11 +45,27 @@ public class DumpRequest {
         this.messages = messages;
     }
 
-    public boolean isDocuments() {
-        return documents;
+    public boolean isTextDocuments() {
+        return textDocuments;
     }
 
-    public void setDocuments(boolean documents) {
-        this.documents = documents;
+    public void setTextDocuments(boolean textDocuments) {
+        this.textDocuments = textDocuments;
+    }
+
+    public boolean isAudio() {
+        return audio;
+    }
+
+    public void setAudio(boolean audio) {
+        this.audio = audio;
+    }
+
+    public List<String> getChats() {
+        return chats;
+    }
+
+    public void setChats(List<String> chats) {
+        this.chats = chats;
     }
 }
