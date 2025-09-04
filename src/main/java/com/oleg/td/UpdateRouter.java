@@ -15,18 +15,23 @@ public class UpdateRouter {
 
     public void add(Consumer<ObjectNode> handler) {
         handlers.add(handler);
+        log.info("Добавлен обработчик обновлений. Всего обработчиков: {}", handlers.size());
     }
 
     public void remove(Consumer<ObjectNode> handler) {
         handlers.remove(handler);
+        log.info("Удален обработчик обновлений. Всего обработчиков: {}", handlers.size());
     }
 
     public void handleUpdate(ObjectNode update) {
+        String updateType = update.path("@type").asText();
+        log.debug("Обработка обновления: {}", updateType);
+
         for (var h : handlers) {
             try {
                 h.accept(update);
             } catch (Exception e) {
-                log.warn("Handler error", e);
+                log.warn("Ошибка в обработчике обновлений", e);
             }
         }
     }

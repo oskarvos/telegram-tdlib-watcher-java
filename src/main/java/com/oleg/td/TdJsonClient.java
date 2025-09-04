@@ -1,5 +1,6 @@
 package com.oleg.td;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.jna.Library;
@@ -11,22 +12,21 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
 @Component
 public class TdJsonClient {
     private static final Logger log = LoggerFactory.getLogger(TdJsonClient.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private final ReentrantLock lock = new ReentrantLock();
 
     public enum Channel {AUTH, MAIN}
 
     private interface TdLib extends Library {
         Pointer td_json_client_create();
-
         void td_json_client_send(Pointer client, String request);
-
         String td_json_client_receive(Pointer client, double timeout);
-
         void td_json_client_destroy(Pointer client);
     }
 
@@ -69,11 +69,16 @@ public class TdJsonClient {
     }
 
     public void send(String request) {
-        tdLib.td_json_client_send(client, request);
+        lock.lock();
+        try {
+            tdLib.td_json_client_send(client, request);
+        } finally {
+            lock.unlock();
+        }
     }
 
     public void send(String request, Channel channel) {
-        send(request);
+        send(request); // Используем существующий метод
     }
 
     public void send(ObjectNode req) {
@@ -88,14 +93,43 @@ public class TdJsonClient {
      * Single-threaded pump: receive once and dispatch updates (without @extra).
      */
     public void pumpOnce(double timeoutSeconds) {
-        String raw = tdLib.td_json_client_receive(client, timeoutSeconds);
-        if (raw == null || raw.isBlank()) return;
+        lock.lock();
         try {
-            ObjectNode node = (ObjectNode) MAPPER.readTree(raw);
-            if (node.has("@extra")) return; // response to a request; handled where awaited
-            router.handleUpdate(node);
-        } catch (Exception e) {
-            log.error("Ошибка при обработке апдейта TDLib", e);
+            String raw = tdLib.td_json_client_receive(client, timeoutSeconds);
+            if (raw == null || raw.isBlank()) {
+                return;
+            }
+
+            try {
+                ObjectNode node = (ObjectNode) MAPPER.readTree(raw);
+                String type = node.path("@type").asText();
+
+                // Логируем только важные сообщения чтобы не засорять логи
+                if ("updateNewMessage".equals(type) || "error".equals(type)) {
+                    log.info("TDLib update: {}", type);
+                } else {
+                    log.debug("TDLib update: {}", type);
+                }
+
+                if ("updateNewMessage".equals(type)) {
+                    JsonNode message = node.path("message");
+                    if (!message.isMissingNode()) {
+                        long chatId = message.path("chat_id").asLong();
+                        long messageId = message.path("id").asLong();
+                        log.info("НОВОЕ СООБЩЕНИЕ: ID {} в чате {}", messageId, chatId);
+                    }
+                }
+
+                if (node.has("@extra")) {
+                    return; // response to a request; handled where awaited
+                }
+
+                router.handleUpdate(node);
+            } catch (Exception e) {
+                log.error("Ошибка при обработке апдейта TDLib", e);
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -103,47 +137,52 @@ public class TdJsonClient {
      * Waits for reply to req (by @extra). Routes other updates synchronously.
      */
     public ObjectNode requestWithFloodWaitSyncLimited(ObjectNode req, int limitSeconds, Channel channel) {
-        int remaining = Math.min(Math.max(limitSeconds, 0), 60);
-        String extra = "req-" + extraId.incrementAndGet();
-        req.put("@extra", extra);
+        lock.lock();
+        try {
+            int remaining = Math.min(Math.max(limitSeconds, 0), 60);
+            String extra = "req-" + extraId.incrementAndGet();
+            req.put("@extra", extra);
 
-        while (true) {
-            send(req, channel);
-            long start = System.currentTimeMillis();
             while (true) {
-                String raw = tdLib.td_json_client_receive(client, 2.0);
-                if (raw == null || raw.isBlank()) {
-                    if (System.currentTimeMillis() - start > 120_000L) {
-                        ObjectNode timeout = MAPPER.createObjectNode();
-                        timeout.put("@type", "error");
-                        timeout.put("code", 408);
-                        timeout.put("message", "Request timeout waiting for @extra=" + extra);
-                        return timeout;
-                    }
-                    continue;
-                }
-                try {
-                    ObjectNode node = (ObjectNode) MAPPER.readTree(raw);
-                    if (extra.equals(node.path("@extra").asText(null))) {
-                        if ("error".equals(node.path("@type").asText()) && node.path("code").asInt() == 429) {
-                            int waitSec = extractFloodWait(node.path("message").asText());
-                            if (waitSec <= 0) return node;
-                            if (waitSec > remaining) {
-                                sleep(remaining * 1000L);
-                                remaining = 0;
-                                break; // one more send then return next response
-                            }
-                            sleep(waitSec * 1000L);
-                            remaining -= waitSec;
-                            break; // resend
+                send(req, channel);
+                long start = System.currentTimeMillis();
+                while (true) {
+                    String raw = tdLib.td_json_client_receive(client, 2.0);
+                    if (raw == null || raw.isBlank()) {
+                        if (System.currentTimeMillis() - start > 120_000L) {
+                            ObjectNode timeout = MAPPER.createObjectNode();
+                            timeout.put("@type", "error");
+                            timeout.put("code", 408);
+                            timeout.put("message", "Request timeout waiting for @extra=" + extra);
+                            return timeout;
                         }
-                        return node; // success or non-429 error
+                        continue;
                     }
-                    if (!node.has("@extra")) router.handleUpdate(node); // broadcast true updates
-                } catch (Exception e) {
-                    log.error("Ошибка парсинга TDLib JSON", e);
+                    try {
+                        ObjectNode node = (ObjectNode) MAPPER.readTree(raw);
+                        if (extra.equals(node.path("@extra").asText(null))) {
+                            if ("error".equals(node.path("@type").asText()) && node.path("code").asInt() == 429) {
+                                int waitSec = extractFloodWait(node.path("message").asText());
+                                if (waitSec <= 0) return node;
+                                if (waitSec > remaining) {
+                                    sleep(remaining * 1000L);
+                                    remaining = 0;
+                                    break; // one more send then return next response
+                                }
+                                sleep(waitSec * 1000L);
+                                remaining -= waitSec;
+                                break; // resend
+                            }
+                            return node; // success or non-429 error
+                        }
+                        if (!node.has("@extra")) router.handleUpdate(node); // broadcast true updates
+                    } catch (Exception e) {
+                        log.error("Ошибка парсинга TDLib JSON", e);
+                    }
                 }
             }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -160,9 +199,14 @@ public class TdJsonClient {
     }
 
     public void close() {
-        if (client != null) {
-            tdLib.td_json_client_destroy(client);
-            log.info("TDLib клиент закрыт");
+        lock.lock();
+        try {
+            if (client != null) {
+                tdLib.td_json_client_destroy(client);
+                log.info("TDLib клиент закрыт");
+            }
+        } finally {
+            lock.unlock();
         }
     }
 

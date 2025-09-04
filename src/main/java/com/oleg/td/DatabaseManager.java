@@ -51,6 +51,7 @@ public class DatabaseManager {
         final String tAudio = qIdent("audio");
         final String tDocuments = qIdent("documents");
         final String tLinks = qIdent("links");
+        final String tMonitorMatches = qIdent("monitor_matches"); // Новая таблица
         final String iLinks = qIdent("links_idx");
 
         final String createMessages = "CREATE TABLE IF NOT EXISTS " + tMessages + " (" +
@@ -100,7 +101,18 @@ public class DatabaseManager {
                 "url TEXT," +
                 "context TEXT" +
                 ")";
+        // Новая таблица для мониторинга
+        final String createMonitorMatches = "CREATE TABLE IF NOT EXISTS " + tMonitorMatches + " (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                "chat_id INTEGER," +
+                "message_id INTEGER," +
+                "search_term TEXT," +
+                "found_text TEXT," +
+                "timestamp INTEGER," +
+                "sender_id TEXT" +
+                ")";
         final String idxLinks = "CREATE INDEX IF NOT EXISTS " + iLinks + " ON " + tLinks + "(url)";
+        final String idxMonitor = "CREATE INDEX IF NOT EXISTS monitor_matches_idx ON " + tMonitorMatches + "(chat_id, timestamp)";
 
         try (Connection c = open(chatId); Statement s = c.createStatement()) {
             s.execute(createMessages);
@@ -109,7 +121,9 @@ public class DatabaseManager {
             s.execute(createAudio);
             s.execute(createDocuments);
             s.execute(createLinks);
+            s.execute(createMonitorMatches); // Создаем таблицу мониторинга
             s.execute(idxLinks);
+            s.execute(idxMonitor);
 
             addColumnIfMissing(c, "photos", "file_path", "TEXT");
             addColumnIfMissing(c, "videos", "file_path", "TEXT");
@@ -286,6 +300,27 @@ public class DatabaseManager {
             st.executeUpdate();
         } catch (SQLException e) {
             log.error("БД: ошибка сохранения ссылки (msg_id={}) для чата {}: {}", messageId, chatId, e.getMessage(), e);
+        }
+    }
+
+    /* ============ monitor matches ============ */
+
+    public void saveMonitorMatch(long chatId, long messageId, String searchTerm,
+                                 String foundText, long timestamp, String senderId) {
+        final String sql = "INSERT INTO " + qIdent("monitor_matches") +
+                "(chat_id, message_id, search_term, found_text, timestamp, sender_id) VALUES(?,?,?,?,?,?)";
+        try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setLong(1, chatId);
+            st.setLong(2, messageId);
+            st.setString(3, searchTerm);
+            st.setString(4, foundText);
+            st.setLong(5, timestamp);
+            st.setString(6, senderId);
+            st.executeUpdate();
+            log.debug("Сохранено совпадение мониторинга: чат={}, сообщение={}, термин='{}'",
+                    chatId, messageId, searchTerm);
+        } catch (SQLException e) {
+            log.error("БД: ошибка сохранения совпадения мониторинга для чата {}: {}", chatId, e.getMessage(), e);
         }
     }
 }
