@@ -3,7 +3,6 @@ package com.oleg.td;
 import java.util.List;
 
 public class DumpRequest {
-
     private List<String> chats;
     private boolean photos;
     private boolean videos;
@@ -11,8 +10,33 @@ public class DumpRequest {
     private boolean messages;
     private boolean textDocuments;
     private boolean audio;
+    private String textDocumentExtensions; // Новое поле для кастомных расширений
 
-    // геттеры и сеттеры
+    public DumpRequest() {
+    }
+
+    public DumpRequest(List<String> chats, boolean photos, boolean videos, boolean links,
+                       boolean messages, boolean textDocuments, boolean audio,
+                       String textDocumentExtensions) {
+        this.chats = chats;
+        this.photos = photos;
+        this.videos = videos;
+        this.links = links;
+        this.messages = messages;
+        this.textDocuments = textDocuments;
+        this.audio = audio;
+        this.textDocumentExtensions = textDocumentExtensions;
+    }
+
+    // Геттеры и сеттеры
+    public List<String> getChats() {
+        return chats;
+    }
+
+    public void setChats(List<String> chats) {
+        this.chats = chats;
+    }
+
     public boolean isPhotos() {
         return photos;
     }
@@ -61,11 +85,25 @@ public class DumpRequest {
         this.audio = audio;
     }
 
-    public List<String> getChats() {
-        return chats;
+    public String getTextDocumentExtensions() {
+        return textDocumentExtensions;
     }
 
-    public void setChats(List<String> chats) {
-        this.chats = chats;
+    public void setTextDocumentExtensions(String textDocumentExtensions) {
+        this.textDocumentExtensions = textDocumentExtensions;
+    }
+
+    @Override
+    public String toString() {
+        return "DumpRequest{" +
+                "chats=" + chats +
+                ", photos=" + photos +
+                ", videos=" + videos +
+                ", links=" + links +
+                ", messages=" + messages +
+                ", textDocuments=" + textDocuments +
+                ", audio=" + audio +
+                ", textDocumentExtensions='" + textDocumentExtensions + '\'' +
+                '}';
     }
 }

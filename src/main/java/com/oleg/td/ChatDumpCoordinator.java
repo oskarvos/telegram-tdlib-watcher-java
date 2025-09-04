@@ -8,7 +8,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Component
 public class ChatDumpCoordinator {
@@ -22,14 +24,13 @@ public class ChatDumpCoordinator {
 
     private volatile boolean stopRequested = false;
 
-    // Список текстовых форматов для загрузки
-    private static final Set<String> TEXT_DOCUMENT_EXTENSIONS = Set.of(
+    // Стандартные списки форматов
+    private static final Set<String> DEFAULT_TEXT_DOCUMENT_EXTENSIONS = Set.of(
             "txt", "pdf", "doc", "docx", "rtf", "odt",
             "py", "java", "cpp", "c", "h", "hpp", "js", "html", "css", "xml", "json",
             "bat", "sh", "cmd", "ps1", "md", "csv", "log", "ini", "cfg", "conf"
     );
 
-    // Список аудио форматов для загрузки
     private static final Set<String> AUDIO_DOCUMENT_EXTENSIONS = Set.of(
             "mp3", "wav", "ogg", "flac", "m4a", "aac", "wma", "aiff", "aif", "amr",
             "opus", "mid", "midi", "mp2", "ac3", "ra", "rm", "wv", "ape", "tta"
@@ -60,6 +61,14 @@ public class ChatDumpCoordinator {
     public void dumpChats(DumpRequest request, Runnable progressCallback) {
         stopRequested = false;
 
+        // Получаем кастомные расширения из запроса
+        Set<String> customTextExtensions = parseCustomExtensions(request.getTextDocumentExtensions());
+        Set<String> finalTextExtensions = customTextExtensions.isEmpty()
+                ? DEFAULT_TEXT_DOCUMENT_EXTENSIONS
+                : customTextExtensions;
+
+        log.info("Используемые расширения текстовых документов: {}", finalTextExtensions);
+
         for (String chatRef : request.getChats()) {
             if (stopRequested) {
                 log.info("Дамп прерван пользователем");
@@ -71,17 +80,16 @@ public class ChatDumpCoordinator {
 
             db.prepareSchema(chatId);
 
-            // ключевое изменение: lastSavedId считаем по messages, а если их не сохраняем — по медиа
             long lastSavedId = request.isMessages()
                     ? db.getLastSavedMessageId(chatId)
                     : db.getMaxMediaId(chatId);
 
             if (lastSavedId > 0) log.info("Чат {}: lastSavedId={}", chatId, lastSavedId);
 
-            long fromMessageId = 0; // 0 — начинать с последних
+            long fromMessageId = 0;
             boolean reachedAlreadySaved = false;
             int totalMessagesProcessed = 0;
-            final int MAX_MESSAGES = 10000; // Максимальное количество сообщений для обработки
+            final int MAX_MESSAGES = 10000;
 
             while (!stopRequested && !reachedAlreadySaved && totalMessagesProcessed < MAX_MESSAGES) {
                 ObjectNode req = MAPPER.createObjectNode();
@@ -89,7 +97,7 @@ public class ChatDumpCoordinator {
                 req.put("chat_id", chatId);
                 req.put("from_message_id", fromMessageId);
                 req.put("offset", 0);
-                req.put("limit", 100); // Максимальный лимит TDLib за один запрос
+                req.put("limit", 100);
                 req.put("only_local", false);
 
                 ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.MAIN);
@@ -117,7 +125,7 @@ public class ChatDumpCoordinator {
                     }
 
                     try {
-                        processMessage(chatId, msg, request);
+                        processMessage(chatId, msg, request, finalTextExtensions);
                         totalMessagesProcessed++;
                         if (progressCallback != null) progressCallback.run();
                     } catch (Exception ex) {
@@ -126,7 +134,6 @@ public class ChatDumpCoordinator {
                 }
 
                 if (!reachedAlreadySaved && totalMessagesProcessed < MAX_MESSAGES) {
-                    // Получаем ID самого старого сообщения в текущей пачке для следующей итерации
                     long oldestMessageId = Long.MAX_VALUE;
                     for (JsonNode msg : messages) {
                         long msgId = msg.path("id").asLong();
@@ -138,10 +145,9 @@ public class ChatDumpCoordinator {
                     if (oldestMessageId != Long.MAX_VALUE) {
                         fromMessageId = oldestMessageId;
                     } else {
-                        break; // Не удалось определить ID для продолжения
+                        break;
                     }
 
-                    // Небольшая задержка между запросами чтобы избежать flood wait
                     try {
                         Thread.sleep(100);
                     } catch (InterruptedException e) {
@@ -155,11 +161,24 @@ public class ChatDumpCoordinator {
         }
     }
 
+    private Set<String> parseCustomExtensions(String extensionsString) {
+        if (extensionsString == null || extensionsString.trim().isEmpty()) {
+            return Set.of();
+        }
+
+        return Arrays.stream(extensionsString.split(","))
+                .map(String::trim)
+                .filter(ext -> !ext.isEmpty())
+                .map(ext -> ext.startsWith(".") ? ext.substring(1) : ext) // Убираем точку если есть
+                .map(String::toLowerCase)
+                .collect(Collectors.toSet());
+    }
+
     public void stop() {
         stopRequested = true;
     }
 
-    private void processMessage(long chatId, JsonNode msg, DumpRequest request) {
+    private void processMessage(long chatId, JsonNode msg, DumpRequest request, Set<String> textExtensions) {
         long messageId = msg.path("id").asLong();
         long date = msg.path("date").asLong(0);
         String senderId = msg.path("sender_id").isMissingNode() ? null : msg.path("sender_id").toString();
@@ -268,8 +287,8 @@ public class ChatDumpCoordinator {
             String fileName = document.path("file_name").asText(null);
             String mimeType = document.path("mime_type").asText(null);
 
-            // Проверяем тип документа
-            boolean isTextDocument = isTextDocument(fileName, mimeType);
+            // Проверяем тип документа с использованием кастомных расширений
+            boolean isTextDocument = isTextDocument(fileName, mimeType, textExtensions);
             boolean isAudioDocument = isAudioDocument(fileName, mimeType);
 
             String filePath = null;
@@ -283,8 +302,7 @@ public class ChatDumpCoordinator {
                 log.debug("Сохранён текстовый документ: {} (msg_id={})", fileName, messageId);
             }
             else if (isAudioDocument && request.isAudio()) {
-                // Для аудио документов сохраняем в таблицу audio
-                Integer duration = null; // У документов может не быть длительности
+                Integer duration = null;
                 db.saveAudio(chatId, messageId, fileId, remoteId, duration, mimeType, filePath);
                 log.debug("Сохранён аудио документ: {} (msg_id={})", fileName, messageId);
             }
@@ -294,15 +312,17 @@ public class ChatDumpCoordinator {
         }
     }
 
-    private boolean isTextDocument(String fileName, String mimeType) {
+    private boolean isTextDocument(String fileName, String mimeType, Set<String> textExtensions) {
+        // Если указаны кастомные расширения, используем только их
         if (fileName != null) {
             String ext = getFileExtension(fileName).toLowerCase();
-            if (TEXT_DOCUMENT_EXTENSIONS.contains(ext)) {
+            if (textExtensions.contains(ext)) {
                 return true;
             }
         }
 
-        if (mimeType != null) {
+        // Если кастомные расширения не указаны (используются дефолтные), проверяем MIME-типы
+        if (mimeType != null && textExtensions.equals(DEFAULT_TEXT_DOCUMENT_EXTENSIONS)) {
             String baseMimeType = mimeType.split(";")[0].trim();
             if (TEXT_MIME_TYPES.contains(baseMimeType) || baseMimeType.startsWith("text/")) {
                 return true;

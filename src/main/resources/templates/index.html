@@ -253,6 +253,19 @@
             opacity: 0.8;
         }
 
+        .text-document-extensions {
+            display: none;
+            margin-top: 15px;
+        }
+
+        .text-document-extensions input {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            border: 2px solid #ddd;
+            font-size: 14px;
+        }
+
         @media (max-width: 768px) {
             .checkbox-group {
                 grid-template-columns: repeat(2, 1fr);
@@ -304,13 +317,18 @@
             <label for="messages">Сообщения</label>
         </div>
         <div class="checkbox-item">
-            <input type="checkbox" id="textDocuments" checked>
+            <input type="checkbox" id="textDocuments" onclick="toggleTextDocumentExtensions()">
             <label for="textDocuments">Текстовые документы</label>
         </div>
         <div class="checkbox-item">
             <input type="checkbox" id="audio" checked>
             <label for="audio">Аудио файлы</label>
         </div>
+    </div>
+
+    <div class="text-document-extensions">
+        <label for="textExtensions">Введите расширения текстовых документов (через запятую):</label>
+        <input type="text" id="textExtensions" placeholder="txt, pdf, docx, java, html" />
     </div>
 
     <div class="buttons">
@@ -359,6 +377,12 @@
 </div>
 
 <script>
+    function toggleTextDocumentExtensions() {
+        const textDocs = document.getElementById('textDocuments');
+        const extensionsField = document.querySelector('.text-document-extensions');
+        extensionsField.style.display = textDocs.checked ? 'block' : 'none';
+    }
+
     async function startDump() {
         const chats = document.getElementById('chats').value
             .split(/\n+/)
@@ -372,7 +396,8 @@
             links: document.getElementById('links').checked,
             messages: document.getElementById('messages').checked,
             textDocuments: document.getElementById('textDocuments').checked,
-            audio: document.getElementById('audio').checked
+            audio: document.getElementById('audio').checked,
+            textDocumentExtensions: document.getElementById('textExtensions').value.trim()
         };
 
         if (request.chats.length === 0) {
@@ -458,7 +483,8 @@
             messages: document.getElementById('messages').checked,
             textDocuments: document.getElementById('textDocuments').checked,
             audio: document.getElementById('audio').checked,
-            chats: document.getElementById('chats').value
+            chats: document.getElementById('chats').value,
+            textDocumentExtensions: document.getElementById('textExtensions').value
         };
         localStorage.setItem('tdlibDumpSettings', JSON.stringify(settings));
     }
@@ -474,6 +500,7 @@
             document.getElementById('textDocuments').checked = settings.textDocuments;
             document.getElementById('audio').checked = settings.audio;
             document.getElementById('chats').value = settings.chats || '';
+            document.getElementById('textExtensions').value = settings.textDocumentExtensions || '';
         }
     }
 
