@@ -8,6 +8,7 @@ public class DumpRequest {
     private boolean videos;
     private boolean links;
     private boolean messages;
+    private boolean documents;
 
     public List<String> getChats() {
         return chats;
@@ -47,5 +48,13 @@ public class DumpRequest {
 
     public void setMessages(boolean messages) {
         this.messages = messages;
+    }
+
+    public boolean isDocuments() {
+        return documents;
+    }
+
+    public void setDocuments(boolean documents) {
+        this.documents = documents;
     }
 }

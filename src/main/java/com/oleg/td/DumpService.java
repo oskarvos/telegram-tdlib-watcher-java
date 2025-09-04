@@ -55,7 +55,7 @@ public class DumpService {
             // Создать схемы сразу при старте
             for (String ref : request.getChats()) {
                 try {
-                    long chatId = resolver.resolveFlexible(ref); // <--- обновлено
+                    long chatId = resolver.resolveFlexible(ref);
                     db.prepareSchema(chatId);
                 } catch (Exception ex) {
                     log.error("Не удалось подготовить схему для '{}': {}", ref, ex.getMessage(), ex);

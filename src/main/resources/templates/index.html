@@ -297,6 +297,10 @@
             <input type="checkbox" id="messages">
             <label for="messages">Сообщения</label>
         </div>
+        <div class="checkbox-item">
+            <input type="checkbox" id="documents">
+            <label for="documents">Текстовые документы</label>
+        </div>
     </div>
 
     <div class="buttons">
@@ -323,7 +327,17 @@
         <h3><i class="fas fa-info-circle"></i> Как использовать:</h3>
         <ul>
             <li>Введите ссылки или ID чатов (по одному на строку)</li>
-            <li>Выберите, какой контент нужно сохранить</li>
+            <li>Выберите, какой контент нужно сохранить:
+                <ul>
+                    <li><strong>Фотографии</strong> - изображения</li>
+                    <li><strong>Видео</strong> - видеофайлы</li>
+                    <li><strong>Ссылки</strong> - URL из сообщений</li>
+                    <li><strong>Сообщения</strong> - текстовые сообщения</li>
+                    <li><strong>Текстовые документы</strong> - TXT, PDF, DOC, код (.py, .cpp, .java), скрипты (.bat,
+                        .sh)
+                    </li>
+                </ul>
+            </li>
             <li>Нажмите "Начать дамп" для запуска процесса</li>
             <li>Следите за прогрессом в индикаторе выполнения</li>
             <li>Нажмите "Остановить" для отмены операции</li>
@@ -347,7 +361,8 @@
             photos: document.getElementById('photos').checked,
             videos: document.getElementById('videos').checked,
             links: document.getElementById('links').checked,
-            messages: document.getElementById('messages').checked
+            messages: document.getElementById('messages').checked,
+            documents: document.getElementById('documents').checked // Добавлено
         };
 
         if (request.chats.length === 0) {

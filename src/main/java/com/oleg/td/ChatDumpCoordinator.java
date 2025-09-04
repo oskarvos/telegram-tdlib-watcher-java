@@ -8,6 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.Set;
+
 @Component
 public class ChatDumpCoordinator {
     private static final Logger log = LoggerFactory.getLogger(ChatDumpCoordinator.class);
@@ -19,6 +21,19 @@ public class ChatDumpCoordinator {
     private final MediaDownloader downloader;
 
     private volatile boolean stopRequested = false;
+
+    // Список текстовых форматов для загрузки
+    private static final Set<String> TEXT_DOCUMENT_EXTENSIONS = Set.of(
+            "txt", "pdf", "doc", "docx", "rtf", "odt",
+            "py", "java", "cpp", "c", "h", "hpp", "js", "html", "css", "xml", "json",
+            "bat", "sh", "cmd", "ps1", "md", "csv", "log", "ini", "cfg", "conf"
+    );
+
+    private static final Set<String> TEXT_MIME_TYPES = Set.of(
+            "text/plain", "application/pdf", "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/rtf", "application/vnd.oasis.opendocument.text"
+    );
 
     public ChatDumpCoordinator(TdJsonClient client,
                                ChatResolver resolver,
@@ -39,7 +54,7 @@ public class ChatDumpCoordinator {
                 break;
             }
 
-            long chatId = resolver.resolveFlexible(chatRef.trim()); // <--- обновлено
+            long chatId = resolver.resolveFlexible(chatRef.trim());
             log.info("Начинаем дамп чата {} (ref='{}')", chatId, chatRef);
 
             db.prepareSchema(chatId);
@@ -204,6 +219,59 @@ public class ChatDumpCoordinator {
 
             db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime, filePath);
         }
+
+        // 5) Документы (текстовые файлы)
+        if ("messageDocument".equals(ctype) && request.isDocuments()) {
+            JsonNode document = content.path("document");
+            String caption = content.path("caption").path("text").asText(null);
+
+            JsonNode fileNode = document.path("document");
+            Integer fileId = fileNode.path("id").isInt() ? fileNode.path("id").asInt() : null;
+            String remoteId = fileNode.path("remote").path("id").asText(null);
+            String fileName = document.path("file_name").asText(null);
+            String mimeType = document.path("mime_type").asText(null);
+
+            // Проверяем, является ли файл текстовым
+            boolean isTextDocument = isTextDocument(fileName, mimeType);
+
+            if (isTextDocument) {
+                String filePath = null;
+                if (fileId != null) {
+                    filePath = downloader.downloadBlocking(fileId);
+                }
+
+                db.saveDocument(chatId, messageId, fileId, remoteId, fileName, mimeType, filePath);
+                if (request.isLinks()) extractLinksFromFormattedText(chatId, messageId, content.path("caption"));
+
+                log.debug("Сохранён текстовый документ: {} (msg_id={})", fileName, messageId);
+            } else {
+                log.debug("Пропущен нетекстовый документ: {} (msg_id={})", fileName, messageId);
+            }
+        }
+    }
+
+    private boolean isTextDocument(String fileName, String mimeType) {
+        if (fileName != null) {
+            String ext = getFileExtension(fileName).toLowerCase();
+            if (TEXT_DOCUMENT_EXTENSIONS.contains(ext)) {
+                return true;
+            }
+        }
+
+        if (mimeType != null) {
+            String baseMimeType = mimeType.split(";")[0].trim();
+            if (TEXT_MIME_TYPES.contains(baseMimeType) || baseMimeType.startsWith("text/")) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private String getFileExtension(String fileName) {
+        if (fileName == null) return "";
+        int dotIndex = fileName.lastIndexOf('.');
+        return (dotIndex == -1) ? "" : fileName.substring(dotIndex + 1);
     }
 
     private void extractLinksFromFormattedText(long chatId, long messageId, JsonNode formattedText) {
