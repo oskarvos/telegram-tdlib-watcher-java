@@ -24,14 +24,20 @@
             color: #333;
         }
 
-        .container {
+        .main-container {
+            display: flex;
+            gap: 20px;
             width: 100%;
-            max-width: 750px;
+            max-width: 1500px;
+            margin-bottom: 20px;
+        }
+
+        .container {
+            flex: 1;
             background-color: white;
             border-radius: 16px;
             box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
             padding: 35px;
-            margin: 20px 0;
             position: relative;
             overflow: hidden;
         }
@@ -52,6 +58,16 @@
             color: #2c3e50;
             font-weight: 700;
             font-size: 32px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        h2 {
+            text-align: center;
+            margin-bottom: 25px;
+            color: #2c3e50;
+            font-weight: 700;
+            font-size: 24px;
             padding-bottom: 15px;
             border-bottom: 2px solid #f0f0f0;
         }
@@ -87,6 +103,21 @@
         }
 
         textarea:focus {
+            outline: none;
+            border-color: #6a11cb;
+            box-shadow: 0 0 0 3px rgba(106, 17, 203, 0.2);
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 15px;
+            transition: all 0.3s;
+        }
+
+        input[type="text"]:focus {
             outline: none;
             border-color: #6a11cb;
             box-shadow: 0 0 0 3px rgba(106, 17, 203, 0.2);
@@ -168,6 +199,29 @@
             color: white;
             transform: translateY(-3px);
             box-shadow: 0 7px 15px rgba(231, 76, 60, 0.4);
+        }
+
+        #startMonitorBtn {
+            background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+            color: white;
+        }
+
+        #startMonitorBtn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 7px 15px rgba(46, 204, 113, 0.4);
+        }
+
+        #stopMonitorBtn {
+            background: #ffffff;
+            color: #f39c12;
+            border: 2px solid #f39c12;
+        }
+
+        #stopMonitorBtn:hover {
+            background: #f39c12;
+            color: white;
+            transform: translateY(-3px);
+            box-shadow: 0 7px 15px rgba(243, 156, 18, 0.4);
         }
 
         .progress-container {
@@ -266,6 +320,33 @@
             font-size: 14px;
         }
 
+        .monitor-status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+
+        .monitor-status.success {
+            background-color: #e7f6ec;
+            color: #27ae60;
+        }
+
+        .monitor-status.error {
+            background-color: #ffecec;
+            color: #e74c3c;
+        }
+
+        .monitor-status.stopped {
+            background-color: #fff4e6;
+            color: #f39c12;
+        }
+
+        @media (max-width: 1200px) {
+            .main-container {
+                flex-direction: column;
+            }
+        }
+
         @media (max-width: 768px) {
             .checkbox-group {
                 grid-template-columns: repeat(2, 1fr);
@@ -288,87 +369,112 @@
     </style>
 </head>
 <body>
-<div class="container">
-    <div class="logo">
-        <i class="fab fa-telegram"></i>
-    </div>
-    <h1>TDLib Дамп Чатов</h1>
+<div class="main-container">
+    <div class="container">
+        <div class="logo">
+            <i class="fab fa-telegram"></i>
+        </div>
+        <h1>TDLib Дамп Чатов</h1>
 
-    <div class="form-group">
-        <label for="chats">Ссылки или ID чатов (по одному на строку):</label>
-        <textarea id="chats" placeholder="Введите ссылки или ID чатов, по одному на строку"></textarea>
+        <div class="form-group">
+            <label for="chats">Ссылки или ID чатов (по одному на строку):</label>
+            <textarea id="chats" placeholder="Введите ссылки или ID чатов, по одному на строку"></textarea>
+        </div>
+
+        <div class="checkbox-group">
+            <div class="checkbox-item">
+                <input type="checkbox" id="photos" checked>
+                <label for="photos">Фотографии</label>
+            </div>
+            <div class="checkbox-item">
+                <input type="checkbox" id="videos" checked>
+                <label for="videos">Видео</label>
+            </div>
+            <div class="checkbox-item">
+                <input type="checkbox" id="links" checked>
+                <label for="links">Ссылки</label>
+            </div>
+            <div class="checkbox-item">
+                <input type="checkbox" id="messages" checked>
+                <label for="messages">Сообщения</label>
+            </div>
+            <div class="checkbox-item">
+                <input type="checkbox" id="textDocuments" onclick="toggleTextDocumentExtensions()">
+                <label for="textDocuments">Текстовые документы</label>
+            </div>
+            <div class="checkbox-item">
+                <input type="checkbox" id="audio" checked>
+                <label for="audio">Аудио файлы</label>
+            </div>
+        </div>
+
+        <div class="text-document-extensions">
+            <label for="textExtensions">Введите расширения текстовых документов (через запятую):</label>
+            <input type="text" id="textExtensions" placeholder="txt, pdf, docx, java, html" />
+        </div>
+
+        <div class="buttons">
+            <button id="startBtn" onclick="startDump()">
+                <i class="fas fa-play-circle"></i> Начать дамп
+            </button>
+            <button id="stopBtn" onclick="stopDump()">
+                <i class="fas fa-stop-circle"></i> Остановить
+            </button>
+        </div>
+
+        <div class="progress-container">
+            <div class="progress-label">
+                <span>Прогресс:</span>
+                <span id="progress-value">0%</span>
+            </div>
+            <div id="progress">
+                <div id="progress-bar"></div>
+            </div>
+            <div class="status" id="status">Готово к началу</div>
+        </div>
     </div>
 
-    <div class="checkbox-group">
-        <div class="checkbox-item">
-            <input type="checkbox" id="photos" checked>
-            <label for="photos">Фотографии</label>
-        </div>
-        <div class="checkbox-item">
-            <input type="checkbox" id="videos" checked>
-            <label for="videos">Видео</label>
-        </div>
-        <div class="checkbox-item">
-            <input type="checkbox" id="links" checked>
-            <label for="links">Ссылки</label>
-        </div>
-        <div class="checkbox-item">
-            <input type="checkbox" id="messages" checked>
-            <label for="messages">Сообщения</label>
-        </div>
-        <div class="checkbox-item">
-            <input type="checkbox" id="textDocuments" onclick="toggleTextDocumentExtensions()">
-            <label for="textDocuments">Текстовые документы</label>
-        </div>
-        <div class="checkbox-item">
-            <input type="checkbox" id="audio" checked>
-            <label for="audio">Аудио файлы</label>
-        </div>
-    </div>
+    <div class="container">
+        <h2><i class="fas fa-search"></i> Мониторинг чатов</h2>
 
-    <div class="text-document-extensions">
-        <label for="textExtensions">Введите расширения текстовых документов (через запятую):</label>
-        <input type="text" id="textExtensions" placeholder="txt, pdf, docx, java, html" />
-    </div>
-
-    <div class="buttons">
-        <button id="startBtn" onclick="startDump()">
-            <i class="fas fa-play-circle"></i> Начать дамп
-        </button>
-        <button id="stopBtn" onclick="stopDump()">
-            <i class="fas fa-stop-circle"></i> Остановить
-        </button>
-    </div>
-
-    <div class="progress-container">
-        <div class="progress-label">
-            <span>Прогресс:</span>
-            <span id="progress-value">0%</span>
+        <div class="form-group">
+            <label for="monitorChats">Чаты для мониторинга (по одному на строку):</label>
+            <textarea id="monitorChats" placeholder="Введите ссылки или ID чатов для мониторинга"></textarea>
         </div>
-        <div id="progress">
-            <div id="progress-bar"></div>
-        </div>
-        <div class="status" id="status">Готово к началу</div>
-    </div>
 
-    <div class="instructions">
-        <h3><i class="fas fa-info-circle"></i> Как использовать:</h3>
-        <ul>
-            <li>Введите ссылки или ID чатов (по одному на строку)</li>
-            <li>Выберите, какой контент нужно сохранить:
-                <ul>
-                    <li><strong>Фотографии</strong> - изображения (JPG, PNG, GIF)</li>
-                    <li><strong>Видео</strong> - видеофайлы (MP4, AVI, MOV)</li>
-                    <li><strong>Ссылки</strong> - URL из сообщений</li>
-                    <li><strong>Сообщения</strong> - текстовые сообщения</li>
-                    <li><strong>Текстовые документы</strong> - TXT, PDF, DOC, код (.py, .cpp, .java), скрипты (.bat, .sh)</li>
-                    <li><strong>Аудио файлы</strong> - MP3, WAV, OGG, голосовые сообщения, аудио документы</li>
-                </ul>
-            </li>
-            <li>Нажмите "Начать дамп" для запуска процесса</li>
-            <li>Следите за прогрессом в индикаторе выполнения</li>
-            <li>Нажмите "Остановить" для отмены операции</li>
-        </ul>
+        <div class="form-group">
+            <label for="searchTerm">Слово или фраза для поиска:</label>
+            <input type="text" id="searchTerm" placeholder="Введите текст для поиска">
+        </div>
+
+        <div class="checkbox-item">
+            <input type="checkbox" id="caseSensitive">
+            <label for="caseSensitive">Учитывать регистр</label>
+        </div>
+
+        <div class="buttons">
+            <button id="startMonitorBtn" onclick="startMonitoring()">
+                <i class="fas fa-play-circle"></i> Начать мониторинг
+            </button>
+            <button id="stopMonitorBtn" onclick="stopMonitoring()">
+                <i class="fas fa-stop-circle"></i> Остановить мониторинг
+            </button>
+        </div>
+
+        <div class="progress-container">
+            <div class="progress-label">
+                <span>Статус мониторинга:</span>
+                <span id="monitor-status">Не активен</span>
+            </div>
+            <div class="progress-label">
+                <span>Отслеживаемых чатов:</span>
+                <span id="monitored-chats">0</span>
+            </div>
+            <div class="progress-label">
+                <span>Найдено совпадений:</span>
+                <span id="matches-found">0</span>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -461,6 +567,93 @@
         }
     }
 
+    async function startMonitoring() {
+        const chats = document.getElementById('monitorChats').value
+            .split(/\n+/)
+            .map(s => s.trim())
+            .filter(Boolean);
+
+        const searchTerm = document.getElementById('searchTerm').value.trim();
+        const caseSensitive = document.getElementById('caseSensitive').checked;
+
+        if (chats.length === 0) {
+            setMonitorStatus('Ошибка: не указаны чаты для мониторинга', 'error');
+            return;
+        }
+
+        if (!searchTerm) {
+            setMonitorStatus('Ошибка: не указан текст для поиска', 'error');
+            return;
+        }
+
+        const request = {
+            chats: chats,
+            searchTerm: searchTerm,
+            caseSensitive: caseSensitive
+        };
+
+        try {
+            const res = await fetch('/monitor/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(request)
+            });
+
+            if (!res.ok) throw new Error('Сервер вернул ошибку ' + res.status);
+
+            setMonitorStatus('Мониторинг запущен', 'success');
+            pollMonitorStatus();
+
+        } catch (e) {
+            setMonitorStatus('Ошибка запуска: ' + e.message, 'error');
+        }
+    }
+
+    async function stopMonitoring() {
+        try {
+            const res = await fetch('/monitor/stop', {method: 'POST'});
+            if (!res.ok) throw new Error('Сервер вернул ошибку ' + res.status);
+
+            setMonitorStatus('Мониторинг остановлен', 'stopped');
+
+        } catch (e) {
+            setMonitorStatus('Ошибка остановки: ' + e.message, 'error');
+        }
+    }
+
+    async function pollMonitorStatus() {
+        try {
+            const res = await fetch('/monitor/status');
+            if (!res.ok) throw new Error('Сервер вернул ошибку ' + res.status);
+
+            const data = await res.json();
+
+            document.getElementById('monitored-chats').textContent = data.monitoredChats;
+            document.getElementById('matches-found').textContent = data.matchesFound;
+
+            if (data.monitoring) {
+                setMonitorStatus('Активен', 'success');
+                setTimeout(pollMonitorStatus, 2000);
+            }
+
+        } catch (e) {
+            console.error('Ошибка запроса статуса мониторинга:', e);
+        }
+    }
+
+    function setMonitorStatus(text, type) {
+        const el = document.getElementById('monitor-status');
+        el.textContent = text;
+
+        const colors = {
+            success: '#27ae60',
+            error: '#e74c3c',
+            stopped: '#f39c12'
+        };
+
+        el.style.color = colors[type] || '#2c3e50';
+    }
+
     function setStatus(text, bg, color) {
         const el = document.getElementById('status');
         el.textContent = text;
@@ -484,7 +677,10 @@
             textDocuments: document.getElementById('textDocuments').checked,
             audio: document.getElementById('audio').checked,
             chats: document.getElementById('chats').value,
-            textDocumentExtensions: document.getElementById('textExtensions').value
+            textDocumentExtensions: document.getElementById('textExtensions').value,
+            monitorChats: document.getElementById('monitorChats').value,
+            searchTerm: document.getElementById('searchTerm').value,
+            caseSensitive: document.getElementById('caseSensitive').checked
         };
         localStorage.setItem('tdlibDumpSettings', JSON.stringify(settings));
     }
@@ -501,6 +697,14 @@
             document.getElementById('audio').checked = settings.audio;
             document.getElementById('chats').value = settings.chats || '';
             document.getElementById('textExtensions').value = settings.textDocumentExtensions || '';
+            document.getElementById('monitorChats').value = settings.monitorChats || '';
+            document.getElementById('searchTerm').value = settings.searchTerm || '';
+            document.getElementById('caseSensitive').checked = settings.caseSensitive || false;
+
+            // Показать поле расширений, если нужно
+            if (settings.textDocuments) {
+                document.querySelector('.text-document-extensions').style.display = 'block';
+            }
         }
     }
 
@@ -513,6 +717,8 @@
     });
 
     document.getElementById('chats').addEventListener('input', saveSettings);
+    document.getElementById('monitorChats').addEventListener('input', saveSettings);
+    document.getElementById('searchTerm').addEventListener('input', saveSettings);
 </script>
 </body>
 </html>
