@@ -68,14 +68,16 @@ public class ChatDumpCoordinator {
 
             long fromMessageId = 0; // 0 — начинать с последних
             boolean reachedAlreadySaved = false;
+            int totalMessagesProcessed = 0;
+            final int MAX_MESSAGES = 10000; // Максимальное количество сообщений для обработки
 
-            while (!stopRequested && !reachedAlreadySaved) {
+            while (!stopRequested && !reachedAlreadySaved && totalMessagesProcessed < MAX_MESSAGES) {
                 ObjectNode req = MAPPER.createObjectNode();
                 req.put("@type", "getChatHistory");
                 req.put("chat_id", chatId);
                 req.put("from_message_id", fromMessageId);
                 req.put("offset", 0);
-                req.put("limit", 100);
+                req.put("limit", 100); // Максимальный лимит TDLib за один запрос
                 req.put("only_local", false);
 
                 ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.MAIN);
@@ -93,6 +95,7 @@ public class ChatDumpCoordinator {
 
                 for (JsonNode msg : messages) {
                     if (stopRequested) break;
+                    if (totalMessagesProcessed >= MAX_MESSAGES) break;
 
                     long mid = msg.path("id").asLong();
                     if (lastSavedId > 0 && mid <= lastSavedId) {
@@ -103,18 +106,40 @@ public class ChatDumpCoordinator {
 
                     try {
                         processMessage(chatId, msg, request);
+                        totalMessagesProcessed++;
                         if (progressCallback != null) progressCallback.run();
                     } catch (Exception ex) {
                         log.error("Ошибка обработки сообщения {} из чата {}: {}", mid, chatId, ex.getMessage(), ex);
                     }
                 }
 
-                if (!reachedAlreadySaved) {
-                    fromMessageId = messages.get(messages.size() - 1).path("id").asLong();
+                if (!reachedAlreadySaved && totalMessagesProcessed < MAX_MESSAGES) {
+                    // Получаем ID самого старого сообщения в текущей пачке для следующей итерации
+                    long oldestMessageId = Long.MAX_VALUE;
+                    for (JsonNode msg : messages) {
+                        long msgId = msg.path("id").asLong();
+                        if (msgId < oldestMessageId) {
+                            oldestMessageId = msgId;
+                        }
+                    }
+
+                    if (oldestMessageId != Long.MAX_VALUE) {
+                        fromMessageId = oldestMessageId;
+                    } else {
+                        break; // Не удалось определить ID для продолжения
+                    }
+
+                    // Небольшая задержка между запросами чтобы избежать flood wait
+                    try {
+                        Thread.sleep(100);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
                 }
             }
 
-            log.info("Дамп чата {} завершён", chatId);
+            log.info("Дамп чата {} завершён. Обработано сообщений: {}", chatId, totalMessagesProcessed);
         }
     }
 
@@ -123,6 +148,7 @@ public class ChatDumpCoordinator {
     }
 
     private void processMessage(long chatId, JsonNode msg, DumpRequest request) {
+        // ... существующий код без изменений ...
         long messageId = msg.path("id").asLong();
         long date = msg.path("date").asLong(0);
         String senderId = msg.path("sender_id").isMissingNode() ? null : msg.path("sender_id").toString();
@@ -251,6 +277,7 @@ public class ChatDumpCoordinator {
     }
 
     private boolean isTextDocument(String fileName, String mimeType) {
+        // ... существующий код без изменений ...
         if (fileName != null) {
             String ext = getFileExtension(fileName).toLowerCase();
             if (TEXT_DOCUMENT_EXTENSIONS.contains(ext)) {
@@ -269,12 +296,14 @@ public class ChatDumpCoordinator {
     }
 
     private String getFileExtension(String fileName) {
+        // ... существующий код без изменений ...
         if (fileName == null) return "";
         int dotIndex = fileName.lastIndexOf('.');
         return (dotIndex == -1) ? "" : fileName.substring(dotIndex + 1);
     }
 
     private void extractLinksFromFormattedText(long chatId, long messageId, JsonNode formattedText) {
+        // ... существующий код без изменений ...
         if (formattedText == null || formattedText.isMissingNode()) return;
 
         String fullText = formattedText.path("text").asText("");
@@ -301,6 +330,7 @@ public class ChatDumpCoordinator {
     }
 
     private static String safeSubstring(String s, int offset, int length) {
+        // ... существующий код без изменений ...
         if (s == null || offset < 0 || length <= 0 || offset >= s.length()) return null;
         int end = Math.min(s.length(), offset + length);
         return s.substring(offset, end);
