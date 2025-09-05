@@ -32,11 +32,11 @@ public class AppInitializer {
                 config.isCaseInsensitive()
         );
         try {
-            authFlow.wireInto();
-            authFlow.authorizeBlocking();
-
             // Инициализация схемы мониторинга
             db.prepareMonitorSchema();
+
+            authFlow.wireInto();
+            authFlow.authorizeBlocking();
 
             log.info("✅ Авторизация успешно завершена!");
         } catch (Exception e) {

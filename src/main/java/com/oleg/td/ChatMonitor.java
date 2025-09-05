@@ -33,6 +33,8 @@ public class ChatMonitor {
         for (String chatRef : config.getMonitoredChats()) {
             try {
                 long chatId = resolver.resolveFlexible(chatRef);
+                // Убедимся, что схема базы данных подготовлена
+                db.prepareSchema(chatId);
                 processAllMessages(chatId, config);
             } catch (Exception e) {
                 log.error("Ошибка при обработке чата {}: {}", chatRef, e.getMessage());
@@ -40,6 +42,23 @@ public class ChatMonitor {
         }
 
         log.info("Мониторинг завершен - все сообщения обработаны");
+    }
+
+    public void startIncrementalMonitoring(MonitorConfig config) {
+        log.info("Запуск инкрементального мониторинга чатов: {}", config.getMonitoredChats());
+
+        for (String chatRef : config.getMonitoredChats()) {
+            try {
+                long chatId = resolver.resolveFlexible(chatRef);
+                // Убедимся, что схема базы данных подготовлена
+                db.prepareSchema(chatId);
+                processNewMessages(chatId, config);
+            } catch (Exception e) {
+                log.error("Ошибка при обработке чата {}: {}", chatRef, e.getMessage());
+            }
+        }
+
+        log.info("Инкрементальный мониторинг завершен");
     }
 
     private void processAllMessages(long chatId, MonitorConfig config) {
@@ -53,6 +72,9 @@ public class ChatMonitor {
                 if (message.getText() != null && !message.getText().isEmpty()) {
                     int messageMatches = checkMessageForMatches(chatId, chatTitle, message, config);
                     matchesCount += messageMatches;
+
+                    // Сохраняем сообщение в базу для последующего инкрементального обновления
+                    saveMessageToDatabase(chatId, message);
                 }
             }
 
@@ -60,6 +82,34 @@ public class ChatMonitor {
 
         } catch (Exception e) {
             log.error("Ошибка при обработке чата {}: {}", chatId, e.getMessage());
+        }
+    }
+
+    private void processNewMessages(long chatId, MonitorConfig config) {
+        try {
+            String chatTitle = getChatTitle(chatId);
+            long lastMessageId = db.getLastSavedMessageId(chatId);
+
+            log.info("Начинаем инкрементальную обработку чата '{}', последнее сообщение ID: {}", chatTitle, lastMessageId);
+
+            List<MessageInfo> newMessages = getMessagesSince(chatId, lastMessageId);
+            int matchesCount = 0;
+
+            for (MessageInfo message : newMessages) {
+                if (message.getText() != null && !message.getText().isEmpty()) {
+                    int messageMatches = checkMessageForMatches(chatId, chatTitle, message, config);
+                    matchesCount += messageMatches;
+
+                    // Сохраняем сообщение в базу для последующего инкрементального обновления
+                    saveMessageToDatabase(chatId, message);
+                }
+            }
+
+            log.info("Обработано {} новых сообщений, обнаружено {} совпадений в чате '{}'",
+                    newMessages.size(), matchesCount, chatTitle);
+
+        } catch (Exception e) {
+            log.error("Ошибка при инкрементальной обработке чата {}: {}", chatId, e.getMessage());
         }
     }
 
@@ -101,25 +151,90 @@ public class ChatMonitor {
         return messages;
     }
 
+    private List<MessageInfo> getMessagesSince(long chatId, long sinceMessageId) {
+        List<MessageInfo> messages = new ArrayList<>();
+        long fromMessageId = 0;
+        boolean hasMoreMessages = true;
+        boolean reachedOldMessages = false;
+
+        while (hasMoreMessages && !reachedOldMessages) {
+            ObjectNode req = Utils.obj("getChatHistory");
+            req.put("chat_id", chatId);
+            req.put("from_message_id", fromMessageId);
+            req.put("offset", 0);
+            req.put("limit", 100);
+            req.put("only_local", false);
+
+            ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 30, TdJsonClient.Channel.MAIN);
+
+            if ("messages".equals(resp.path("@type").asText()) && resp.path("messages").isArray()) {
+                JsonNode messagesArray = resp.path("messages");
+
+                if (messagesArray.size() == 0) {
+                    hasMoreMessages = false;
+                    continue;
+                }
+
+                for (JsonNode msgNode : messagesArray) {
+                    MessageInfo message = parseMessageInfo(msgNode);
+                    if (message != null) {
+                        if (message.getId() <= sinceMessageId) {
+                            reachedOldMessages = true;
+                            break;
+                        }
+
+                        messages.add(message);
+                        fromMessageId = message.getId();
+                    }
+                }
+            } else {
+                hasMoreMessages = false;
+            }
+        }
+
+        return messages;
+    }
+
+    private void saveMessageToDatabase(long chatId, MessageInfo message) {
+        try {
+            db.saveMessage(
+                    chatId,
+                    message.getId(),
+                    message.getDate().toEpochSecond(ZoneOffset.UTC),
+                    message.getSenderId(),
+                    null, // reply_to - можно добавить при необходимости
+                    message.getText()
+            );
+        } catch (Exception e) {
+            log.warn("Не удалось сохранить сообщение {} в базу: {}", message.getId(), e.getMessage());
+        }
+    }
+
     private int checkMessageForMatches(long chatId, String chatTitle, MessageInfo message, MonitorConfig config) {
         int matchesInMessage = 0;
 
         for (String keyword : config.getKeywords()) {
             if (isMatch(message.getText(), keyword, config)) {
-                MonitorResult result = new MonitorResult(
-                        chatId,
-                        chatTitle,
-                        message.getId(),
-                        message.getDate(),
-                        keyword,
-                        message.getText(),
-                        message.getSenderId(),
-                        message.getSenderName()
-                );
+                // Проверяем, не было ли уже такого совпадения
+                List<MonitorResult> existingResults = db.getMonitorResultsByChatAndMessage(
+                        chatId, message.getId(), keyword);
 
-                db.saveMonitorResult(result);
-                matchesInMessage++;
-                log.debug("Сохранено совпадение: чат '{}', ключевое слово '{}'", chatTitle, keyword);
+                if (existingResults.isEmpty()) {
+                    MonitorResult result = new MonitorResult(
+                            chatId,
+                            chatTitle,
+                            message.getId(),
+                            message.getDate(),
+                            keyword,
+                            message.getText(),
+                            message.getSenderId(),
+                            message.getSenderName()
+                    );
+
+                    db.saveMonitorResult(result);
+                    matchesInMessage++;
+                    log.debug("Сохранено новое совпадение: чат '{}', ключевое слово '{}'", chatTitle, keyword);
+                }
             }
         }
 

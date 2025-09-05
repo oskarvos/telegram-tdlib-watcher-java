@@ -146,12 +146,12 @@
             gap: 10px;
         }
 
-        #startBtn, #startMonitorBtn {
+        #startBtn, #startMonitorBtn, #startIncrementalBtn {
             background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
             color: white;
         }
 
-        #startBtn:hover, #startMonitorBtn:hover {
+        #startBtn:hover, #startMonitorBtn:hover, #startIncrementalBtn:hover {
             transform: translateY(-3px);
             box-shadow: 0 7px 15px rgba(106, 17, 203, 0.4);
         }
@@ -304,32 +304,16 @@
             border-left: 4px solid #6a11cb;
         }
 
-        .interval-selector {
+        .filter-controls {
             display: flex;
             gap: 10px;
-            margin-bottom: 20px;
+            margin-bottom: 15px;
             flex-wrap: wrap;
         }
 
-        .interval-option {
-            padding: 12px 20px;
-            background: #f8f9fa;
-            border: 2px solid #ddd;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s;
-            font-weight: 500;
-        }
-
-        .interval-option:hover {
-            background: #eef2f7;
-            border-color: #6a11cb;
-        }
-
-        .interval-option.selected {
-            background: #6a11cb;
-            color: white;
-            border-color: #6a11cb;
+        .filter-controls input {
+            flex: 1;
+            min-width: 150px;
         }
 
         @media (max-width: 768px) {
@@ -337,7 +321,7 @@
                 grid-template-columns: repeat(2, 1fr);
             }
 
-            .interval-selector {
+            .filter-controls {
                 flex-direction: column;
             }
         }
@@ -443,38 +427,23 @@
         <textarea id="monitorKeywords" placeholder="Введите ключевые слова для поиска"></textarea>
     </div>
 
-    <div class="checkbox-group">
-        <div class="checkbox-item">
-            <input type="checkbox" id="caseSensitive">
-            <label for="caseSensitive">Чувствительность к регистру</label>
-        </div>
-        <div class="checkbox-item">
-            <input type="checkbox" id="regexMode">
-            <label for="regexMode">Регулярные выражения</label>
-        </div>
-    </div>
-
-    <div class="form-group">
-        <label>Интервал проверки:</label>
-        <div class="interval-selector">
-            <div class="interval-option selected" data-value="1">1 секунда</div>
-            <div class="interval-option" data-value="30">30 секунд</div>
-            <div class="interval-option" data-value="60">1 минута</div>
-            <div class="interval-option" data-value="3600">1 час</div>
-        </div>
-        <input type="hidden" id="checkInterval" value="1">
-    </div>
-
     <div class="buttons">
         <button id="startMonitorBtn" onclick="startMonitoring()">
             <i class="fas fa-play"></i> Запустить мониторинг
         </button>
-        <button id="stopMonitorBtn" onclick="stopMonitoring()">
-            <i class="fas fa-stop"></i> Остановить
+        <button id="startIncrementalBtn" onclick="startIncrementalMonitoring()">
+            <i class="fas fa-play"></i> Инкрементальный мониторинг
         </button>
         <button id="showResultsBtn" onclick="showResults()">
             <i class="fas fa-list"></i> Показать результаты
         </button>
+    </div>
+
+    <div class="filter-controls">
+        <input type="text" id="filterKeyword" placeholder="Фильтр по ключевому слову">
+        <input type="datetime-local" id="filterDateFrom" placeholder="Дата с">
+        <input type="datetime-local" id="filterDateTo" placeholder="Дата по">
+        <button onclick="applyFilters()">Применить фильтры</button>
     </div>
 
     <div class="progress-container">
@@ -618,9 +587,6 @@
         const keywords = document.getElementById('monitorKeywords').value.split('\n')
             .map(s => s.trim())
             .filter(Boolean);
-        const caseSensitive = document.getElementById('caseSensitive').checked;
-        const regexMode = document.getElementById('regexMode').checked;
-        const interval = parseInt(document.getElementById('checkInterval').value);
 
         if (chats.length === 0) {
             alert('Ошибка: не указаны чаты для мониторинга');
@@ -633,10 +599,7 @@
 
         const config = {
             monitoredChats: chats,
-            keywords: keywords,
-            caseSensitive: caseSensitive,
-            regexMode: regexMode,
-            checkIntervalMinutes: interval
+            keywords: keywords
         };
 
         try {
@@ -655,9 +618,49 @@
             alert(result);
             setMonitorStatus('Мониторинг запущен', '#e7f6ec', '#27ae60');
 
-            // Запускаем опрос статуса мониторинга
-            if (monitorPollInterval) clearInterval(monitorPollInterval);
-            monitorPollInterval = setInterval(pollMonitorStatus, 2000);
+        } catch (error) {
+            alert('Ошибка: ' + error.message);
+            setMonitorStatus('Ошибка запуска', '#ffecec', '#e74c3c');
+        }
+    }
+
+    async function startIncrementalMonitoring() {
+        const chats = document.getElementById('monitorChats').value.split('\n')
+            .map(s => s.trim())
+            .filter(Boolean);
+        const keywords = document.getElementById('monitorKeywords').value.split('\n')
+            .map(s => s.trim())
+            .filter(Boolean);
+
+        if (chats.length === 0) {
+            alert('Ошибка: не указаны чаты для мониторинга');
+            return;
+        }
+        if (keywords.length === 0) {
+            alert('Ошибка: не указаны ключевые слова');
+            return;
+        }
+
+        const config = {
+            monitoredChats: chats,
+            keywords: keywords
+        };
+
+        try {
+            const response = await fetch('/api/monitor/start-incremental', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(config)
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText || 'Ошибка сервера: ' + response.status);
+            }
+
+            const result = await response.text();
+            alert(result);
+            setMonitorStatus('Инкрементальный мониторинг запущен', '#e7f6ec', '#27ae60');
 
         } catch (error) {
             alert('Ошибка: ' + error.message);
@@ -665,34 +668,24 @@
         }
     }
 
-    async function stopMonitoring() {
-        try {
-            const response = await fetch('/api/monitor/stop', {method: 'POST'});
-            const result = await response.text();
-            alert(result);
-            setMonitorStatus('Мониторинг остановлен', '#fff4e6', '#e67e22');
-            if (monitorPollInterval) clearInterval(monitorPollInterval);
-        } catch (error) {
-            alert('Ошибка: ' + error.message);
-        }
-    }
-
-    async function pollMonitorStatus() {
-        try {
-            const response = await fetch('/api/monitor/status');
-            if (response.ok) {
-                const status = await response.json();
-                document.getElementById('monitorStatusText').textContent =
-                    status.monitoring ? 'Активен' : 'Не активен';
-            }
-        } catch (error) {
-            console.error('Ошибка опроса статуса мониторинга:', error);
-        }
-    }
-
     async function showResults() {
         try {
-            const response = await fetch('/api/monitor/results');
+            const keyword = document.getElementById('filterKeyword').value;
+            const dateFrom = document.getElementById('filterDateFrom').value;
+            const dateTo = document.getElementById('filterDateTo').value;
+
+            let url = '/api/monitor/results';
+            const params = new URLSearchParams();
+
+            if (keyword) params.append('keyword', keyword);
+            if (dateFrom) params.append('dateFrom', dateFrom + ':00');
+            if (dateTo) params.append('dateTo', dateTo + ':00');
+
+            if (params.toString()) {
+                url += '?' + params.toString();
+            }
+
+            const response = await fetch(url);
             if (!response.ok) throw new Error('Ошибка сервера: ' + response.status);
 
             const results = await response.json();
@@ -724,6 +717,10 @@
         }
     }
 
+    function applyFilters() {
+        showResults();
+    }
+
     // Вспомогательные функции
     function setStatus(text, bg, color) {
         const el = document.getElementById('status');
@@ -745,25 +742,6 @@
         if (done) document.getElementById('progress-bar').classList.add('green');
     }
 
-    // Обработчик выбора интервала
-    document.querySelectorAll('.interval-option').forEach(option => {
-        option.addEventListener('click', function() {
-            // Убираем выделение со всех вариантов
-            document.querySelectorAll('.interval-option').forEach(opt => {
-                opt.classList.remove('selected');
-            });
-
-            // Добавляем выделение текущему варианту
-            this.classList.add('selected');
-
-            // Сохраняем значение
-            const value = this.getAttribute('data-value');
-            document.getElementById('checkInterval').value = value;
-
-            saveSettings();
-        });
-    });
-
     // Автоматическое сохранение настроек в localStorage
     function saveSettings() {
         const settings = {
@@ -776,10 +754,7 @@
             chats: document.getElementById('chats').value,
             textDocumentExtensions: document.getElementById('textExtensions').value,
             monitorChats: document.getElementById('monitorChats').value,
-            monitorKeywords: document.getElementById('monitorKeywords').value,
-            caseSensitive: document.getElementById('caseSensitive').checked,
-            regexMode: document.getElementById('regexMode').checked,
-            checkInterval: document.getElementById('checkInterval').value
+            monitorKeywords: document.getElementById('monitorKeywords').value
         };
         localStorage.setItem('tdlibSettings', JSON.stringify(settings));
     }
@@ -798,17 +773,6 @@
             document.getElementById('textExtensions').value = settings.textDocumentExtensions || '';
             document.getElementById('monitorChats').value = settings.monitorChats || '';
             document.getElementById('monitorKeywords').value = settings.monitorKeywords || '';
-            document.getElementById('caseSensitive').checked = settings.caseSensitive || false;
-            document.getElementById('regexMode').checked = settings.regexMode || false;
-            document.getElementById('checkInterval').value = settings.checkInterval || '1';
-
-            // Устанавливаем выделение для интервала
-            document.querySelectorAll('.interval-option').forEach(option => {
-                option.classList.remove('selected');
-                if (option.getAttribute('data-value') === settings.checkInterval) {
-                    option.classList.add('selected');
-                }
-            });
 
             // Показать/скрыть поле расширений
             toggleTextDocumentExtensions();
@@ -824,14 +788,13 @@
     // Сохранение настроек при изменении
     const inputsToWatch = [
         'photos', 'videos', 'links', 'messages', 'textDocuments', 'audio',
-        'chats', 'textExtensions', 'monitorChats', 'monitorKeywords',
-        'caseSensitive', 'regexMode', 'checkInterval'
+        'chats', 'textExtensions', 'monitorChats', 'monitorKeywords'
     ];
 
     inputsToWatch.forEach(id => {
         const element = document.getElementById(id);
         if (element) {
-            if (element.type === 'checkbox' || element.type === 'number') {
+            if (element.type === 'checkbox') {
                 element.addEventListener('change', saveSettings);
             } else {
                 element.addEventListener('input', saveSettings);

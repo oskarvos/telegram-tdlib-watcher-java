@@ -30,6 +30,19 @@ public class MonitorController {
         return "Мониторинг запущен - обработка всех сообщений";
     }
 
+    @PostMapping("/start-incremental")
+    public String startIncrementalMonitoring(@RequestBody MonitorConfig config) {
+        if (config.getMonitoredChats() == null || config.getMonitoredChats().isEmpty()) {
+            return "Ошибка: не указаны чаты для мониторинга";
+        }
+        if (config.getKeywords() == null || config.getKeywords().isEmpty()) {
+            return "Ошибка: не указаны ключевые слова";
+        }
+
+        chatMonitor.startIncrementalMonitoring(config);
+        return "Инкрементальный мониторинг запущен - обработка новых сообщений";
+    }
+
     @GetMapping("/results")
     public List<MonitorResult> getResults(
             @RequestParam(required = false) String keyword,
@@ -38,5 +51,10 @@ public class MonitorController {
 
         return db.getMonitorResults(keyword, dateFrom != null ? LocalDateTime.parse(dateFrom) : null,
                 dateTo != null ? LocalDateTime.parse(dateTo) : null);
+    }
+
+    @GetMapping("/chat/{chatId}/last-message")
+    public long getLastMessageId(@PathVariable long chatId) {
+        return db.getLastSavedMessageId(chatId);
     }
 }

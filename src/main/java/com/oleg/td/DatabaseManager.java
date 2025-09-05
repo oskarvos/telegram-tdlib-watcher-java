@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.*;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -154,6 +155,11 @@ public class DatabaseManager {
         try (Connection c = open(chatId); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
             return rs.next() ? rs.getLong(1) : 0L;
         } catch (SQLException e) {
+            if (e.getMessage().contains("no such table")) {
+                // Таблица не существует, возвращаем 0
+                return 0L;
+            }
+            log.warn("БД: ошибка получения последнего ID сообщения для чата {}: {}", chatId, e.getMessage());
             return 0L;
         }
     }
@@ -195,7 +201,14 @@ public class DatabaseManager {
             st.setString(5, text);
             st.executeUpdate();
         } catch (SQLException e) {
-            log.error("БД: ошибка сохранения сообщения {} для чата {}: {}", messageId, chatId, e.getMessage(), e);
+            if (e.getMessage().contains("no such table")) {
+                // Если таблицы не существует, создаем схему и пробуем снова
+                log.warn("Таблица messages не существует для чата {}, создаем схему...", chatId);
+                prepareSchema(chatId);
+                saveMessage(chatId, messageId, date, senderId, replyTo, text); // Рекурсивный вызов
+            } else {
+                log.error("БД: ошибка сохранения сообщения {} для чата {}: {}", messageId, chatId, e.getMessage(), e);
+            }
         }
     }
 
@@ -422,5 +435,52 @@ public class DatabaseManager {
         }
 
         return results;
+    }
+
+    /**
+     * Получить сообщения после указанного ID
+     */
+    public List<MessageInfo> getMessagesAfterId(long chatId, long lastMessageId) {
+        List<MessageInfo> messages = new ArrayList<>();
+        final String sql = "SELECT id, date, sender_id, text FROM " + qIdent("messages") +
+                " WHERE id > ? ORDER BY id ASC";
+
+        try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setLong(1, lastMessageId);
+
+            try (ResultSet rs = st.executeQuery()) {
+                while (rs.next()) {
+                    MessageInfo message = new MessageInfo();
+                    message.setId(rs.getLong("id"));
+                    message.setDate(LocalDateTime.ofEpochSecond(rs.getLong("date"), 0, ZoneOffset.UTC));
+                    message.setSenderId(rs.getString("sender_id"));
+                    message.setText(rs.getString("text"));
+
+                    messages.add(message);
+                }
+            }
+        } catch (SQLException e) {
+            log.error("БД: ошибка получения сообщений после ID {}: {}", lastMessageId, e.getMessage());
+        }
+
+        return messages;
+    }
+
+    /**
+     * Проверить существование сообщения в базе
+     */
+    public boolean messageExists(long chatId, long messageId) {
+        final String sql = "SELECT COUNT(*) FROM " + qIdent("messages") + " WHERE id = ?";
+
+        try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setLong(1, messageId);
+
+            try (ResultSet rs = st.executeQuery()) {
+                return rs.next() && rs.getInt(1) > 0;
+            }
+        } catch (SQLException e) {
+            log.error("БД: ошибка проверки существования сообщения {}: {}", messageId, e.getMessage());
+            return false;
+        }
     }
 }
