@@ -54,9 +54,12 @@ public class ChatMonitor {
         // Первая проверка сразу
         checkChats();
 
-        // Периодическая проверка
-        int intervalMinutes = Math.max(1, config.getCheckIntervalMinutes());
-        scheduler.scheduleAtFixedRate(this::checkChats, intervalMinutes, intervalMinutes, TimeUnit.MINUTES);
+        // Периодическая проверка - поддерживаем как минуты, так и секунды
+        int interval = Math.max(1, config.getCheckIntervalMinutes());
+        TimeUnit timeUnit = interval >= 60 ? TimeUnit.MINUTES : TimeUnit.SECONDS;
+        int convertedInterval = interval >= 60 ? interval / 60 : interval;
+
+        scheduler.scheduleAtFixedRate(this::checkChats, convertedInterval, convertedInterval, timeUnit);
     }
 
     public void stopMonitoring() {

@@ -304,9 +304,41 @@
             border-left: 4px solid #6a11cb;
         }
 
+        .interval-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .interval-option {
+            padding: 12px 20px;
+            background: #f8f9fa;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 500;
+        }
+
+        .interval-option:hover {
+            background: #eef2f7;
+            border-color: #6a11cb;
+        }
+
+        .interval-option.selected {
+            background: #6a11cb;
+            color: white;
+            border-color: #6a11cb;
+        }
+
         @media (max-width: 768px) {
             .checkbox-group {
                 grid-template-columns: repeat(2, 1fr);
+            }
+
+            .interval-selector {
+                flex-direction: column;
             }
         }
 
@@ -393,17 +425,6 @@
         </div>
         <div class="status" id="status">Готово к началу</div>
     </div>
-
-    <div class="instructions">
-        <h3><i class="fas fa-info-circle"></i> Как использовать:</h3>
-        <ul>
-            <li>Введите ссылки или ID чатов (по одному на строку)</li>
-            <li>Выберите, какой контент нужно сохранить</li>
-            <li>Нажмите "Начать дамп" для запуска процесса</li>
-            <li>Следите за прогрессом в индикаторе выполнения</li>
-            <li>Нажмите "Остановить" для отмены операции</li>
-        </ul>
-    </div>
 </div>
 
 <div class="container" id="monitorContainer" style="display: none;">
@@ -434,8 +455,14 @@
     </div>
 
     <div class="form-group">
-        <label for="checkInterval">Интервал проверки (минуты):</label>
-        <input type="number" id="checkInterval" value="5" min="1" max="60">
+        <label>Интервал проверки:</label>
+        <div class="interval-selector">
+            <div class="interval-option selected" data-value="1">1 секунда</div>
+            <div class="interval-option" data-value="30">30 секунд</div>
+            <div class="interval-option" data-value="60">1 минута</div>
+            <div class="interval-option" data-value="3600">1 час</div>
+        </div>
+        <input type="hidden" id="checkInterval" value="1">
     </div>
 
     <div class="buttons">
@@ -718,6 +745,25 @@
         if (done) document.getElementById('progress-bar').classList.add('green');
     }
 
+    // Обработчик выбора интервала
+    document.querySelectorAll('.interval-option').forEach(option => {
+        option.addEventListener('click', function() {
+            // Убираем выделение со всех вариантов
+            document.querySelectorAll('.interval-option').forEach(opt => {
+                opt.classList.remove('selected');
+            });
+
+            // Добавляем выделение текущему варианту
+            this.classList.add('selected');
+
+            // Сохраняем значение
+            const value = this.getAttribute('data-value');
+            document.getElementById('checkInterval').value = value;
+
+            saveSettings();
+        });
+    });
+
     // Автоматическое сохранение настроек в localStorage
     function saveSettings() {
         const settings = {
@@ -754,7 +800,15 @@
             document.getElementById('monitorKeywords').value = settings.monitorKeywords || '';
             document.getElementById('caseSensitive').checked = settings.caseSensitive || false;
             document.getElementById('regexMode').checked = settings.regexMode || false;
-            document.getElementById('checkInterval').value = settings.checkInterval || 5;
+            document.getElementById('checkInterval').value = settings.checkInterval || '1';
+
+            // Устанавливаем выделение для интервала
+            document.querySelectorAll('.interval-option').forEach(option => {
+                option.classList.remove('selected');
+                if (option.getAttribute('data-value') === settings.checkInterval) {
+                    option.classList.add('selected');
+                }
+            });
 
             // Показать/скрыть поле расширений
             toggleTextDocumentExtensions();
