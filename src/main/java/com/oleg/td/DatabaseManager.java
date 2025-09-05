@@ -346,6 +346,38 @@ public class DatabaseManager {
         }
     }
 
+    public List<MonitorResult> getMonitorResultsByChatAndMessage(long chatId, long messageId, String keyword) {
+        List<MonitorResult> results = new ArrayList<>();
+        String sql = "SELECT * FROM " + qIdent("monitor_results") +
+                " WHERE chat_id = ? AND message_id = ? AND keyword = ?";
+
+        try (Connection c = open(0); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setLong(1, chatId);
+            st.setLong(2, messageId);
+            st.setString(3, keyword);
+
+            try (ResultSet rs = st.executeQuery()) {
+                while (rs.next()) {
+                    MonitorResult result = new MonitorResult();
+                    result.setChatId(rs.getLong("chat_id"));
+                    result.setChatTitle(rs.getString("chat_title"));
+                    result.setMessageId(rs.getLong("message_id"));
+                    result.setMessageDate(LocalDateTime.parse(rs.getString("message_date")));
+                    result.setKeyword(rs.getString("keyword"));
+                    result.setMessageText(rs.getString("message_text"));
+                    result.setSenderId(rs.getString("sender_id"));
+                    result.setSenderName(rs.getString("sender_name"));
+
+                    results.add(result);
+                }
+            }
+        } catch (SQLException e) {
+            log.error("БД: ошибка проверки существующего результата: {}", e.getMessage(), e);
+        }
+
+        return results;
+    }
+
     public List<MonitorResult> getMonitorResults(String keywordFilter, LocalDateTime dateFrom, LocalDateTime dateTo) {
         List<MonitorResult> results = new ArrayList<>();
         String sql = "SELECT * FROM " + qIdent("monitor_results") + " WHERE 1=1";

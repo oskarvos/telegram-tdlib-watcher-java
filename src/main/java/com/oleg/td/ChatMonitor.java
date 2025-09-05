@@ -9,7 +9,9 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -28,6 +30,9 @@ public class ChatMonitor {
     private MonitorConfig currentConfig;
     private boolean monitoring = false;
 
+    // Храним ID последнего проверенного сообщения для каждого чата
+    private final Map<Long, Long> lastProcessedMessageIds = new HashMap<>();
+
     public ChatMonitor(TdJsonClient client, ChatResolver resolver, DatabaseManager db) {
         this.client = client;
         this.resolver = resolver;
@@ -42,6 +47,7 @@ public class ChatMonitor {
 
         this.currentConfig = config;
         this.monitoring = true;
+        this.lastProcessedMessageIds.clear();
 
         log.info("Запуск мониторинга чатов: {}", config.getMonitoredChats());
 
@@ -55,6 +61,7 @@ public class ChatMonitor {
 
     public void stopMonitoring() {
         monitoring = false;
+        lastProcessedMessageIds.clear();
         scheduler.shutdown();
         try {
             if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
@@ -89,15 +96,60 @@ public class ChatMonitor {
             // Получаем информацию о чате
             String chatTitle = getChatTitle(chatId);
 
-            // Получаем последние сообщения
-            List<MessageInfo> recentMessages = getRecentMessages(chatId, 50); // Проверяем последние 50 сообщений
+            // Получаем последние сообщения, начиная с последнего обработанного ID
+            long lastProcessedId = lastProcessedMessageIds.getOrDefault(chatId, 0L);
+            List<MessageInfo> newMessages = getNewMessages(chatId, lastProcessedId);
 
-            for (MessageInfo message : recentMessages) {
+            if (newMessages.isEmpty()) {
+                log.debug("Новых сообщений в чате {} не найдено", chatId);
+                return;
+            }
+
+            // Обновляем последний обработанный ID (максимальный из полученных)
+            long maxMessageId = newMessages.stream()
+                    .mapToLong(MessageInfo::getId)
+                    .max()
+                    .orElse(lastProcessedId);
+
+            lastProcessedMessageIds.put(chatId, maxMessageId);
+            log.debug("Для чата {} установлен последний обработанный ID: {}", chatId, maxMessageId);
+
+            // Проверяем новые сообщения
+            for (MessageInfo message : newMessages) {
                 checkMessageForMatches(chatId, chatTitle, message);
             }
+
         } catch (Exception e) {
             log.error("Ошибка при проверке чата {}: {}", chatId, e.getMessage());
         }
+    }
+
+    private List<MessageInfo> getNewMessages(long chatId, long lastProcessedId) {
+        List<MessageInfo> newMessages = new ArrayList<>();
+
+        // Получаем последние сообщения (больше, чем обычно, чтобы не пропустить)
+        ObjectNode req = Utils.obj("getChatHistory");
+        req.put("chat_id", chatId);
+        req.put("from_message_id", 0);
+        req.put("offset", 0);
+        req.put("limit", 10000);
+        req.put("only_local", false);
+
+        ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 30, TdJsonClient.Channel.MAIN);
+
+        if ("messages".equals(resp.path("@type").asText()) && resp.path("messages").isArray()) {
+            for (JsonNode msgNode : resp.path("messages")) {
+                MessageInfo message = parseMessageInfo(msgNode);
+                if (message != null && message.getId() > lastProcessedId) {
+                    newMessages.add(message);
+                }
+            }
+        }
+
+        // Сортируем по возрастанию ID (от старых к новым)
+        newMessages.sort((m1, m2) -> Long.compare(m1.getId(), m2.getId()));
+
+        return newMessages;
     }
 
     private void checkMessageForMatches(long chatId, String chatTitle, MessageInfo message) {
@@ -107,21 +159,30 @@ public class ChatMonitor {
 
         for (String keyword : currentConfig.getKeywords()) {
             if (isMatch(message.getText(), keyword)) {
-                MonitorResult result = new MonitorResult(
-                        chatId,
-                        chatTitle,
-                        message.getId(),
-                        message.getDate(),
-                        keyword,
-                        message.getText(),
-                        message.getSenderId(),
-                        message.getSenderName()
-                );
+                // Проверяем, не было ли уже такого совпадения
+                if (!isAlreadyProcessed(chatId, message.getId(), keyword)) {
+                    MonitorResult result = new MonitorResult(
+                            chatId,
+                            chatTitle,
+                            message.getId(),
+                            message.getDate(),
+                            keyword,
+                            message.getText(),
+                            message.getSenderId(),
+                            message.getSenderName()
+                    );
 
-                db.saveMonitorResult(result);
-                log.info("Найдено совпадение: чат '{}', ключевое слово '{}'", chatTitle, keyword);
+                    db.saveMonitorResult(result);
+                    log.info("Найдено новое совпадение: чат '{}', ключевое слово '{}'", chatTitle, keyword);
+                }
             }
         }
+    }
+
+    private boolean isAlreadyProcessed(long chatId, long messageId, String keyword) {
+        // Проверяем в базе данных, было ли уже такое совпадение
+        List<MonitorResult> existingResults = db.getMonitorResultsByChatAndMessage(chatId, messageId, keyword);
+        return !existingResults.isEmpty();
     }
 
     private boolean isMatch(String text, String keyword) {
@@ -152,30 +213,6 @@ public class ChatMonitor {
             return resp.path("title").asText("Unknown");
         }
         return "Unknown";
-    }
-
-    private List<MessageInfo> getRecentMessages(long chatId, int limit) {
-        List<MessageInfo> messages = new ArrayList<>();
-
-        ObjectNode req = Utils.obj("getChatHistory");
-        req.put("chat_id", chatId);
-        req.put("from_message_id", 0);
-        req.put("offset", 0);
-        req.put("limit", limit);
-        req.put("only_local", false);
-
-        ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 30, TdJsonClient.Channel.MAIN);
-
-        if ("messages".equals(resp.path("@type").asText()) && resp.path("messages").isArray()) {
-            for (JsonNode msgNode : resp.path("messages")) {
-                MessageInfo message = parseMessageInfo(msgNode);
-                if (message != null) {
-                    messages.add(message);
-                }
-            }
-        }
-
-        return messages;
     }
 
     private MessageInfo parseMessageInfo(JsonNode msgNode) {
