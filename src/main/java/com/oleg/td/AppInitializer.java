@@ -37,6 +37,7 @@ public class AppInitializer {
 
             // Инициализация схемы мониторинга
             db.prepareMonitorSchema();
+            db.prepareMonitorStateSchema();
 
             log.info("✅ Авторизация успешно завершена!");
         } catch (Exception e) {

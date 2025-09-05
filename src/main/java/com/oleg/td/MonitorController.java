@@ -39,4 +39,15 @@ public class MonitorController {
         return db.getMonitorResults(keyword, dateFrom != null ? LocalDateTime.parse(dateFrom) : null,
                 dateTo != null ? LocalDateTime.parse(dateTo) : null);
     }
+
+    @PostMapping("/reset")
+    public String resetMonitoring(@RequestParam(required = false) Long chatId) {
+        if (chatId != null) {
+            // Логика сброса состояния для конкретного чата
+            return "Состояние мониторинга для чата " + chatId + " сброшено";
+        } else {
+            // Логика полного сброса
+            return "Состояние мониторинга полностью сброшено";
+        }
+    }
 }

@@ -33,13 +33,13 @@ public class ChatMonitor {
         for (String chatRef : config.getMonitoredChats()) {
             try {
                 long chatId = resolver.resolveFlexible(chatRef);
-                processAllMessages(chatId, config);
+                processNewMessages(chatId, config); // ← Изменяем на processNewMessages
             } catch (Exception e) {
                 log.error("Ошибка при обработке чата {}: {}", chatRef, e.getMessage());
             }
         }
 
-        log.info("Мониторинг завершен - все сообщения обработаны");
+        log.info("Мониторинг завершен - новые сообщения обработаны");
     }
 
     private void processAllMessages(long chatId, MonitorConfig config) {
@@ -203,5 +203,90 @@ public class ChatMonitor {
             return (firstName + " " + lastName).trim();
         }
         return "User#" + userId;
+    }
+
+    private void processNewMessages(long chatId, MonitorConfig config) {
+        try {
+            String chatTitle = getChatTitle(chatId);
+
+            // Получаем дату последней обработки
+            LocalDateTime lastProcessedDate = db.getLastProcessedDate(chatId);
+            long lastMessageId = 0; // Можно также хранить last_processed_id
+
+            List<MessageInfo> newMessages = getMessagesSince(chatId, lastProcessedDate);
+
+            int matchesCount = 0;
+            LocalDateTime newestDate = lastProcessedDate;
+            long newestId = lastMessageId;
+
+            for (MessageInfo message : newMessages) {
+                if (message.getText() != null && !message.getText().isEmpty()) {
+                    int messageMatches = checkMessageForMatches(chatId, chatTitle, message, config);
+                    matchesCount += messageMatches;
+
+                    // Обновляем самую новую дату и ID
+                    if (newestDate == null || message.getDate().isAfter(newestDate)) {
+                        newestDate = message.getDate();
+                        newestId = message.getId();
+                    }
+                }
+            }
+
+            // Сохраняем новое состояние, если были обработаны сообщения
+            if (newestDate != null && !newMessages.isEmpty()) {
+                db.updateLastProcessedDate(chatId, newestDate, newestId);
+            }
+
+            log.info("Обработано {} новых сообщений, обнаружено {} в чате '{}'",
+                    newMessages.size(), matchesCount, chatTitle);
+
+        } catch (Exception e) {
+            log.error("Ошибка при обработке чата {}: {}", chatId, e.getMessage());
+        }
+    }
+
+    private List<MessageInfo> getMessagesSince(long chatId, LocalDateTime sinceDate) {
+        List<MessageInfo> messages = new ArrayList<>();
+        long fromMessageId = 0;
+        boolean hasMoreMessages = true;
+        boolean foundOldMessages = false;
+
+        while (hasMoreMessages && !foundOldMessages) {
+            ObjectNode req = Utils.obj("getChatHistory");
+            req.put("chat_id", chatId);
+            req.put("from_message_id", fromMessageId);
+            req.put("offset", 0);
+            req.put("limit", 100);
+            req.put("only_local", false);
+
+            ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 30, TdJsonClient.Channel.MAIN);
+
+            if ("messages".equals(resp.path("@type").asText()) && resp.path("messages").isArray()) {
+                JsonNode messagesArray = resp.path("messages");
+
+                if (messagesArray.size() == 0) {
+                    hasMoreMessages = false;
+                    continue;
+                }
+
+                for (JsonNode msgNode : messagesArray) {
+                    MessageInfo message = parseMessageInfo(msgNode);
+                    if (message != null) {
+                        // Проверяем, не старше ли сообщение нашей границы
+                        if (sinceDate != null && message.getDate().isBefore(sinceDate)) {
+                            foundOldMessages = true;
+                            break;
+                        }
+
+                        messages.add(message);
+                        fromMessageId = message.getId();
+                    }
+                }
+            } else {
+                hasMoreMessages = false;
+            }
+        }
+
+        return messages;
     }
 }

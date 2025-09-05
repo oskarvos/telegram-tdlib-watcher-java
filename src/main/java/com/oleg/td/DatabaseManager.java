@@ -423,4 +423,55 @@ public class DatabaseManager {
 
         return results;
     }
+
+    public void prepareMonitorStateSchema() {
+        final String tMonitorState = qIdent("monitor_state");
+
+        final String createMonitorState = "CREATE TABLE IF NOT EXISTS " + tMonitorState + " (" +
+                "chat_id INTEGER PRIMARY KEY," +
+                "last_processed_date TEXT," + // ISO format
+                "last_processed_id INTEGER" +
+                ")";
+
+        try (Connection c = open(0); Statement s = c.createStatement()) {
+            s.execute(createMonitorState);
+            log.info("БД: схема состояния мониторинга готова");
+        } catch (SQLException e) {
+            log.error("БД: ошибка подготовки схемы состояния мониторинга: {}", e.getMessage(), e);
+        }
+    }
+
+    public LocalDateTime getLastProcessedDate(long chatId) {
+        final String sql = "SELECT last_processed_date FROM " + qIdent("monitor_state") +
+                " WHERE chat_id = ?";
+
+        try (Connection c = open(0); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setLong(1, chatId);
+            try (ResultSet rs = st.executeQuery()) {
+                if (rs.next()) {
+                    String dateStr = rs.getString("last_processed_date");
+                    return dateStr != null ? LocalDateTime.parse(dateStr) : null;
+                }
+            }
+        } catch (SQLException e) {
+            log.warn("БД: ошибка получения даты обработки для чата {}: {}", chatId, e.getMessage());
+        }
+        return null;
+    }
+
+    public void updateLastProcessedDate(long chatId, LocalDateTime date, long lastMessageId) {
+        final String sql = "INSERT OR REPLACE INTO " + qIdent("monitor_state") +
+                "(chat_id, last_processed_date, last_processed_id) VALUES(?,?,?)";
+
+        try (Connection c = open(0); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setLong(1, chatId);
+            st.setString(2, date != null ? date.toString() : null);
+            st.setLong(3, lastMessageId);
+            st.executeUpdate();
+        } catch (SQLException e) {
+            log.error("БД: ошибка обновления даты обработки для чата {}: {}", chatId, e.getMessage(), e);
+        }
+    }
+
+
 }
