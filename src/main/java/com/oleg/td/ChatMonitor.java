@@ -68,9 +68,7 @@ public class ChatMonitor {
 
     public void stopMonitoring() {
         monitoring = false;
-        lastProcessedMessageIds.clear();
 
-        // Аккуратно останавливаем executor
         if (scheduler != null && !scheduler.isShutdown()) {
             scheduler.shutdown();
             try {
@@ -83,6 +81,12 @@ public class ChatMonitor {
             }
         }
         log.info("Мониторинг остановлен");
+    }
+
+    public void resetMonitoring() {
+        stopMonitoring();
+        lastProcessedMessageIds.clear();
+        log.info("Состояние мониторинга полностью сброшено");
     }
 
     private void checkChats() {
@@ -104,30 +108,25 @@ public class ChatMonitor {
 
     private void checkChatForMatches(long chatId) {
         try {
-            // Получаем информацию о чате
             String chatTitle = getChatTitle(chatId);
-
-            // Получаем последние сообщения, начиная с последнего обработанного ID
             long lastProcessedId = lastProcessedMessageIds.getOrDefault(chatId, 0L);
             List<MessageInfo> newMessages = getNewMessages(chatId, lastProcessedId);
 
-            if (newMessages.isEmpty()) {
-                log.debug("Новых сообщений в чате {} не найдено", chatId);
-                return;
-            }
+            if (newMessages.isEmpty()) return;
 
-            // Обновляем последний обработанный ID (максимальный из полученных)
-            long maxMessageId = newMessages.stream()
-                    .mapToLong(MessageInfo::getId)
-                    .max()
-                    .orElse(lastProcessedId);
+            long currentMaxId = lastProcessedId;
 
-            lastProcessedMessageIds.put(chatId, maxMessageId);
-            log.debug("Для чата {} установлен последний обработанный ID: {}", chatId, maxMessageId);
-
-            // Проверяем новые сообщения
             for (MessageInfo message : newMessages) {
-                checkMessageForMatches(chatId, chatTitle, message);
+                try {
+                    checkMessageForMatches(chatId, chatTitle, message);
+                    // НЕМЕДЛЕННО обновляем lastProcessedId после успешной обработки
+                    currentMaxId = Math.max(currentMaxId, message.getId());
+                    lastProcessedMessageIds.put(chatId, currentMaxId);
+                } catch (Exception e) {
+                    log.error("Ошибка обработки сообщения {}: {}", message.getId(), e.getMessage());
+                    // Прерываем обработку или продолжаем? Зависит от требований
+                    break; // или continue
+                }
             }
 
         } catch (Exception e) {
