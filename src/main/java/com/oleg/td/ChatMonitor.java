@@ -9,12 +9,7 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -25,180 +20,116 @@ public class ChatMonitor {
     private final TdJsonClient client;
     private final ChatResolver resolver;
     private final DatabaseManager db;
-    private ScheduledExecutorService scheduler;
-
-
-    private MonitorConfig currentConfig;
-    private boolean monitoring = false;
-
-    // Храним ID последнего проверенного сообщения для каждого чата
-    private final Map<Long, Long> lastProcessedMessageIds = new HashMap<>();
 
     public ChatMonitor(TdJsonClient client, ChatResolver resolver, DatabaseManager db) {
         this.client = client;
         this.resolver = resolver;
         this.db = db;
-        this.scheduler = Executors.newSingleThreadScheduledExecutor();
     }
 
     public void startMonitoring(MonitorConfig config) {
-        if (monitoring) {
-            stopMonitoring();
-        }
-        if (scheduler.isShutdown()) {
-            this.scheduler = Executors.newSingleThreadScheduledExecutor();
-        }
-
-        this.currentConfig = config;
-        this.monitoring = true;
-        this.lastProcessedMessageIds.clear();
-
         log.info("Запуск мониторинга чатов: {}", config.getMonitoredChats());
 
-        // Первая проверка сразу
-        checkChats();
-
-        // Периодическая проверка - поддерживаем как минуты, так и секунды
-        int interval = Math.max(1, config.getCheckIntervalMinutes());
-        TimeUnit timeUnit = interval >= 60 ? TimeUnit.MINUTES : TimeUnit.SECONDS;
-        int convertedInterval = interval >= 60 ? interval / 60 : interval;
-
-        scheduler.scheduleAtFixedRate(this::checkChats, convertedInterval, convertedInterval, timeUnit);
-    }
-
-    public void stopMonitoring() {
-        monitoring = false;
-
-        if (scheduler != null && !scheduler.isShutdown()) {
-            scheduler.shutdown();
-            try {
-                if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                    scheduler.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                scheduler.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
-        }
-        log.info("Мониторинг остановлен");
-    }
-
-    public void resetMonitoring() {
-        stopMonitoring();
-        lastProcessedMessageIds.clear();
-        log.info("Состояние мониторинга полностью сброшено");
-    }
-
-    private void checkChats() {
-        if (!monitoring || currentConfig == null) {
-            return;
-        }
-
-        log.debug("Начало проверки чатов на совпадения");
-
-        for (String chatRef : currentConfig.getMonitoredChats()) {
+        for (String chatRef : config.getMonitoredChats()) {
             try {
                 long chatId = resolver.resolveFlexible(chatRef);
-                checkChatForMatches(chatId);
+                processAllMessages(chatId, config);
             } catch (Exception e) {
-                log.error("Ошибка при проверке чата {}: {}", chatRef, e.getMessage());
+                log.error("Ошибка при обработке чата {}: {}", chatRef, e.getMessage());
             }
         }
+
+        log.info("Мониторинг завершен - все сообщения обработаны");
     }
 
-    private void checkChatForMatches(long chatId) {
+    private void processAllMessages(long chatId, MonitorConfig config) {
         try {
             String chatTitle = getChatTitle(chatId);
-            long lastProcessedId = lastProcessedMessageIds.getOrDefault(chatId, 0L);
-            List<MessageInfo> newMessages = getNewMessages(chatId, lastProcessedId);
+            List<MessageInfo> allMessages = getAllMessages(chatId);
 
-            if (newMessages.isEmpty()) return;
+            int matchesCount = 0;
 
-            long currentMaxId = lastProcessedId;
-
-            for (MessageInfo message : newMessages) {
-                try {
-                    checkMessageForMatches(chatId, chatTitle, message);
-                    // НЕМЕДЛЕННО обновляем lastProcessedId после успешной обработки
-                    currentMaxId = Math.max(currentMaxId, message.getId());
-                    lastProcessedMessageIds.put(chatId, currentMaxId);
-                } catch (Exception e) {
-                    log.error("Ошибка обработки сообщения {}: {}", message.getId(), e.getMessage());
-                    // Прерываем обработку или продолжаем? Зависит от требований
-                    break; // или continue
+            for (MessageInfo message : allMessages) {
+                if (message.getText() != null && !message.getText().isEmpty()) {
+                    int messageMatches = checkMessageForMatches(chatId, chatTitle, message, config);
+                    matchesCount += messageMatches;
                 }
             }
+
+            log.info("Обработано {}, обнаружено {} в чате '{}'", allMessages.size(), matchesCount, chatTitle);
 
         } catch (Exception e) {
-            log.error("Ошибка при проверке чата {}: {}", chatId, e.getMessage());
+            log.error("Ошибка при обработке чата {}: {}", chatId, e.getMessage());
         }
     }
 
-    private List<MessageInfo> getNewMessages(long chatId, long lastProcessedId) {
-        List<MessageInfo> newMessages = new ArrayList<>();
+    private List<MessageInfo> getAllMessages(long chatId) {
+        List<MessageInfo> messages = new ArrayList<>();
+        long fromMessageId = 0;
+        boolean hasMoreMessages = true;
 
-        // Получаем последние сообщения (больше, чем обычно, чтобы не пропустить)
-        ObjectNode req = Utils.obj("getChatHistory");
-        req.put("chat_id", chatId);
-        req.put("from_message_id", 0);
-        req.put("offset", 0);
-        req.put("limit", 10000);
-        req.put("only_local", false);
+        while (hasMoreMessages) {
+            ObjectNode req = Utils.obj("getChatHistory");
+            req.put("chat_id", chatId);
+            req.put("from_message_id", fromMessageId);
+            req.put("offset", 0);
+            req.put("limit", 100);
+            req.put("only_local", false);
 
-        ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 30, TdJsonClient.Channel.MAIN);
+            ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 30, TdJsonClient.Channel.MAIN);
 
-        if ("messages".equals(resp.path("@type").asText()) && resp.path("messages").isArray()) {
-            for (JsonNode msgNode : resp.path("messages")) {
-                MessageInfo message = parseMessageInfo(msgNode);
-                if (message != null && message.getId() > lastProcessedId) {
-                    newMessages.add(message);
+            if ("messages".equals(resp.path("@type").asText()) && resp.path("messages").isArray()) {
+                JsonNode messagesArray = resp.path("messages");
+
+                if (messagesArray.size() == 0) {
+                    hasMoreMessages = false;
+                    continue;
                 }
+
+                for (JsonNode msgNode : messagesArray) {
+                    MessageInfo message = parseMessageInfo(msgNode);
+                    if (message != null) {
+                        messages.add(message);
+                        fromMessageId = message.getId();
+                    }
+                }
+            } else {
+                hasMoreMessages = false;
             }
         }
 
-        // Сортируем по возрастанию ID (от старых к новым)
-        newMessages.sort((m1, m2) -> Long.compare(m1.getId(), m2.getId()));
-
-        return newMessages;
+        return messages;
     }
 
-    private void checkMessageForMatches(long chatId, String chatTitle, MessageInfo message) {
-        if (message.getText() == null || message.getText().isEmpty()) {
-            return;
-        }
+    private int checkMessageForMatches(long chatId, String chatTitle, MessageInfo message, MonitorConfig config) {
+        int matchesInMessage = 0;
 
-        for (String keyword : currentConfig.getKeywords()) {
-            if (isMatch(message.getText(), keyword)) {
-                // Проверяем, не было ли уже такого совпадения
-                if (!isAlreadyProcessed(chatId, message.getId(), keyword)) {
-                    MonitorResult result = new MonitorResult(
-                            chatId,
-                            chatTitle,
-                            message.getId(),
-                            message.getDate(),
-                            keyword,
-                            message.getText(),
-                            message.getSenderId(),
-                            message.getSenderName()
-                    );
+        for (String keyword : config.getKeywords()) {
+            if (isMatch(message.getText(), keyword, config)) {
+                MonitorResult result = new MonitorResult(
+                        chatId,
+                        chatTitle,
+                        message.getId(),
+                        message.getDate(),
+                        keyword,
+                        message.getText(),
+                        message.getSenderId(),
+                        message.getSenderName()
+                );
 
-                    db.saveMonitorResult(result);
-                    log.info("Найдено новое совпадение: чат '{}', ключевое слово '{}'", chatTitle, keyword);
-                }
+                db.saveMonitorResult(result);
+                matchesInMessage++;
+                log.debug("Сохранено совпадение: чат '{}', ключевое слово '{}'", chatTitle, keyword);
             }
         }
+
+        return matchesInMessage;
     }
 
-    private boolean isAlreadyProcessed(long chatId, long messageId, String keyword) {
-        // Проверяем в базе данных, было ли уже такое совпадение
-        List<MonitorResult> existingResults = db.getMonitorResultsByChatAndMessage(chatId, messageId, keyword);
-        return !existingResults.isEmpty();
-    }
-
-    private boolean isMatch(String text, String keyword) {
-        if (currentConfig.isRegexMode()) {
+    private boolean isMatch(String text, String keyword, MonitorConfig config) {
+        if (config.isRegexMode()) {
             try {
-                int flags = currentConfig.isCaseSensitive() ? 0 : Pattern.CASE_INSENSITIVE;
+                int flags = config.isCaseSensitive() ? 0 : Pattern.CASE_INSENSITIVE;
                 Pattern pattern = Pattern.compile(keyword, flags);
                 return pattern.matcher(text).find();
             } catch (PatternSyntaxException e) {
@@ -206,7 +137,7 @@ public class ChatMonitor {
                 return false;
             }
         } else {
-            if (currentConfig.isCaseSensitive()) {
+            if (config.isCaseSensitive()) {
                 return text.contains(keyword);
             } else {
                 return text.toLowerCase().contains(keyword.toLowerCase());
@@ -272,13 +203,5 @@ public class ChatMonitor {
             return (firstName + " " + lastName).trim();
         }
         return "User#" + userId;
-    }
-
-    public boolean isMonitoring() {
-        return monitoring;
-    }
-
-    public MonitorConfig getCurrentConfig() {
-        return currentConfig;
     }
 }

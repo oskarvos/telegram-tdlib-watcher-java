@@ -1,6 +1,7 @@
 package com.oleg.td;
 
 import org.springframework.web.bind.annotation.*;
+
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -26,21 +27,7 @@ public class MonitorController {
         }
 
         chatMonitor.startMonitoring(config);
-        return "Мониторинг запущен";
-    }
-
-    @PostMapping("/stop")
-    public String stopMonitoring() {
-        chatMonitor.stopMonitoring();
-        return "Мониторинг остановлен";
-    }
-
-    @GetMapping("/status")
-    public MonitorStatus getStatus() {
-        MonitorStatus status = new MonitorStatus();
-        status.setMonitoring(chatMonitor.isMonitoring());
-        status.setCurrentConfig(chatMonitor.getCurrentConfig());
-        return status;
+        return "Мониторинг запущен - обработка всех сообщений";
     }
 
     @GetMapping("/results")
@@ -49,9 +36,7 @@ public class MonitorController {
             @RequestParam(required = false) String dateFrom,
             @RequestParam(required = false) String dateTo) {
 
-        LocalDateTime from = dateFrom != null ? LocalDateTime.parse(dateFrom) : null;
-        LocalDateTime to = dateTo != null ? LocalDateTime.parse(dateTo) : null;
-
-        return db.getMonitorResults(keyword, from, to);
+        return db.getMonitorResults(keyword, dateFrom != null ? LocalDateTime.parse(dateFrom) : null,
+                dateTo != null ? LocalDateTime.parse(dateTo) : null);
     }
 }
