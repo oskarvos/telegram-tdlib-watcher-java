@@ -25,7 +25,8 @@ public class ChatMonitor {
     private final TdJsonClient client;
     private final ChatResolver resolver;
     private final DatabaseManager db;
-    private final ScheduledExecutorService scheduler;
+    private ScheduledExecutorService scheduler;
+
 
     private MonitorConfig currentConfig;
     private boolean monitoring = false;
@@ -43,6 +44,9 @@ public class ChatMonitor {
     public void startMonitoring(MonitorConfig config) {
         if (monitoring) {
             stopMonitoring();
+        }
+        if (scheduler.isShutdown()) {
+            this.scheduler = Executors.newSingleThreadScheduledExecutor();
         }
 
         this.currentConfig = config;
@@ -65,14 +69,18 @@ public class ChatMonitor {
     public void stopMonitoring() {
         monitoring = false;
         lastProcessedMessageIds.clear();
-        scheduler.shutdown();
-        try {
-            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+
+        // Аккуратно останавливаем executor
+        if (scheduler != null && !scheduler.isShutdown()) {
+            scheduler.shutdown();
+            try {
+                if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                    scheduler.shutdownNow();
+                }
+            } catch (InterruptedException e) {
                 scheduler.shutdownNow();
+                Thread.currentThread().interrupt();
             }
-        } catch (InterruptedException e) {
-            scheduler.shutdownNow();
-            Thread.currentThread().interrupt();
         }
         log.info("Мониторинг остановлен");
     }
