@@ -106,24 +106,21 @@ public class ChatMonitor {
         List<MessageInfo> messages = new ArrayList<>();
         int limit = 100;
         int requestCount = 0;
-        boolean hasMoreMessages = true;
         long lastMessageId = sinceMessageId;
+        boolean hasMoreMessages = true;
 
         log.debug("Начало получения сообщений для чата {} после ID {}", chatId, sinceMessageId);
 
         // Если sinceMessageId = 0, получаем с самого начала
         // Если sinceMessageId > 0, получаем сообщения, которые были после него
-        long offsetOrder = 0; // Смещение для пагинации
-        long totalMessages = 0;
+        long fromMessageId = 0; // Начинаем с самых новых сообщений
+        long offset = 0;
 
         while (hasMoreMessages) {
             ObjectNode req = Utils.obj("getChatHistory");
             req.put("chat_id", chatId);
-
-            // Ключевое изменение: используем from_message_id = 0 и параметр offset
-            // чтобы получить историю от самых новых сообщений к старым
-            req.put("from_message_id", 0); // Всегда начинаем с самых новых
-            req.put("offset", offsetOrder);
+            req.put("from_message_id", fromMessageId);
+            req.put("offset", offset);
             req.put("limit", limit);
             req.put("only_local", false);
 
@@ -135,7 +132,6 @@ public class ChatMonitor {
 
                 if (messagesArray.size() == 0) {
                     hasMoreMessages = false;
-                    log.debug("Получен пустой массив - все сообщения получены");
                     continue;
                 }
 
@@ -151,8 +147,7 @@ public class ChatMonitor {
                             break;
                         }
 
-                        // Добавляем сообщения в порядке от старых к новым
-                        messages.add(0, message);
+                        messages.add(message);
                         lastMessageId = Math.max(lastMessageId, message.getId());
                         batchSize++;
                     }
@@ -165,17 +160,9 @@ public class ChatMonitor {
                 if (foundTargetMessage || messagesArray.size() < limit) {
                     hasMoreMessages = false;
                 } else {
-                    // Увеличиваем смещение для следующей пачки
-                    offsetOrder += batchSize;
-                }
-
-                // Задержка для избежания flood wait
-                try {
-                    int delayMs = Math.min(1000, 100 + (requestCount * 20));
-                    Thread.sleep(delayMs);
-                } catch (InterruptedException e) {
-                    log.warn("Прервана задержка между запросами");
-                    break;
+                    // Для следующего запроса используем ID последнего полученного сообщения
+                    fromMessageId = lastMessageId;
+                    offset = -limit; // Смещение для получения более старых сообщений
                 }
 
             } else {
@@ -183,19 +170,29 @@ public class ChatMonitor {
                 log.warn("Неожиданный ответ от API для чата {}: {}", chatId, resp.path("@type").asText());
             }
 
+            // Задержка для избежания flood wait
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                log.warn("Прервана задержка между запросами");
+                break;
+            }
+
             // Защита от бесконечного цикла
-            if (requestCount > 1000) {
+            if (requestCount > 100) {
                 log.warn("Превышен лимит запросов для чата {}. Возможно, не все сообщения получены.", chatId);
                 break;
             }
         }
 
-        log.info("Завершено получение новых сообщений для чата {}: {} сообщений, {} запросов",
+        // Сортируем сообщения от старых к новым
+        messages.sort((m1, m2) -> Long.compare(m1.getId(), m2.getId()));
+
+        log.info("Завершено получение сообщений для чата {}: {} сообщений, {} запросов",
                 chatId, messages.size(), requestCount);
 
         return messages;
     }
-
 
     private int checkMessageForMatches(long chatId, String chatTitle, MessageInfo message, MonitorConfig config) {
         int matchesInMessage = 0;
