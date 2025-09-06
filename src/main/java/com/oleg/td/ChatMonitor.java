@@ -30,6 +30,9 @@ public class ChatMonitor {
     public void startMonitoring(MonitorConfig config) {
         log.info("Запуск мониторинга чатов: {}", config.getMonitoredChats());
 
+        // Подготавливаем схему базы данных мониторинга
+        db.prepareMonitorSchema();
+
         for (String chatRef : config.getMonitoredChats()) {
             try {
                 long chatId = resolver.resolveFlexible(chatRef);
@@ -70,8 +73,8 @@ public class ChatMonitor {
      */
     private List<MessageInfo> getAllMessagesOptimized(long chatId) {
         List<MessageInfo> messages = new ArrayList<>();
-        long lastMessageId = 0; // ID последнего полученного сообщения
-        int limit = 100; // Максимальный лимит per request
+        long fromMessageId = 0;
+        int limit = 100;
         boolean hasMoreMessages = true;
         int requestCount = 0;
 
@@ -80,15 +83,10 @@ public class ChatMonitor {
         while (hasMoreMessages) {
             ObjectNode req = Utils.obj("getChatHistory");
             req.put("chat_id", chatId);
-            req.put("from_message_id", 0); // Всегда с самого начала
+            req.put("from_message_id", fromMessageId);
             req.put("offset", 0);
             req.put("limit", limit);
             req.put("only_local", false);
-
-            // Используем lastMessageId для правильной пагинации
-            if (lastMessageId > 0) {
-                req.put("offset_id", lastMessageId);
-            }
 
             ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 30, TdJsonClient.Channel.MAIN);
             requestCount++;
@@ -96,29 +94,40 @@ public class ChatMonitor {
             if ("messages".equals(resp.path("@type").asText()) && resp.path("messages").isArray()) {
                 JsonNode messagesArray = resp.path("messages");
 
+                // КЛЮЧЕВОЕ УСЛОВИЕ: останавливаемся только при пустом массиве
                 if (messagesArray.size() == 0) {
                     hasMoreMessages = false;
-                    log.debug("Больше нет сообщений для чата {}", chatId);
+                    log.debug("Получен пустой массив - все сообщения получены");
                     continue;
                 }
 
                 int batchSize = 0;
+                long lastMessageId = fromMessageId;
+
                 for (JsonNode msgNode : messagesArray) {
                     MessageInfo message = parseMessageInfo(msgNode);
                     if (message != null) {
                         messages.add(message);
-                        lastMessageId = message.getId(); // Обновляем для пагинации
+                        lastMessageId = message.getId();
                         batchSize++;
                     }
                 }
 
-                log.debug("Получено {} сообщений из чата {}, всего: {}",
-                        batchSize, chatId, messages.size());
+                log.debug("Получено {} сообщений из чата {}, всего: {}, последний ID: {}",
+                        batchSize, chatId, messages.size(), lastMessageId);
 
-                // Добавляем задержку для избежания flood wait
+                // Проверяем на зацикливание
+                if (lastMessageId == fromMessageId) {
+                    hasMoreMessages = false;
+                    log.debug("ID сообщения не изменился - завершаем");
+                } else {
+                    // Продолжаем с ID последнего полученного сообщения
+                    fromMessageId = lastMessageId;
+                }
+
+                // Задержка для избежания flood wait
                 if (hasMoreMessages) {
                     try {
-                        // Прогрессивная задержка: больше запросов → больше пауза
                         int delayMs = Math.min(1000, 100 + (requestCount * 20));
                         Thread.sleep(delayMs);
                     } catch (InterruptedException e) {
@@ -133,7 +142,7 @@ public class ChatMonitor {
             }
 
             // Защита от бесконечного цикла
-            if (requestCount > 1000) { // Максимум 1000 запросов (~100,000 сообщений)
+            if (requestCount > 1000) {
                 log.warn("Превышен лимит запросов для чата {}. Возможно, не все сообщения получены.", chatId);
                 break;
             }
@@ -144,6 +153,7 @@ public class ChatMonitor {
 
         return messages;
     }
+
 
     private int checkMessageForMatches(long chatId, String chatTitle, MessageInfo message, MonitorConfig config) {
         int matchesInMessage = 0;

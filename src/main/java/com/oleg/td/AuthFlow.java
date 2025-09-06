@@ -28,7 +28,7 @@ public class AuthFlow {
     }
 
     /**
-     * Subscribes to authorization updates.
+     * Подписывается на обновления авторизации.
      */
     public void wireInto() {
         if (wired) {
@@ -43,7 +43,7 @@ public class AuthFlow {
                 var authState = n.path("authorization_state");
                 String state = authState.path("@type").asText();
                 stateRef.set(state);
-                log.info("AUTH DEBUG: state = {}", state);
+                log.info("ОТЛАДКА АВТОРИЗАЦИИ: состояние = {}", state);
                 if ("authorizationStateReady".equals(state)) {
                     authorized.set(true);
                     log.info("Авторизация прошла успешно!");
@@ -60,7 +60,7 @@ public class AuthFlow {
     }
 
     /**
-     * Blocking state-machine. Single-threaded: we pump receive inside this loop.
+     * Блокирующая машина состояний. Однопоточная: мы обрабатываем получение данных внутри этого цикла.
      */
     public void authorizeBlocking() {
         if (!wired) throw new IllegalStateException("AuthFlow не инициализирован. Сначала вызовите wireInto()");
@@ -70,10 +70,10 @@ public class AuthFlow {
 
         String last = null;
         long startTime = System.currentTimeMillis();
-        long timeoutMs = 300_000L;
+        long timeoutMs = 30_000L;
 
         while (!authorized.get() && (System.currentTimeMillis() - startTime) < timeoutMs) {
-            client.pumpOnce(1.5); // pulls exactly one update (if any) in this thread
+            client.pumpOnce(1.5); // получает ровно одно обновление (если есть) в этом потоке
 
             String state = stateRef.get();
             if (state == null) {
@@ -136,7 +136,7 @@ public class AuthFlow {
         p.put("ignore_file_names", true);
         p.put("database_encryption_key", "");
 
-        log.info("DEBUG setTdlibParameters JSON --> {}", p.toString());
+        log.info("ОТЛАДКА setTdlibParameters JSON --> {}", p.toString());
         client.send(p, TdJsonClient.Channel.AUTH);
         log.info("Параметры TDLib отправлены");
     }
@@ -144,7 +144,7 @@ public class AuthFlow {
     private void sendPhoneNumber() {
         String phone = cfg.getAuth() != null && cfg.getAuth().getPhone() != null
                 ? cfg.getAuth().getPhone().trim()
-                : readValue("Enter phone number (+xxxxxxxxxxx): ");
+                : readValue("Введите номер телефона (+xxxxxxxxxxx): ");
 
         ObjectNode req = Utils.obj("setAuthenticationPhoneNumber");
         req.put("phone_number", phone);
@@ -158,9 +158,9 @@ public class AuthFlow {
         if ("error".equals(resp.path("@type").asText())) {
             int code = resp.path("code").asInt();
             String msg = resp.path("message").asText();
-            log.error("AUTH ERROR on phone: code={} msg={}", code, msg);
+            log.error("ОШИБКА АВТОРИЗАЦИИ при отправке номера: код={} сообщение={}", code, msg);
         } else {
-            log.info("AUTH DEBUG: phone submitted");
+            log.info("ОТЛАДКА АВТОРИЗАЦИИ: номер телефона отправлен");
             log.info("Номер телефона отправлен: {}", phone);
         }
     }
@@ -169,7 +169,7 @@ public class AuthFlow {
         while (true) {
             String code = cfg.getAuth() != null && cfg.getAuth().getCode() != null
                     ? cfg.getAuth().getCode().trim()
-                    : readValue("Enter code from Telegram: ");
+                    : readValue("Введите код из Telegram: ");
 
             ObjectNode req = Utils.obj("checkAuthenticationCode");
             req.put("code", code);
@@ -179,7 +179,7 @@ public class AuthFlow {
                     && resp.path("code").asInt() == 400
                     && resp.path("message").asText().toLowerCase().contains("code")) {
                 if (cfg.getAuth() != null) cfg.getAuth().setCode(null);
-                log.warn("Invalid code, try again");
+                log.warn("Неверный код, попробуйте снова");
                 continue;
             }
             log.info("Код отправлен");
@@ -190,7 +190,7 @@ public class AuthFlow {
     private void sendPassword() {
         String password = cfg.getAuth() != null && cfg.getAuth().getPass() != null
                 ? cfg.getAuth().getPass().trim()
-                : readValue("Enter 2FA password: ");
+                : readValue("Введите пароль двухфакторной аутентификации: ");
         ObjectNode req = Utils.obj("checkAuthenticationPassword");
         req.put("password", password);
         client.send(req, TdJsonClient.Channel.AUTH);

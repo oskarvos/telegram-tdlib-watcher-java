@@ -76,7 +76,8 @@ public class ChatDumpCoordinator {
             }
 
             long chatId = resolver.resolveFlexible(chatRef.trim());
-            log.info("Начинаем дамп чата {} (ref='{}')", chatId, chatRef);
+            String chatName = resolver.getChatTitle(chatId);
+            log.info("Начинаем дамп чата '{}'", chatName); // Изменено логирование
 
             db.prepareSchema(chatId);
 
@@ -84,7 +85,7 @@ public class ChatDumpCoordinator {
                     ? db.getLastSavedMessageId(chatId)
                     : db.getMaxMediaId(chatId);
 
-            if (lastSavedId > 0) log.info("Чат {}: lastSavedId={}", chatId, lastSavedId);
+            if (lastSavedId > 0) log.info("Чат '{}': lastSavedId={}", chatName, lastSavedId);
 
             long fromMessageId = 0;
             boolean reachedAlreadySaved = false;
@@ -109,7 +110,7 @@ public class ChatDumpCoordinator {
 
                 ArrayNode messages = (ArrayNode) resp.path("messages");
                 if (messages == null || messages.size() == 0) {
-                    log.info("Чат {}: достигнут край истории (сообщений больше нет)", chatId);
+                    log.info("Чат '{}': достигнут край истории (сообщений больше нет)", chatName);
                     break;
                 }
 
@@ -120,7 +121,7 @@ public class ChatDumpCoordinator {
                     long mid = msg.path("id").asLong();
                     if (lastSavedId > 0 && mid <= lastSavedId) {
                         reachedAlreadySaved = true;
-                        log.info("Чат {}: достигли уже сохранённых (mid={} <= {}), стоп", chatId, mid, lastSavedId);
+                        log.info("Чат '{}': достигли уже сохранённых (mid={} <= {}), стоп", chatName, mid, lastSavedId);
                         break;
                     }
 
@@ -129,7 +130,7 @@ public class ChatDumpCoordinator {
                         totalMessagesProcessed++;
                         if (progressCallback != null) progressCallback.run();
                     } catch (Exception ex) {
-                        log.error("Ошибка обработки сообщения {} из чата {}: {}", mid, chatId, ex.getMessage(), ex);
+                        log.error("Ошибка обработки сообщения {} из чата '{}': {}", mid, chatName, ex.getMessage(), ex);
                     }
                 }
 
@@ -157,7 +158,7 @@ public class ChatDumpCoordinator {
                 }
             }
 
-            log.info("Дамп чата {} завершён. Обработано сообщений: {}", chatId, totalMessagesProcessed);
+            log.info("Дамп чата '{}' завершён. Обработано сообщений: {}", chatName, totalMessagesProcessed);
         }
     }
 

@@ -24,6 +24,25 @@ public class ChatResolver {
         this.client = client;
     }
 
+    /**
+     * Получает название чата по его ID
+     */
+    public String getChatTitle(long chatId) {
+        try {
+            ObjectNode req = MAPPER.createObjectNode();
+            req.put("@type", "getChat");
+            req.put("chat_id", chatId);
+
+            ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 10, TdJsonClient.Channel.MAIN);
+            if ("chat".equals(resp.path("@type").asText())) {
+                return resp.path("title").asText();
+            }
+        } catch (Exception e) {
+            log.warn("Не удалось получить название чата {}: {}", chatId, e.getMessage());
+        }
+        return null;
+    }
+
     // t.me/+abcdEFG,   t.me/joinchat/abcdEFG
     private static final Pattern P_INVITE_PLUS = Pattern.compile("^/?\\+([A-Za-z0-9_-]{4,})/?$");
     private static final Pattern P_INVITE_JOINCHAT = Pattern.compile("^/?joinchat/([A-Za-z0-9_-]{4,})/?$");

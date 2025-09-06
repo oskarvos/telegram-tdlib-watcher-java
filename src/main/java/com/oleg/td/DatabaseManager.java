@@ -11,17 +11,24 @@ import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 @Component
 public class DatabaseManager {
     private static final Logger log = LoggerFactory.getLogger(DatabaseManager.class);
 
     /**
-     * каталог с файлами БД чатов: tdlib/db/chat_<absId>.db
+     * каталог с файлами БД чатов: tdlib/db/
      */
     private final Path dbDir = Paths.get("tdlib", "db");
 
-    public DatabaseManager() {
+    private final ChatResolver chatResolver;
+
+    // Паттерн для проверки допустимости имени файла
+    private static final Pattern INVALID_FILENAME_CHARS = Pattern.compile("[\\\\/:*?\"<>|]");
+
+    public DatabaseManager(ChatResolver chatResolver) {
+        this.chatResolver = chatResolver;
         try {
             Files.createDirectories(dbDir);
         } catch (Exception e) {
@@ -33,8 +40,60 @@ public class DatabaseManager {
         return "\"" + ident.replace("\"", "\"\"") + "\"";
     }
 
+    /**
+     * Получает путь к файлу БД на основе названия чата
+     */
     private Path dbPath(long chatId) {
-        return dbDir.resolve("chat_" + Math.abs(chatId) + ".db");
+        String chatName = getChatNameForDatabase(chatId);
+        String safeFileName = sanitizeFileName(chatName, chatId) + ".db";
+        return dbDir.resolve(safeFileName);
+    }
+
+    /**
+     * Получает название чата для использования в имени БД
+     */
+    private String getChatNameForDatabase(long chatId) {
+        try {
+            String chatTitle = chatResolver.getChatTitle(chatId);
+            if (chatTitle != null && !chatTitle.trim().isEmpty()) {
+                return chatTitle.trim();
+            }
+        } catch (Exception e) {
+            log.warn("БД: не удалось получить название чата {}: {}", chatId, e.getMessage());
+        }
+
+        // Fallback: используем ID если не удалось получить название
+        return "chat_" + Math.abs(chatId);
+    }
+
+    /**
+     * Очищает имя файла от недопустимых символов
+     */
+    private String sanitizeFileName(String fileName, long chatId) {
+        if (fileName == null || fileName.isEmpty()) {
+            return "unknown_chat";
+        }
+
+        // Заменяем недопустимые символы на подчеркивания
+        String sanitized = INVALID_FILENAME_CHARS.matcher(fileName).replaceAll("_");
+
+        // Убираем начальные и конечные пробелы/точки
+        sanitized = sanitized.trim();
+        while (sanitized.endsWith(".")) {
+            sanitized = sanitized.substring(0, sanitized.length() - 1).trim();
+        }
+
+        // Если после очистки имя пустое, используем fallback
+        if (sanitized.isEmpty()) {
+            return "chat_" + Math.abs(chatId);
+        }
+
+        // Ограничиваем длину имени файла
+        if (sanitized.length() > 100) {
+            sanitized = sanitized.substring(0, 100);
+        }
+
+        return sanitized;
     }
 
     private String dbUrl(long chatId) {
@@ -119,9 +178,11 @@ public class DatabaseManager {
             addColumnIfMissing(c, "audio", "file_path", "TEXT");
             addColumnIfMissing(c, "documents", "file_path", "TEXT");
 
-            log.info("БД: [{}] схема готова: {}", chatId, dbPath(chatId));
+            String chatName = getChatNameForDatabase(chatId);
+            log.info("БД '{}' схема готова", chatName); // Изменено логирование
         } catch (SQLException e) {
-            log.error("БД: ошибка подготовки схемы для чата {}: {}", chatId, e.getMessage(), e);
+            String chatName = getChatNameForDatabase(chatId);
+            log.error("БД: ошибка подготовки схемы для чата '{}': {}", chatName, e.getMessage(), e);
         }
     }
 
