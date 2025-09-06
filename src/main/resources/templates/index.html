@@ -623,11 +623,11 @@
         const interval = parseInt(document.getElementById('checkInterval').value);
 
         if (chats.length === 0) {
-            alert('Ошибка: не указаны чаты для мониторинга');
+            setMonitorStatus('Ошибка: не указаны чаты для мониторинга', '#ffecec', '#e74c3c');
             return;
         }
         if (keywords.length === 0) {
-            alert('Ошибка: не указаны ключевые слова');
+            setMonitorStatus('Ошибка: не указаны ключевые слова', '#ffecec', '#e74c3c');
             return;
         }
 
@@ -640,6 +640,8 @@
         };
 
         try {
+            setMonitorStatus('Запуск мониторинга...', '#fff4e6', '#e67e22');
+
             const response = await fetch('/api/monitor/start', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -652,28 +654,31 @@
             }
 
             const result = await response.text();
-            alert(result);
-            setMonitorStatus('Мониторинг запущен', '#e7f6ec', '#27ae60');
+            setMonitorStatus('Мониторинг запущен: ' + result, '#e7f6ec', '#27ae60');
+            document.getElementById('monitorStatusText').textContent = 'Активен';
 
             // Запускаем опрос статуса мониторинга
             if (monitorPollInterval) clearInterval(monitorPollInterval);
             monitorPollInterval = setInterval(pollMonitorStatus, 2000);
 
         } catch (error) {
-            alert('Ошибка: ' + error.message);
-            setMonitorStatus('Ошибка запуска', '#ffecec', '#e74c3c');
+            setMonitorStatus('Ошибка запуска: ' + error.message, '#ffecec', '#e74c3c');
         }
     }
 
     async function stopMonitoring() {
         try {
+            setMonitorStatus('Остановка мониторинга...', '#fff4e6', '#e67e22');
+
             const response = await fetch('/api/monitor/stop', {method: 'POST'});
             const result = await response.text();
-            alert(result);
-            setMonitorStatus('Мониторинг остановлен', '#fff4e6', '#e67e22');
+
+            setMonitorStatus('Мониторинг остановлен: ' + result, '#fff4e6', '#e67e22');
+            document.getElementById('monitorStatusText').textContent = 'Не активен';
+
             if (monitorPollInterval) clearInterval(monitorPollInterval);
         } catch (error) {
-            alert('Ошибка: ' + error.message);
+            setMonitorStatus('Ошибка остановки: ' + error.message, '#ffecec', '#e74c3c');
         }
     }
 

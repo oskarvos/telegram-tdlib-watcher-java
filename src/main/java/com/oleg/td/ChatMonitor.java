@@ -45,7 +45,7 @@ public class ChatMonitor {
     private void processAllMessages(long chatId, MonitorConfig config) {
         try {
             String chatTitle = getChatTitle(chatId);
-            List<MessageInfo> allMessages = getAllMessages(chatId);
+            List<MessageInfo> allMessages = getAllMessagesOptimized(chatId);
 
             int matchesCount = 0;
 
@@ -56,47 +56,91 @@ public class ChatMonitor {
                 }
             }
 
-            log.info("Обработано {}, обнаружено {} в чате '{}'", allMessages.size(), matchesCount, chatTitle);
+            log.info("Обработано {} сообщений, обнаружено {} совпадений в чате '{}'",
+                    allMessages.size(), matchesCount, chatTitle);
 
         } catch (Exception e) {
             log.error("Ошибка при обработке чата {}: {}", chatId, e.getMessage());
         }
     }
 
-    private List<MessageInfo> getAllMessages(long chatId) {
+    /**
+     * Оптимизированный метод получения всех сообщений из чата
+     * с правильной пагинацией и защитой от flood wait
+     */
+    private List<MessageInfo> getAllMessagesOptimized(long chatId) {
         List<MessageInfo> messages = new ArrayList<>();
-        long fromMessageId = 0;
+        long lastMessageId = 0; // ID последнего полученного сообщения
+        int limit = 100; // Максимальный лимит per request
         boolean hasMoreMessages = true;
+        int requestCount = 0;
+
+        log.debug("Начало получения сообщений для чата {}", chatId);
 
         while (hasMoreMessages) {
             ObjectNode req = Utils.obj("getChatHistory");
             req.put("chat_id", chatId);
-            req.put("from_message_id", fromMessageId);
+            req.put("from_message_id", 0); // Всегда с самого начала
             req.put("offset", 0);
-            req.put("limit", 100);
+            req.put("limit", limit);
             req.put("only_local", false);
 
+            // Используем lastMessageId для правильной пагинации
+            if (lastMessageId > 0) {
+                req.put("offset_id", lastMessageId);
+            }
+
             ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 30, TdJsonClient.Channel.MAIN);
+            requestCount++;
 
             if ("messages".equals(resp.path("@type").asText()) && resp.path("messages").isArray()) {
                 JsonNode messagesArray = resp.path("messages");
 
                 if (messagesArray.size() == 0) {
                     hasMoreMessages = false;
+                    log.debug("Больше нет сообщений для чата {}", chatId);
                     continue;
                 }
 
+                int batchSize = 0;
                 for (JsonNode msgNode : messagesArray) {
                     MessageInfo message = parseMessageInfo(msgNode);
                     if (message != null) {
                         messages.add(message);
-                        fromMessageId = message.getId();
+                        lastMessageId = message.getId(); // Обновляем для пагинации
+                        batchSize++;
                     }
                 }
+
+                log.debug("Получено {} сообщений из чата {}, всего: {}",
+                        batchSize, chatId, messages.size());
+
+                // Добавляем задержку для избежания flood wait
+                if (hasMoreMessages) {
+                    try {
+                        // Прогрессивная задержка: больше запросов → больше пауза
+                        int delayMs = Math.min(1000, 100 + (requestCount * 20));
+                        Thread.sleep(delayMs);
+                    } catch (InterruptedException e) {
+                        log.warn("Прервана задержка между запросами");
+                        break;
+                    }
+                }
+
             } else {
                 hasMoreMessages = false;
+                log.warn("Неожиданный ответ от API для чата {}: {}", chatId, resp.path("@type").asText());
+            }
+
+            // Защита от бесконечного цикла
+            if (requestCount > 1000) { // Максимум 1000 запросов (~100,000 сообщений)
+                log.warn("Превышен лимит запросов для чата {}. Возможно, не все сообщения получены.", chatId);
+                break;
             }
         }
+
+        log.info("Завершено получение сообщений для чата {}: {} сообщений, {} запросов",
+                chatId, messages.size(), requestCount);
 
         return messages;
     }
@@ -106,20 +150,29 @@ public class ChatMonitor {
 
         for (String keyword : config.getKeywords()) {
             if (isMatch(message.getText(), keyword, config)) {
-                MonitorResult result = new MonitorResult(
-                        chatId,
-                        chatTitle,
-                        message.getId(),
-                        message.getDate(),
-                        keyword,
-                        message.getText(),
-                        message.getSenderId(),
-                        message.getSenderName()
-                );
+                // Проверяем, нет ли уже такого результата в БД
+                List<MonitorResult> existingResults = db.getMonitorResultsByChatAndMessage(
+                        chatId, message.getId(), keyword);
 
-                db.saveMonitorResult(result);
-                matchesInMessage++;
-                log.debug("Сохранено совпадение: чат '{}', ключевое слово '{}'", chatTitle, keyword);
+                if (existingResults.isEmpty()) {
+                    MonitorResult result = new MonitorResult(
+                            chatId,
+                            chatTitle,
+                            message.getId(),
+                            message.getDate(),
+                            keyword,
+                            message.getText(),
+                            message.getSenderId(),
+                            message.getSenderName()
+                    );
+
+                    db.saveMonitorResult(result);
+                    matchesInMessage++;
+                    log.debug("Сохранено совпадение: чат '{}', ключевое слово '{}'", chatTitle, keyword);
+                } else {
+                    log.debug("Совпадение уже существует: чат '{}', сообщение {}, ключ '{}'",
+                            chatTitle, message.getId(), keyword);
+                }
             }
         }
 
