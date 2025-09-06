@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TDLib Дамп и Мониторинг Чатов</title>
+    <title>TDLib Дамп и Поиск Чатов</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
+        /* Стили остаются без изменений, как в предоставленном примере */
         * {
             box-sizing: border-box;
             margin: 0;
@@ -46,7 +47,7 @@
             background: linear-gradient(90deg, #6a11cb, #2575fc);
         }
 
-        h1, h2 {
+        h1 {
             text-align: center;
             margin-bottom: 25px;
             color: #2c3e50;
@@ -75,7 +76,7 @@
             font-size: 16px;
         }
 
-        textarea, input[type="text"], input[type="number"] {
+        textarea, input[type="text"] {
             width: 100%;
             padding: 15px;
             border: 2px solid #ddd;
@@ -146,112 +147,75 @@
             gap: 10px;
         }
 
-        #startBtn, #startMonitorBtn {
-            background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+        #startBtn, #startSearchBtn {
+            background: #6a11cb;
             color: white;
         }
 
-        #startBtn:hover, #startMonitorBtn:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 7px 15px rgba(106, 17, 203, 0.4);
+        #startBtn:hover, #startSearchBtn:hover {
+            background: #5a0fb8;
         }
 
-        #stopBtn, #stopMonitorBtn {
-            background: #ffffff;
-            color: #e74c3c;
-            border: 2px solid #e74c3c;
-        }
-
-        #stopBtn:hover, #stopMonitorBtn:hover {
+        #stopBtn, #stopSearchBtn {
             background: #e74c3c;
             color: white;
-            transform: translateY(-3px);
-            box-shadow: 0 7px 15px rgba(231, 76, 60, 0.4);
         }
 
-        #showResultsBtn {
+        #stopBtn:hover, #stopSearchBtn:hover {
+            background: #d62c1a;
+        }
+
+        #showSearchResultsBtn, #deleteSearchDbBtn {
             background: #27ae60;
             color: white;
         }
 
-        #showResultsBtn:hover {
+        #showSearchResultsBtn:hover, #deleteSearchDbBtn:hover {
             background: #219a52;
-            transform: translateY(-3px);
+        }
+
+        .text-document-extensions {
+            display: none;
+            margin-top: 15px;
         }
 
         .progress-container {
-            margin-top: 25px;
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 12px;
+            margin-top: 20px;
         }
 
         .progress-label {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 10px;
-            font-size: 16px;
-            color: #2c3e50;
-            font-weight: 500;
+            margin-bottom: 8px;
+            font-weight: 600;
         }
 
-        #progress, #monitorProgress {
-            width: 100%;
-            height: 24px;
-            background-color: #e0e0e0;
-            border-radius: 12px;
+        #progress, #searchProgress {
+            height: 20px;
+            background: #f0f0f0;
+            border-radius: 10px;
             overflow: hidden;
         }
 
-        #progress-bar, #monitorProgress-bar {
+        #progress-bar, #searchProgress-bar {
             height: 100%;
-            width: 0;
+            width: 0%;
             background: linear-gradient(90deg, #6a11cb, #2575fc);
-            transition: width 0.5s ease;
-            border-radius: 12px;
+            transition: width 0.3s;
         }
 
-        #progress-bar.green, #monitorProgress-bar.green {
-            background: linear-gradient(90deg, #2ecc71, #27ae60);
+        #progress-bar.green, #searchProgress-bar.green {
+            background: #27ae60;
         }
 
-        .status {
-            text-align: center;
-            margin-top: 15px;
-            font-size: 16px;
-            color: #2c3e50;
-            font-weight: 500;
+        #status, #searchStatus {
+            margin-top: 10px;
             padding: 10px;
             border-radius: 8px;
+            text-align: center;
+            font-weight: 500;
             background: #edf7ff;
-        }
-
-        .instructions {
-            margin-top: 35px;
-            padding: 20px;
-            background: linear-gradient(135deg, #f8f9fa 0%, #eef2f7 100%);
-            border-radius: 12px;
-            font-size: 15px;
             color: #2c3e50;
-            border-left: 5px solid #6a11cb;
-        }
-
-        .instructions h3 {
-            margin-bottom: 15px;
-            color: #2c3e50;
-            font-size: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .instructions ul {
-            padding-left: 25px;
-        }
-
-        .instructions li {
-            margin-bottom: 10px;
-            line-height: 1.5;
         }
 
         .footer {
@@ -260,11 +224,6 @@
             color: white;
             font-size: 14px;
             opacity: 0.8;
-        }
-
-        .text-document-extensions {
-            display: none;
-            margin-top: 15px;
         }
 
         .mode-switcher {
@@ -304,41 +263,9 @@
             border-left: 4px solid #6a11cb;
         }
 
-        .interval-selector {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
-        }
-
-        .interval-option {
-            padding: 12px 20px;
-            background: #f8f9fa;
-            border: 2px solid #ddd;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s;
-            font-weight: 500;
-        }
-
-        .interval-option:hover {
-            background: #eef2f7;
-            border-color: #6a11cb;
-        }
-
-        .interval-option.selected {
-            background: #6a11cb;
-            color: white;
-            border-color: #6a11cb;
-        }
-
         @media (max-width: 768px) {
             .checkbox-group {
                 grid-template-columns: repeat(2, 1fr);
-            }
-
-            .interval-selector {
-                flex-direction: column;
             }
         }
 
@@ -358,9 +285,10 @@
     </style>
 </head>
 <body>
+<!-- Разметка остается без изменений -->
 <div class="mode-switcher">
-    <button id="dumpModeBtn" class="active" onclick="showDumpMode()">Режим выгрузки</button>
-    <button id="monitorModeBtn" onclick="showMonitorMode()">Режим мониторинга</button>
+    <button id="dumpModeBtn" class="active" onclick="app.showDumpMode()">Режим выгрузки</button>
+    <button id="searchModeBtn" onclick="app.showSearchMode()">Режим поиска</button>
 </div>
 
 <div class="container" id="dumpContainer">
@@ -392,7 +320,7 @@
             <label for="messages">Сообщения</label>
         </div>
         <div class="checkbox-item">
-            <input type="checkbox" id="textDocuments" onclick="toggleTextDocumentExtensions()">
+            <input type="checkbox" id="textDocuments" onclick="dumpMode.toggleTextDocumentExtensions()">
             <label for="textDocuments">Текстовые документы</label>
         </div>
         <div class="checkbox-item">
@@ -403,14 +331,14 @@
 
     <div class="text-document-extensions">
         <label for="textExtensions">Введите расширения текстовых документов (через запятую):</label>
-        <input type="text" id="textExtensions" placeholder="txt, pdf, docx, java, html" />
+        <input type="text" id="textExtensions" placeholder="txt, pdf, docx, java, html"/>
     </div>
 
     <div class="buttons">
-        <button id="startBtn" onclick="startDump()">
+        <button id="startBtn" onclick="dumpMode.startDump()">
             <i class="fas fa-play-circle"></i> Начать дамп
         </button>
-        <button id="stopBtn" onclick="stopDump()">
+        <button id="stopBtn" onclick="dumpMode.stopDump()">
             <i class="fas fa-stop-circle"></i> Остановить
         </button>
     </div>
@@ -427,20 +355,20 @@
     </div>
 </div>
 
-<div class="container" id="monitorContainer" style="display: none;">
+<div class="container" id="searchContainer" style="display: none;">
     <div class="logo">
         <i class="fas fa-search"></i>
     </div>
-    <h2>Мониторинг чатов</h2>
+    <h1>Поиск в чатах</h1>
 
     <div class="form-group">
-        <label for="monitorChats">Чаты для мониторинга (по одному на строку):</label>
-        <textarea id="monitorChats" placeholder="Введите ссылки или ID чатов для мониторинга"></textarea>
+        <label for="searchChats">Чаты для поиска (по одному на строку):</label>
+        <textarea id="searchChats" placeholder="Введите ссылки или ID чатов для поиска"></textarea>
     </div>
 
     <div class="form-group">
-        <label for="monitorKeywords">Ключевые слова (по одному на строку):</label>
-        <textarea id="monitorKeywords" placeholder="Введите ключевые слова для поиска"></textarea>
+        <label for="searchKeyword">Ключевое слово для поиска:</label>
+        <input type="text" id="searchKeyword" placeholder="Введите ключевое слово">
     </div>
 
     <div class="checkbox-group">
@@ -454,394 +382,375 @@
         </div>
     </div>
 
-    <div class="form-group">
-        <label>Интервал проверки:</label>
-        <div class="interval-selector">
-            <div class="interval-option selected" data-value="1">1 секунда</div>
-            <div class="interval-option" data-value="30">30 секунд</div>
-            <div class="interval-option" data-value="60">1 минута</div>
-            <div class="interval-option" data-value="3600">1 час</div>
-        </div>
-        <input type="hidden" id="checkInterval" value="1">
-    </div>
-
     <div class="buttons">
-        <button id="startMonitorBtn" onclick="startMonitoring()">
-            <i class="fas fa-play"></i> Запустить мониторинг
+        <button id="startSearchBtn" onclick="searchMode.startSearch()">
+            <i class="fas fa-play"></i> Начать поиск
         </button>
-        <button id="stopMonitorBtn" onclick="stopMonitoring()">
+        <button id="stopSearchBtn" onclick="searchMode.stopSearch()">
             <i class="fas fa-stop"></i> Остановить
         </button>
-        <button id="showResultsBtn" onclick="showResults()">
+        <button id="deleteSearchDbBtn" onclick="searchMode.deleteSearchDatabase()">
+            <i class="fas fa-trash"></i> Удалить БД поиска
+        </button>
+        <button id="showSearchResultsBtn" onclick="searchMode.showSearchResults()">
             <i class="fas fa-list"></i> Показать результаты
         </button>
     </div>
 
     <div class="progress-container">
         <div class="progress-label">
-            <span>Статус мониторинга:</span>
-            <span id="monitorStatusText">Не активен</span>
+            <span>Обработано сообщений:</span>
+            <span id="searchProgressValue">0</span>
         </div>
-        <div id="monitorProgress">
-            <div id="monitorProgress-bar"></div>
+        <div id="searchProgress">
+            <div id="searchProgress-bar"></div>
         </div>
-        <div class="status" id="monitorStatus">Мониторинг не запущен</div>
+        <div class="status" id="searchStatus">Поиск не запущен</div>
     </div>
 
-    <div id="monitorResults" class="results-container" style="display: none;">
-        <h3>Результаты мониторинга</h3>
-        <div id="resultsList"></div>
+    <div id="searchResults" class="results-container" style="display: none;">
+        <h3>Результаты поиска</h3>
+        <div id="searchResultsList"></div>
     </div>
 </div>
 
 <div class="footer">
-    <p>TDLib Chat Dump & Monitor &copy; 2025</p>
+    <p>TDLib Chat Dump & Search &copy; 2025</p>
 </div>
 
 <script>
-    // Переменные для управления интервалами
-    let dumpPollInterval = null;
-    let monitorPollInterval = null;
-
-    function showDumpMode() {
-        document.getElementById('dumpContainer').style.display = 'block';
-        document.getElementById('monitorContainer').style.display = 'none';
-        document.getElementById('dumpModeBtn').classList.add('active');
-        document.getElementById('monitorModeBtn').classList.remove('active');
-    }
-
-    function showMonitorMode() {
-        document.getElementById('dumpContainer').style.display = 'none';
-        document.getElementById('monitorContainer').style.display = 'block';
-        document.getElementById('dumpModeBtn').classList.remove('active');
-        document.getElementById('monitorModeBtn').classList.add('active');
-    }
-
-    // Функции для режима дампа
-    function toggleTextDocumentExtensions() {
-        const textDocs = document.getElementById('textDocuments');
-        const extensionsField = document.querySelector('.text-document-extensions');
-        extensionsField.style.display = textDocs.checked ? 'block' : 'none';
-    }
-
-    async function startDump() {
-        const chats = document.getElementById('chats').value
-            .split(/\n+/)
-            .map(s => s.trim())
-            .filter(Boolean);
-
-        const request = {
-            chats: chats,
-            photos: document.getElementById('photos').checked,
-            videos: document.getElementById('videos').checked,
-            links: document.getElementById('links').checked,
-            messages: document.getElementById('messages').checked,
-            textDocuments: document.getElementById('textDocuments').checked,
-            audio: document.getElementById('audio').checked,
-            textDocumentExtensions: document.getElementById('textExtensions').value.trim()
-        };
-
-        if (request.chats.length === 0) {
-            setStatus('Ошибка: не указаны чаты для обработки', '#ffecec', '#e74c3c');
-            return;
-        }
-        if (!request.photos && !request.videos && !request.links &&
-            !request.messages && !request.textDocuments && !request.audio) {
-            setStatus('Ошибка: не выбран ни один тип контента', '#ffecec', '#e74c3c');
-            return;
+    // Главный класс приложения
+    class App {
+        constructor() {
+            this.currentMode = 'dump';
+            this.init();
         }
 
-        document.getElementById('progress-bar').classList.remove('green');
-        setStatus('Начинаем процесс дампа...', '#edf7ff', '#2c3e50');
-        setProgress(0);
+        init() {
+            // Инициализация режимов
+            this.dumpMode = new DumpMode();
+            this.searchMode = new SearchMode();
 
-        try {
-            const res = await fetch('/start', {
+            // Показываем начальный режим
+            this.showDumpMode();
+        }
+
+        showDumpMode() {
+            document.getElementById('dumpContainer').style.display = 'block';
+            document.getElementById('searchContainer').style.display = 'none';
+            document.getElementById('dumpModeBtn').classList.add('active');
+            document.getElementById('searchModeBtn').classList.remove('active');
+            this.currentMode = 'dump';
+        }
+
+        showSearchMode() {
+            document.getElementById('dumpContainer').style.display = 'none';
+            document.getElementById('searchContainer').style.display = 'block';
+            document.getElementById('dumpModeBtn').classList.remove('active');
+            document.getElementById('searchModeBtn').classList.add('active');
+            this.currentMode = 'search';
+        }
+    }
+
+    // Базовый класс для работы с API
+    class ApiClient {
+        constructor() {
+            this.baseUrl = '';
+        }
+
+        async request(endpoint, options = {}) {
+            try {
+                const response = await fetch(`${this.baseUrl}${endpoint}`, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    },
+                    ...options
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || `Сервер вернул ошибку ${response.status}`);
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error(`Ошибка запроса к ${endpoint}:`, error);
+                throw error;
+            }
+        }
+
+        async post(endpoint, data) {
+            return this.request(endpoint, {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(request)
+                body: JSON.stringify(data)
             });
-
-            if (!res.ok) {
-                const errorText = await res.text();
-                throw new Error(errorText || 'Сервер вернул ошибку ' + res.status);
-            }
-
-            setStatus('Обработка...', '#edf7ff', '#2c3e50');
-            // Останавливаем предыдущий интервал, если он был
-            if (dumpPollInterval) clearInterval(dumpPollInterval);
-            dumpPollInterval = setInterval(pollDumpProgress, 1000);
-        } catch (e) {
-            setStatus('Ошибка запуска: ' + e.message, '#ffecec', '#e74c3c');
-        }
-    }
-
-    async function stopDump() {
-        setStatus('Останавливаем...', '#fff4e6', '#e67e22');
-        try {
-            const res = await fetch('/stop', {method: 'POST'});
-            if (!res.ok) throw new Error('Сервер вернул ошибку ' + res.status);
-            setStatus('Остановлено', '#ffecec', '#e74c3c');
-            if (dumpPollInterval) clearInterval(dumpPollInterval);
-        } catch (e) {
-            setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c');
-        }
-    }
-
-    async function pollDumpProgress() {
-        try {
-            const res = await fetch('/progress');
-            if (!res.ok) throw new Error('Сервер вернул ошибку ' + res.status);
-
-            const data = await res.json();
-            const p = Math.max(0, Math.min(100, data.percent || 0));
-            setProgress(p);
-
-            if (data.running) {
-                setStatus('Обработка... ' + p + '%', '#edf7ff', '#2c3e50');
-            } else {
-                setProgress(100, true);
-                setStatus('Успешно завершено!', '#e7f6ec', '#27ae60');
-                if (dumpPollInterval) clearInterval(dumpPollInterval);
-            }
-        } catch (e) {
-            setStatus('Ошибка запроса прогресса: ' + e.message, '#ffecec', '#e74c3c');
-            if (dumpPollInterval) clearInterval(dumpPollInterval);
-        }
-    }
-
-    // Функции для режима мониторинга
-    async function startMonitoring() {
-        const chats = document.getElementById('monitorChats').value.split('\n')
-            .map(s => s.trim())
-            .filter(Boolean);
-        const keywords = document.getElementById('monitorKeywords').value.split('\n')
-            .map(s => s.trim())
-            .filter(Boolean);
-        const caseSensitive = document.getElementById('caseSensitive').checked;
-        const regexMode = document.getElementById('regexMode').checked;
-        const interval = parseInt(document.getElementById('checkInterval').value);
-
-        if (chats.length === 0) {
-            setMonitorStatus('Ошибка: не указаны чаты для мониторинга', '#ffecec', '#e74c3c');
-            return;
-        }
-        if (keywords.length === 0) {
-            setMonitorStatus('Ошибка: не указаны ключевые слова', '#ffecec', '#e74c3c');
-            return;
         }
 
-        const config = {
-            monitoredChats: chats,
-            keywords: keywords,
-            caseSensitive: caseSensitive,
-            regexMode: regexMode,
-            checkIntervalMinutes: interval
-        };
-
-        try {
-            setMonitorStatus('Запуск мониторинга...', '#fff4e6', '#e67e22');
-
-            const response = await fetch('/api/monitor/start', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(config)
+        async get(endpoint) {
+            return this.request(endpoint, {
+                method: 'GET'
             });
+        }
+    }
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(errorText || 'Ошибка сервера: ' + response.status);
+    // Класс для режима дампа
+    class DumpMode extends ApiClient {
+        constructor() {
+            super();
+            this.pollInterval = null;
+        }
+
+        toggleTextDocumentExtensions() {
+            const textDocs = document.getElementById('textDocuments');
+            const extensionsField = document.querySelector('.text-document-extensions');
+            extensionsField.style.display = textDocs.checked ? 'block' : 'none';
+        }
+
+        async startDump() {
+            const chats = document.getElementById('chats').value
+                .split(/\n+/)
+                .map(s => s.trim())
+                .filter(Boolean);
+
+            const request = {
+                chats: chats,
+                photos: document.getElementById('photos').checked,
+                videos: document.getElementById('videos').checked,
+                links: document.getElementById('links').checked,
+                messages: document.getElementById('messages').checked,
+                textDocuments: document.getElementById('textDocuments').checked,
+                audio: document.getElementById('audio').checked,
+                textDocumentExtensions: document.getElementById('textExtensions').value.trim()
+            };
+
+            if (request.chats.length === 0) {
+                this.setStatus('Ошибка: не указаны чаты для обработки', '#ffecec', '#e74c3c');
+                return;
             }
-
-            const result = await response.text();
-            setMonitorStatus('Мониторинг запущен: ' + result, '#e7f6ec', '#27ae60');
-            document.getElementById('monitorStatusText').textContent = 'Активен';
-
-            // Запускаем опрос статуса мониторинга
-            if (monitorPollInterval) clearInterval(monitorPollInterval);
-            monitorPollInterval = setInterval(pollMonitorStatus, 2000);
-
-        } catch (error) {
-            setMonitorStatus('Ошибка запуска: ' + error.message, '#ffecec', '#e74c3c');
-        }
-    }
-
-    async function stopMonitoring() {
-        try {
-            setMonitorStatus('Остановка мониторинга...', '#fff4e6', '#e67e22');
-
-            const response = await fetch('/api/monitor/stop', {method: 'POST'});
-            const result = await response.text();
-
-            setMonitorStatus('Мониторинг остановлен: ' + result, '#fff4e6', '#e67e22');
-            document.getElementById('monitorStatusText').textContent = 'Не активен';
-
-            if (monitorPollInterval) clearInterval(monitorPollInterval);
-        } catch (error) {
-            setMonitorStatus('Ошибка остановки: ' + error.message, '#ffecec', '#e74c3c');
-        }
-    }
-
-    async function pollMonitorStatus() {
-        try {
-            const response = await fetch('/api/monitor/status');
-            if (response.ok) {
-                const status = await response.json();
-                document.getElementById('monitorStatusText').textContent =
-                    status.monitoring ? 'Активен' : 'Не активен';
-            }
-        } catch (error) {
-            console.error('Ошибка опроса статуса мониторинга:', error);
-        }
-    }
-
-    async function showResults() {
-        try {
-            const response = await fetch('/api/monitor/results');
-            if (!response.ok) throw new Error('Ошибка сервера: ' + response.status);
-
-            const results = await response.json();
-            const resultsList = document.getElementById('resultsList');
-            resultsList.innerHTML = '';
-
-            if (results.length === 0) {
-                resultsList.innerHTML = '<p>Совпадений не найдено</p>';
-                document.getElementById('monitorResults').style.display = 'block';
+            if (!request.photos && !request.videos && !request.links &&
+                !request.messages && !request.textDocuments && !request.audio) {
+                this.setStatus('Ошибка: не выбран ни один тип контента', '#ffecec', '#e74c3c');
                 return;
             }
 
-            results.forEach(result => {
-                const div = document.createElement('div');
-                div.className = 'result-item';
-                div.innerHTML = `
-                    <strong>${result.chatTitle || 'Неизвестный чат'}</strong> - ${result.keyword}
-                    <br><small>${new Date(result.messageDate).toLocaleString('ru-RU')}</small>
-                    <p>${result.messageText || 'Нет текста'}</p>
-                    <small>Отправитель: ${result.senderName || 'Неизвестен'}</small>
-                    <hr>
-                `;
-                resultsList.appendChild(div);
-            });
+            document.getElementById('progress-bar').classList.remove('green');
+            this.setStatus('Начинаем процесс дампа...', '#edf7ff', '#2c3e50');
+            this.setProgress(0);
 
-            document.getElementById('monitorResults').style.display = 'block';
-        } catch (error) {
-            alert('Ошибка получения результатов: ' + error.message);
-        }
-    }
+            try {
+                await this.post('/start', request);
+                this.setStatus('Обработка...', '#edf7ff', '#2c3e50');
 
-    // Вспомогательные функции
-    function setStatus(text, bg, color) {
-        const el = document.getElementById('status');
-        el.textContent = text;
-        el.style.background = bg;
-        el.style.color = color;
-    }
-
-    function setMonitorStatus(text, bg, color) {
-        const el = document.getElementById('monitorStatus');
-        el.textContent = text;
-        el.style.background = bg;
-        el.style.color = color;
-    }
-
-    function setProgress(val, done) {
-        document.getElementById('progress-bar').style.width = val + '%';
-        document.getElementById('progress-value').textContent = val + '%';
-        if (done) document.getElementById('progress-bar').classList.add('green');
-    }
-
-    // Обработчик выбора интервала
-    document.querySelectorAll('.interval-option').forEach(option => {
-        option.addEventListener('click', function() {
-            // Убираем выделение со всех вариантов
-            document.querySelectorAll('.interval-option').forEach(opt => {
-                opt.classList.remove('selected');
-            });
-
-            // Добавляем выделение текущему варианту
-            this.classList.add('selected');
-
-            // Сохраняем значение
-            const value = this.getAttribute('data-value');
-            document.getElementById('checkInterval').value = value;
-
-            saveSettings();
-        });
-    });
-
-    // Автоматическое сохранение настроек в localStorage
-    function saveSettings() {
-        const settings = {
-            photos: document.getElementById('photos').checked,
-            videos: document.getElementById('videos').checked,
-            links: document.getElementById('links').checked,
-            messages: document.getElementById('messages').checked,
-            textDocuments: document.getElementById('textDocuments').checked,
-            audio: document.getElementById('audio').checked,
-            chats: document.getElementById('chats').value,
-            textDocumentExtensions: document.getElementById('textExtensions').value,
-            monitorChats: document.getElementById('monitorChats').value,
-            monitorKeywords: document.getElementById('monitorKeywords').value,
-            caseSensitive: document.getElementById('caseSensitive').checked,
-            regexMode: document.getElementById('regexMode').checked,
-            checkInterval: document.getElementById('checkInterval').value
-        };
-        localStorage.setItem('tdlibSettings', JSON.stringify(settings));
-    }
-
-    function loadSettings() {
-        const saved = localStorage.getItem('tdlibSettings');
-        if (saved) {
-            const settings = JSON.parse(saved);
-            document.getElementById('photos').checked = settings.photos;
-            document.getElementById('videos').checked = settings.videos;
-            document.getElementById('links').checked = settings.links;
-            document.getElementById('messages').checked = settings.messages;
-            document.getElementById('textDocuments').checked = settings.textDocuments;
-            document.getElementById('audio').checked = settings.audio;
-            document.getElementById('chats').value = settings.chats || '';
-            document.getElementById('textExtensions').value = settings.textDocumentExtensions || '';
-            document.getElementById('monitorChats').value = settings.monitorChats || '';
-            document.getElementById('monitorKeywords').value = settings.monitorKeywords || '';
-            document.getElementById('caseSensitive').checked = settings.caseSensitive || false;
-            document.getElementById('regexMode').checked = settings.regexMode || false;
-            document.getElementById('checkInterval').value = settings.checkInterval || '1';
-
-            // Устанавливаем выделение для интервала
-            document.querySelectorAll('.interval-option').forEach(option => {
-                option.classList.remove('selected');
-                if (option.getAttribute('data-value') === settings.checkInterval) {
-                    option.classList.add('selected');
-                }
-            });
-
-            // Показать/скрыть поле расширений
-            toggleTextDocumentExtensions();
-        }
-    }
-
-    // Загрузка настроек при загрузке страницы
-    document.addEventListener('DOMContentLoaded', function() {
-        loadSettings();
-        showDumpMode(); // Показываем режим дампа по умолчанию
-    });
-
-    // Сохранение настроек при изменении
-    const inputsToWatch = [
-        'photos', 'videos', 'links', 'messages', 'textDocuments', 'audio',
-        'chats', 'textExtensions', 'monitorChats', 'monitorKeywords',
-        'caseSensitive', 'regexMode', 'checkInterval'
-    ];
-
-    inputsToWatch.forEach(id => {
-        const element = document.getElementById(id);
-        if (element) {
-            if (element.type === 'checkbox' || element.type === 'number') {
-                element.addEventListener('change', saveSettings);
-            } else {
-                element.addEventListener('input', saveSettings);
+                // Останавливаем предыдущий интервал, если он был
+                if (this.pollInterval) clearInterval(this.pollInterval);
+                this.pollInterval = setInterval(() => this.pollDumpProgress(), 1000);
+            } catch (error) {
+                this.setStatus('Ошибка запуска: ' + error.message, '#ffecec', '#e74c3c');
             }
         }
+
+        async stopDump() {
+            this.setStatus('Останавливаем...', '#fff4e6', '#e67e22');
+            try {
+                await this.post('/stop', {});
+                this.setStatus('Остановлено', '#ffecec', '#e74c3c');
+                if (this.pollInterval) clearInterval(this.pollInterval);
+            } catch (error) {
+                this.setStatus('Ошибка: ' + error.message, '#ffecec', '#e74c3c');
+            }
+        }
+
+        async pollDumpProgress() {
+            try {
+                const data = await this.get('/progress');
+                const p = Math.max(0, Math.min(100, data.percent || 0));
+                this.setProgress(p);
+
+                if (data.running) {
+                    this.setStatus('Обработка... ' + p + '%', '#edf7ff', '#2c3e50');
+                } else {
+                    this.setProgress(100, true);
+                    this.setStatus('Успешно завершено!', '#e7f6ec', '#27ae60');
+                    if (this.pollInterval) clearInterval(this.pollInterval);
+                }
+            } catch (error) {
+                this.setStatus('Ошибка запроса прогресса: ' + error.message, '#ffecec', '#e74c3c');
+                if (this.pollInterval) clearInterval(this.pollInterval);
+            }
+        }
+
+        setProgress(percent, isComplete = false) {
+            const progressBar = document.getElementById('progress-bar');
+            const progressValue = document.getElementById('progress-value');
+
+            progressBar.style.width = percent + '%';
+            progressValue.textContent = percent + '%';
+
+            if (isComplete) {
+                progressBar.classList.add('green');
+            } else {
+                progressBar.classList.remove('green');
+            }
+        }
+
+        setStatus(message, backgroundColor, color) {
+            const statusElement = document.getElementById('status');
+            statusElement.textContent = message;
+            statusElement.style.backgroundColor = backgroundColor;
+            statusElement.style.color = color;
+        }
+    }
+
+    // Класс для режима поиска
+    class SearchMode extends ApiClient {
+        constructor() {
+            super();
+            this.pollInterval = null;
+        }
+
+        async startSearch() {
+            const chats = document.getElementById('searchChats').value
+                .split(/\n+/)
+                .map(s => s.trim())
+                .filter(Boolean);
+
+            const keyword = document.getElementById('searchKeyword').value.trim();
+
+            if (chats.length === 0) {
+                this.setStatus('Ошибка: не указаны чаты для поиска', '#ffecec', '#e74c3c');
+                return;
+            }
+
+            if (!keyword) {
+                this.setStatus('Ошибка: не указано ключевое слово', '#ffecec', '#e74c3c');
+                return;
+            }
+
+            const request = {
+                chats: chats,
+                keyword: keyword,
+                caseSensitive: document.getElementById('caseSensitive').checked,
+                useRegex: document.getElementById('regexMode').checked
+            };
+
+            document.getElementById('searchProgress-bar').classList.remove('green');
+            this.setStatus('Начинаем поиск...', '#edf7ff', '#2c3e50');
+            this.setProgress(0);
+
+            try {
+                await this.post('/api/search/start', request);
+                this.setStatus('Поиск выполняется...', '#edf7ff', '#2c3e50');
+
+                // Останавливаем предыдущий интервал, если он был
+                if (this.pollInterval) clearInterval(this.pollInterval);
+                this.pollInterval = setInterval(() => this.pollSearchProgress(), 1000);
+            } catch (error) {
+                this.setStatus('Ошибка запуска: ' + error.message, '#ffecec', '#e74c3c');
+            }
+        }
+
+        async stopSearch() {
+            this.setStatus('Останавливаем поиск...', '#fff4e6', '#e67e22');
+            try {
+                await this.post('/api/search/stop', {});
+                this.setStatus('Поиск остановлен', '#ffecec', '#e74c3c');
+                if (this.pollInterval) clearInterval(this.pollInterval);
+            } catch (error) {
+                this.setStatus('Ошибка: ' + error.message, '#ffecec', '#e74c3c');
+            }
+        }
+
+        async pollSearchProgress() {
+            try {
+                const data = await this.get('/api/search/progress');
+                this.setProgress(data.processedMessages || 0);
+
+                if (data.running) {
+                    this.setStatus(`Поиск выполняется... Обработано сообщений: ${data.processedMessages}`, '#edf7ff', '#2c3e50');
+                } else {
+                    this.setProgress(data.processedMessages, true);
+                    this.setStatus('Поиск завершен!', '#e7f6ec', '#27ae60');
+                    if (this.pollInterval) clearInterval(this.pollInterval);
+                }
+            } catch (error) {
+                this.setStatus('Ошибка запроса прогресса: ' + error.message, '#ffecec', '#e74c3c');
+                if (this.pollInterval) clearInterval(this.pollInterval);
+            }
+        }
+
+        async deleteSearchDatabase() {
+            try {
+                await this.request('/api/search/database', { method: 'DELETE' });
+                this.setStatus('База данных поиска удалена', '#e7f6ec', '#27ae60');
+            } catch (error) {
+                this.setStatus('Ошибка удаления БД: ' + error.message, '#ffecec', '#e74c3c');
+            }
+        }
+
+        async showSearchResults() {
+            try {
+                const results = await this.get('/api/search/results');
+                this.displayResults(results);
+            } catch (error) {
+                this.setStatus('Ошибка получения результатов: ' + error.message, '#ffecec', '#e74c3c');
+            }
+        }
+
+        displayResults(results) {
+            const resultsContainer = document.getElementById('searchResults');
+            const resultsList = document.getElementById('searchResultsList');
+
+            resultsList.innerHTML = '';
+
+            if (results.length === 0) {
+                resultsList.innerHTML = '<p>Результаты не найдены</p>';
+            } else {
+                results.forEach(result => {
+                    const resultElement = document.createElement('div');
+                    resultElement.className = 'result-item';
+                    resultElement.innerHTML = `
+                            <strong>Чат:</strong> ${result.chatTitle}<br>
+                            <strong>Дата сообщения:</strong> ${new Date(result.messageDate).toLocaleString()}<br>
+                            <strong>Отправитель:</strong> ${result.senderName || result.senderId}<br>
+                            <strong>Сообщение:</strong> ${result.messageText}<br>
+                            <strong>Найдено:</strong> ${new Date(result.foundDate).toLocaleString()}
+                        `;
+                    resultsList.appendChild(resultElement);
+                });
+            }
+
+            resultsContainer.style.display = 'block';
+        }
+
+        setProgress(processedMessages, isComplete = false) {
+            const progressBar = document.getElementById('searchProgress-bar');
+            const progressValue = document.getElementById('searchProgressValue');
+
+            // Для поиска мы просто показываем количество обработанных сообщений
+            progressValue.textContent = processedMessages;
+
+            // Можно добавить логику для отображения прогресса в процентах, если будет известен общий объем
+            if (isComplete) {
+                progressBar.classList.add('green');
+            } else {
+                progressBar.classList.remove('green');
+            }
+        }
+
+        setStatus(message, backgroundColor, color) {
+            const statusElement = document.getElementById('searchStatus');
+            statusElement.textContent = message;
+            statusElement.style.backgroundColor = backgroundColor;
+            statusElement.style.color = color;
+        }
+    }
+
+    // Инициализация приложения после загрузки DOM
+    document.addEventListener('DOMContentLoaded', () => {
+        window.app = new App();
+        window.dumpMode = app.dumpMode;
+        window.searchMode = app.searchMode;
     });
 </script>
 </body>

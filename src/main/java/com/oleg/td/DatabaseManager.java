@@ -1,9 +1,11 @@
 package com.oleg.td;
 
+import com.oleg.td.search.SearchResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -537,6 +539,97 @@ public class DatabaseManager {
             return rs.next() ? rs.getLong(1) : 0L;
         } catch (SQLException e) {
             return 0L;
+        }
+    }
+
+    // Добавляем в класс DatabaseManager
+
+    public void prepareSearchSchema() {
+        final String tSearchResults = qIdent("search_results");
+
+        final String createSearchResults = "CREATE TABLE IF NOT EXISTS " + tSearchResults + " (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                "chat_id INTEGER," +
+                "chat_title TEXT," +
+                "message_id INTEGER," +
+                "message_date TEXT," + // ISO format
+                "keyword TEXT," +
+                "message_text TEXT," +
+                "sender_id TEXT," +
+                "sender_name TEXT," +
+                "found_date TEXT" + // When we found it
+                ")";
+
+        final String idxSearchChat = "CREATE INDEX IF NOT EXISTS search_chat_idx ON " + tSearchResults + "(chat_id)";
+        final String idxSearchKeyword = "CREATE INDEX IF NOT EXISTS search_keyword_idx ON " + tSearchResults + "(keyword)";
+        final String idxSearchDate = "CREATE INDEX IF NOT EXISTS search_date_idx ON " + tSearchResults + "(message_date)";
+
+        try (Connection c = open(0); Statement s = c.createStatement()) {
+            s.execute(createSearchResults);
+            s.execute(idxSearchChat);
+            s.execute(idxSearchKeyword);
+            s.execute(idxSearchDate);
+            log.info("БД: схема поиска готова");
+        } catch (SQLException e) {
+            log.error("БД: ошибка подготовки схемы поиска: {}", e.getMessage(), e);
+        }
+    }
+
+    public void saveSearchResult(long chatId, String chatTitle, long messageId, LocalDateTime messageDate,
+                                 String keyword, String messageText, String senderId, String senderName) {
+        final String sql = "INSERT INTO " + qIdent("search_results") +
+                "(chat_id, chat_title, message_id, message_date, keyword, message_text, sender_id, sender_name, found_date) " +
+                "VALUES(?,?,?,?,?,?,?,?,?)";
+
+        try (Connection c = open(0); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setLong(1, chatId);
+            st.setString(2, chatTitle);
+            st.setLong(3, messageId);
+            st.setString(4, messageDate.toString());
+            st.setString(5, keyword);
+            st.setString(6, messageText);
+            st.setString(7, senderId);
+            st.setString(8, senderName);
+            st.setString(9, LocalDateTime.now().toString());
+            st.executeUpdate();
+        } catch (SQLException e) {
+            log.error("БД: ошибка сохранения результата поиска: {}", e.getMessage(), e);
+        }
+    }
+
+    public java.util.List<SearchResult> getSearchResults() {
+        final String sql = "SELECT * FROM " + qIdent("search_results") + " ORDER BY found_date DESC";
+        java.util.List<SearchResult> results = new java.util.ArrayList<>();
+
+        try (Connection c = open(0); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
+            while (rs.next()) {
+                SearchResult result = new SearchResult();
+                result.setId(rs.getLong("id"));
+                result.setChatId(rs.getLong("chat_id"));
+                result.setChatTitle(rs.getString("chat_title"));
+                result.setMessageId(rs.getLong("message_id"));
+                result.setMessageDate(LocalDateTime.parse(rs.getString("message_date")));
+                result.setKeyword(rs.getString("keyword"));
+                result.setMessageText(rs.getString("message_text"));
+                result.setSenderId(rs.getString("sender_id"));
+                result.setSenderName(rs.getString("sender_name"));
+                result.setFoundDate(LocalDateTime.parse(rs.getString("found_date")));
+                results.add(result);
+            }
+        } catch (SQLException e) {
+            log.error("БД: ошибка получения результатов поиска: {}", e.getMessage(), e);
+        }
+
+        return results;
+    }
+
+    public void deleteSearchDatabase() {
+        try {
+            Path dbPath = dbPath(0);
+            Files.deleteIfExists(dbPath);
+            log.info("БД поиска удалена: {}", dbPath);
+        } catch (IOException e) {
+            log.error("БД: ошибка удаления базы данных поиска: {}", e.getMessage(), e);
         }
     }
 }
