@@ -374,6 +374,8 @@ public class DatabaseManager {
         final String idxMonitorKeyword = "CREATE INDEX IF NOT EXISTS monitor_keyword_idx ON " + tMonitorResults + "(keyword)";
         final String idxMonitorDate = "CREATE INDEX IF NOT EXISTS monitor_date_idx ON " + tMonitorResults + "(message_date)";
 
+        prepareCheckpointSchema();
+
         try (Connection c = open(0); Statement s = c.createStatement()) { // Use chat_id 0 for monitor DB
             s.execute(createMonitorResults);
             s.execute(idxMonitorChat);
@@ -483,5 +485,68 @@ public class DatabaseManager {
         }
 
         return results;
+    }
+
+    /* ============ Checkpoint Schema & Methods ============ */
+
+    public void prepareCheckpointSchema() {
+        final String tCheckpoints = qIdent("checkpoints");
+
+        final String createCheckpoints = "CREATE TABLE IF NOT EXISTS " + tCheckpoints + " (" +
+                "chat_id INTEGER PRIMARY KEY," + // ID чата
+                "last_message_id INTEGER NOT NULL DEFAULT 0," + // ID последнего обработанного сообщения
+                "last_updated TEXT" + // Время последнего обновления точки
+                ")";
+
+        try (Connection c = open(0); Statement s = c.createStatement()) { // Используем БД мониторинга (chat_id=0)
+            s.execute(createCheckpoints);
+            log.info("БД: схема контрольных точек готова");
+        } catch (SQLException e) {
+            log.error("БД: ошибка подготовки схемы контрольных точек: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Сохраняет или обновляет контрольную точку для указанного чата.
+     *
+     * @param chatId        ID чата
+     * @param lastMessageId ID последнего обработанного сообщения в этом чате
+     */
+    public void saveCheckpoint(long chatId, long lastMessageId) {
+        // Используем REPLACE, так как chat_id является PRIMARY KEY
+        final String sql = "REPLACE INTO " + qIdent("checkpoints") +
+                "(chat_id, last_message_id, last_updated) VALUES(?,?,?)";
+
+        try (Connection c = open(0); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setLong(1, chatId);
+            st.setLong(2, lastMessageId);
+            st.setString(3, LocalDateTime.now().toString()); // Текущее время как метка обновления
+            st.executeUpdate();
+            log.debug("БД: сохранена контрольная точка для чата {}: last_message_id={}", chatId, lastMessageId);
+        } catch (SQLException e) {
+            log.error("БД: ошибка сохранения контрольной точки для чата {}: {}", chatId, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Загружает контрольную точку для указанного чата.
+     *
+     * @param chatId ID чата
+     * @return ID последнего обработанного сообщения. Если запись не найдена, возвращает 0.
+     */
+    public long loadCheckpoint(long chatId) {
+        final String sql = "SELECT last_message_id FROM " + qIdent("checkpoints") + " WHERE chat_id = ?";
+        try (Connection c = open(0); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setLong(1, chatId);
+            try (ResultSet rs = st.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getLong("last_message_id");
+                }
+            }
+        } catch (SQLException e) {
+            log.error("БД: ошибка загрузки контрольной точки для чата {}: {}", chatId, e.getMessage(), e);
+        }
+        // Если чата нет в таблице, возвращаем 0 (начало истории)
+        return 0L;
     }
 }

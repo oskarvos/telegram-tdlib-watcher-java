@@ -30,37 +30,65 @@ public class ChatMonitor {
     public void startMonitoring(MonitorConfig config) {
         log.info("Запуск мониторинга чатов: {}", config.getMonitoredChats());
 
-        // Подготавливаем схему базы данных мониторинга
-        db.prepareMonitorSchema();
+        // Подготавливаем схему базы данных мониторинга И схему контрольных точек
+        db.prepareMonitorSchema(); // Этот метод теперь также вызывает prepareCheckpointSchema()
 
         for (String chatRef : config.getMonitoredChats()) {
             try {
                 long chatId = resolver.resolveFlexible(chatRef);
-                processAllMessages(chatId, config);
+                // processAllMessages -> processNewMessages
+                processNewMessages(chatId, config);
             } catch (Exception e) {
                 log.error("Ошибка при обработке чата {}: {}", chatRef, e.getMessage());
             }
         }
-
         log.info("Мониторинг завершен - все сообщения обработаны");
     }
 
-    private void processAllMessages(long chatId, MonitorConfig config) {
+    /**
+     * Обрабатывает только новые сообщения чата, начиная с последней сохраненной контрольной точки.
+     * @param chatId ID чата для мониторинга
+     * @param config Конфигурация мониторинга
+     */
+    private void processNewMessages(long chatId, MonitorConfig config) {
         try {
+            // 1. Загружаем контрольную точку (ID последнего обработанного сообщения)
+            long lastProcessedId = db.loadCheckpoint(chatId);
+            log.info("Начинаем мониторинг чата {} с сообщения ID {}", chatId, lastProcessedId);
+
             String chatTitle = getChatTitle(chatId);
-            List<MessageInfo> allMessages = getAllMessagesOptimized(chatId);
+            // 2. Получаем сообщения, начиная с последнего обработанного ID
+            List<MessageInfo> newMessages = getMessagesSinceId(chatId, lastProcessedId);
+
+            if (newMessages.isEmpty()) {
+                log.info("Новых сообщений для обработки в чате '{}' не найдено.", chatTitle);
+                return;
+            }
 
             int matchesCount = 0;
+            long newLastProcessedId = lastProcessedId;
 
-            for (MessageInfo message : allMessages) {
+            for (MessageInfo message : newMessages) {
+                // Обновляем максимальный ID, который мы видели в этой сессии
+                if (message.getId() > newLastProcessedId) {
+                    newLastProcessedId = message.getId();
+                }
+
                 if (message.getText() != null && !message.getText().isEmpty()) {
                     int messageMatches = checkMessageForMatches(chatId, chatTitle, message, config);
                     matchesCount += messageMatches;
                 }
             }
 
-            log.info("Обработано {} сообщений, обнаружено {} совпадений в чате '{}'",
-                    allMessages.size(), matchesCount, chatTitle);
+            // 3. СОХРАНЯЕМ НОВУЮ КОНТРОЛЬНУЮ ТОЧКУ
+            // Важно: делаем это даже если не нашли совпадений, чтобы в следующий раз не обрабатывать те же сообщения
+            if (newLastProcessedId > lastProcessedId) {
+                db.saveCheckpoint(chatId, newLastProcessedId);
+                log.debug("Контрольная точка для чата {} обновлена на {}", chatId, newLastProcessedId);
+            }
+
+            log.info("Обработано {} новых сообщений, обнаружено {} совпадений в чате '{}'. Контрольная точка: {}",
+                    newMessages.size(), matchesCount, chatTitle, newLastProcessedId);
 
         } catch (Exception e) {
             log.error("Ошибка при обработке чата {}: {}", chatId, e.getMessage());
@@ -68,23 +96,34 @@ public class ChatMonitor {
     }
 
     /**
-     * Оптимизированный метод получения всех сообщений из чата
-     * с правильной пагинацией и защитой от flood wait
+     * Оптимизированный метод получения СООБЩЕНИЙ ПОСЛЕ указанного ID.
+     * @param chatId ID чата
+     * @param sinceMessageId ID сообщения, ПОСЛЕ которого нужно загружать историю.
+     *                      Если 0, загружает с самого начала.
+     * @return Список новых сообщений, отсортированных от старого к новому (в порядке возрастания ID).
      */
-    private List<MessageInfo> getAllMessagesOptimized(long chatId) {
+    private List<MessageInfo> getMessagesSinceId(long chatId, long sinceMessageId) {
         List<MessageInfo> messages = new ArrayList<>();
-        long fromMessageId = 0;
         int limit = 100;
-        boolean hasMoreMessages = true;
         int requestCount = 0;
+        boolean hasMoreMessages = true;
+        long lastMessageId = sinceMessageId;
 
-        log.debug("Начало получения сообщений для чата {}", chatId);
+        log.debug("Начало получения сообщений для чата {} после ID {}", chatId, sinceMessageId);
+
+        // Если sinceMessageId = 0, получаем с самого начала
+        // Если sinceMessageId > 0, получаем сообщения, которые были после него
+        long offsetOrder = 0; // Смещение для пагинации
+        long totalMessages = 0;
 
         while (hasMoreMessages) {
             ObjectNode req = Utils.obj("getChatHistory");
             req.put("chat_id", chatId);
-            req.put("from_message_id", fromMessageId);
-            req.put("offset", 0);
+
+            // Ключевое изменение: используем from_message_id = 0 и параметр offset
+            // чтобы получить историю от самых новых сообщений к старым
+            req.put("from_message_id", 0); // Всегда начинаем с самых новых
+            req.put("offset", offsetOrder);
             req.put("limit", limit);
             req.put("only_local", false);
 
@@ -94,7 +133,6 @@ public class ChatMonitor {
             if ("messages".equals(resp.path("@type").asText()) && resp.path("messages").isArray()) {
                 JsonNode messagesArray = resp.path("messages");
 
-                // КЛЮЧЕВОЕ УСЛОВИЕ: останавливаемся только при пустом массиве
                 if (messagesArray.size() == 0) {
                     hasMoreMessages = false;
                     log.debug("Получен пустой массив - все сообщения получены");
@@ -102,13 +140,20 @@ public class ChatMonitor {
                 }
 
                 int batchSize = 0;
-                long lastMessageId = fromMessageId;
+                boolean foundTargetMessage = false;
 
                 for (JsonNode msgNode : messagesArray) {
                     MessageInfo message = parseMessageInfo(msgNode);
                     if (message != null) {
-                        messages.add(message);
-                        lastMessageId = message.getId();
+                        // Если мы достигли сообщения с ID <= sinceMessageId, прекращаем обработку
+                        if (sinceMessageId > 0 && message.getId() <= sinceMessageId) {
+                            foundTargetMessage = true;
+                            break;
+                        }
+
+                        // Добавляем сообщения в порядке от старых к новым
+                        messages.add(0, message);
+                        lastMessageId = Math.max(lastMessageId, message.getId());
                         batchSize++;
                     }
                 }
@@ -116,24 +161,21 @@ public class ChatMonitor {
                 log.debug("Получено {} сообщений из чата {}, всего: {}, последний ID: {}",
                         batchSize, chatId, messages.size(), lastMessageId);
 
-                // Проверяем на зацикливание
-                if (lastMessageId == fromMessageId) {
+                // Если нашли целевое сообщение или обработали весь чат
+                if (foundTargetMessage || messagesArray.size() < limit) {
                     hasMoreMessages = false;
-                    log.debug("ID сообщения не изменился - завершаем");
                 } else {
-                    // Продолжаем с ID последнего полученного сообщения
-                    fromMessageId = lastMessageId;
+                    // Увеличиваем смещение для следующей пачки
+                    offsetOrder += batchSize;
                 }
 
                 // Задержка для избежания flood wait
-                if (hasMoreMessages) {
-                    try {
-                        int delayMs = Math.min(1000, 100 + (requestCount * 20));
-                        Thread.sleep(delayMs);
-                    } catch (InterruptedException e) {
-                        log.warn("Прервана задержка между запросами");
-                        break;
-                    }
+                try {
+                    int delayMs = Math.min(1000, 100 + (requestCount * 20));
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException e) {
+                    log.warn("Прервана задержка между запросами");
+                    break;
                 }
 
             } else {
@@ -148,7 +190,7 @@ public class ChatMonitor {
             }
         }
 
-        log.info("Завершено получение сообщений для чата {}: {} сообщений, {} запросов",
+        log.info("Завершено получение новых сообщений для чата {}: {} сообщений, {} запросов",
                 chatId, messages.size(), requestCount);
 
         return messages;
@@ -160,32 +202,23 @@ public class ChatMonitor {
 
         for (String keyword : config.getKeywords()) {
             if (isMatch(message.getText(), keyword, config)) {
-                // Проверяем, нет ли уже такого результата в БД
-                List<MonitorResult> existingResults = db.getMonitorResultsByChatAndMessage(
-                        chatId, message.getId(), keyword);
 
-                if (existingResults.isEmpty()) {
-                    MonitorResult result = new MonitorResult(
-                            chatId,
-                            chatTitle,
-                            message.getId(),
-                            message.getDate(),
-                            keyword,
-                            message.getText(),
-                            message.getSenderId(),
-                            message.getSenderName()
-                    );
+                MonitorResult result = new MonitorResult(
+                        chatId,
+                        chatTitle,
+                        message.getId(),
+                        message.getDate(),
+                        keyword,
+                        message.getText(),
+                        message.getSenderId(),
+                        message.getSenderName()
+                );
 
-                    db.saveMonitorResult(result);
-                    matchesInMessage++;
-                    log.debug("Сохранено совпадение: чат '{}', ключевое слово '{}'", chatTitle, keyword);
-                } else {
-                    log.debug("Совпадение уже существует: чат '{}', сообщение {}, ключ '{}'",
-                            chatTitle, message.getId(), keyword);
-                }
+                db.saveMonitorResult(result);
+                matchesInMessage++;
+                log.debug("Сохранено совпадение: чат '{}', ключевое слово '{}'", chatTitle, keyword);
             }
         }
-
         return matchesInMessage;
     }
 
