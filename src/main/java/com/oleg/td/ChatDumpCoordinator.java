@@ -77,16 +77,56 @@ public class ChatDumpCoordinator {
 
             long chatId = resolver.resolveFlexible(chatRef.trim());
             String chatName = resolver.getChatTitle(chatId);
-            log.info("Начинаем дамп чата '{}'", chatName); // Изменено логирование
+            log.info("Начинаем дамп чата '{}'", chatName);
 
             db.prepareSchema(chatId);
 
-            long lastSavedId = request.isMessages()
-                    ? db.getLastSavedMessageId(chatId)
-                    : db.getMaxMediaId(chatId);
+            // Переменная для хранения текущих расширений (должна быть объявлена здесь)
+            String currentExtensions = null;
+
+            // Определяем lastSavedId для каждого типа контента отдельно
+            long lastSavedId = 0;
+
+            // Для сообщений
+            if (request.isMessages()) {
+                lastSavedId = Math.max(lastSavedId, db.getLastSavedMessageId(chatId));
+            }
+
+            // Для фото
+            if (request.isPhotos()) {
+                lastSavedId = Math.max(lastSavedId, db.getLastSavedPhotoId(chatId));
+            }
+
+            // Для видео
+            if (request.isVideos()) {
+                lastSavedId = Math.max(lastSavedId, db.getLastSavedVideoId(chatId));
+            }
+
+            // Для аудио
+            if (request.isAudio()) {
+                lastSavedId = Math.max(lastSavedId, db.getLastSavedAudioId(chatId));
+            }
+
+            // Для документов (с учетом изменения расширений)
+            if (request.isTextDocuments()) {
+                String lastUsedExtensions = db.loadMetadata(chatId, "text_document_extensions");
+                currentExtensions = String.join(",", finalTextExtensions); // Теперь переменная доступна
+                boolean extensionsChanged = !currentExtensions.equals(lastUsedExtensions);
+
+                if (extensionsChanged) {
+                    // Если расширения изменились, сбрасываем lastSavedId для документов
+                    log.info("Чат '{}': расширения изменились, начинаем дамп документов с начала", chatName);
+                } else {
+                    lastSavedId = Math.max(lastSavedId, db.getLastSavedDocumentId(chatId));
+                }
+            }
+
+            // Для ссылок
+            if (request.isLinks()) {
+                lastSavedId = Math.max(lastSavedId, db.getLastSavedLinkId(chatId));
+            }
 
             if (lastSavedId > 0) log.info("Чат '{}': lastSavedId={}", chatName, lastSavedId);
-
             long fromMessageId = 0;
             boolean reachedAlreadySaved = false;
             int totalMessagesProcessed = 0;
@@ -158,6 +198,11 @@ public class ChatDumpCoordinator {
                 }
             }
 
+            // Сохраняем использованные расширения для будущих сравнений
+            if (request.isTextDocuments() && currentExtensions != null) {
+                db.saveMetadata(chatId, "text_document_extensions", currentExtensions);
+            }
+
             log.info("Дамп чата '{}' завершён. Обработано сообщений: {}", chatName, totalMessagesProcessed);
         }
     }
@@ -170,7 +215,7 @@ public class ChatDumpCoordinator {
         return Arrays.stream(extensionsString.split(","))
                 .map(String::trim)
                 .filter(ext -> !ext.isEmpty())
-                .map(ext -> ext.startsWith(".") ? ext.substring(1) : ext) // Убираем точку если есть
+                .map(ext -> ext.startsWith(".") ? ext.substring(1) : ext)
                 .map(String::toLowerCase)
                 .collect(Collectors.toSet());
     }
@@ -221,7 +266,9 @@ public class ChatDumpCoordinator {
             String remoteId = fileNode == null ? null : fileNode.path("remote").path("id").asText(null);
 
             String filePath = null;
-            if (fileId != null) filePath = downloader.downloadBlocking(fileId);
+            if (fileId != null && request.isPhotos()) {
+                filePath = downloader.downloadBlocking(fileId);
+            }
 
             db.savePhoto(chatId, messageId, fileId, remoteId, w, h, caption, filePath);
             if (request.isLinks()) extractLinksFromFormattedText(chatId, messageId, captionFT);
@@ -240,7 +287,9 @@ public class ChatDumpCoordinator {
             String remoteId = fileNode.path("remote").path("id").asText(null);
 
             String filePath = null;
-            if (fileId != null) filePath = downloader.downloadBlocking(fileId);
+            if (fileId != null && request.isVideos()) {
+                filePath = downloader.downloadBlocking(fileId);
+            }
 
             db.saveVideo(chatId, messageId, fileId, remoteId, duration, w, h, caption, filePath);
             if (request.isLinks()) extractLinksFromFormattedText(chatId, messageId, content.path("caption"));
@@ -257,7 +306,9 @@ public class ChatDumpCoordinator {
             String mime = vn.path("mime_type").asText(null);
 
             String filePath = null;
-            if (fileId != null) filePath = downloader.downloadBlocking(fileId);
+            if (fileId != null && request.isAudio()) {
+                filePath = downloader.downloadBlocking(fileId);
+            }
 
             db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime, filePath);
         }
@@ -272,7 +323,9 @@ public class ChatDumpCoordinator {
             String mime = au.path("mime_type").asText(null);
 
             String filePath = null;
-            if (fileId != null) filePath = downloader.downloadBlocking(fileId);
+            if (fileId != null && request.isAudio()) {
+                filePath = downloader.downloadBlocking(fileId);
+            }
 
             db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime, filePath);
         }
@@ -280,7 +333,13 @@ public class ChatDumpCoordinator {
         // 5) Документы - разделяем на текстовые и аудио
         if ("messageDocument".equals(ctype)) {
             JsonNode document = content.path("document");
-            String caption = content.path("caption").path("text").asText(null);
+            JsonNode captionFT = content.path("caption");
+            String caption = captionFT.path("text").asText(null);
+
+            // Извлекаем ссылки из подписи независимо от типа документа
+            if (request.isLinks()) {
+                extractLinksFromFormattedText(chatId, messageId, captionFT);
+            }
 
             JsonNode fileNode = document.path("document");
             Integer fileId = fileNode.path("id").isInt() ? fileNode.path("id").asInt() : null;
@@ -293,21 +352,23 @@ public class ChatDumpCoordinator {
             boolean isAudioDocument = isAudioDocument(fileName, mimeType);
 
             String filePath = null;
+
+            // Скачиваем файл ТОЛЬКО если он соответствует запрошенным типам
             if (fileId != null) {
-                filePath = downloader.downloadBlocking(fileId);
+                if ((isTextDocument && request.isTextDocuments()) ||
+                        (isAudioDocument && request.isAudio())) {
+                    filePath = downloader.downloadBlocking(fileId);
+                }
             }
 
             if (isTextDocument && request.isTextDocuments()) {
                 db.saveDocument(chatId, messageId, fileId, remoteId, fileName, mimeType, filePath);
-                if (request.isLinks()) extractLinksFromFormattedText(chatId, messageId, content.path("caption"));
                 log.debug("Сохранён текстовый документ: {} (msg_id={})", fileName, messageId);
-            }
-            else if (isAudioDocument && request.isAudio()) {
+            } else if (isAudioDocument && request.isAudio()) {
                 Integer duration = null;
                 db.saveAudio(chatId, messageId, fileId, remoteId, duration, mimeType, filePath);
                 log.debug("Сохранён аудио документ: {} (msg_id={})", fileName, messageId);
-            }
-            else {
+            } else {
                 log.debug("Пропущен документ (не текст и не аудио): {} (msg_id={})", fileName, messageId);
             }
         }

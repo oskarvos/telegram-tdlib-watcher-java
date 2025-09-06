@@ -9,8 +9,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.*;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.regex.Pattern;
 
 @Component
@@ -113,6 +111,7 @@ public class DatabaseManager {
         final String tAudio = qIdent("audio");
         final String tDocuments = qIdent("documents");
         final String tLinks = qIdent("links");
+        final String tMetadata = qIdent("metadata");
         final String iLinks = qIdent("links_idx");
 
         final String createMessages = "CREATE TABLE IF NOT EXISTS " + tMessages + " (" +
@@ -162,6 +161,10 @@ public class DatabaseManager {
                 "url TEXT," +
                 "context TEXT" +
                 ")";
+        final String createMetadata = "CREATE TABLE IF NOT EXISTS " + tMetadata + " (" +
+                "key TEXT PRIMARY KEY," +
+                "value TEXT" +
+                ")";
         final String idxLinks = "CREATE INDEX IF NOT EXISTS " + iLinks + " ON " + tLinks + "(url)";
 
         try (Connection c = open(chatId); Statement s = c.createStatement()) {
@@ -171,6 +174,7 @@ public class DatabaseManager {
             s.execute(createAudio);
             s.execute(createDocuments);
             s.execute(createLinks);
+            s.execute(createMetadata);
             s.execute(idxLinks);
 
             addColumnIfMissing(c, "photos", "file_path", "TEXT");
@@ -179,7 +183,7 @@ public class DatabaseManager {
             addColumnIfMissing(c, "documents", "file_path", "TEXT");
 
             String chatName = getChatNameForDatabase(chatId);
-            log.info("БД '{}' схема готова", chatName); // Изменено логирование
+            log.info("БД '{}' схема готова", chatName);
         } catch (SQLException e) {
             String chatName = getChatNameForDatabase(chatId);
             log.error("БД: ошибка подготовки схемы для чата '{}': {}", chatName, e.getMessage(), e);
@@ -353,6 +357,34 @@ public class DatabaseManager {
         }
     }
 
+    public void saveMetadata(long chatId, String key, String value) {
+        final String sql = "INSERT OR REPLACE INTO " + qIdent("metadata") + "(key, value) VALUES(?, ?)";
+        try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setString(1, key);
+            st.setString(2, value);
+            st.executeUpdate();
+        } catch (SQLException e) {
+            log.error("БД: ошибка сохранения метаданных для чата {}: {}", chatId, e.getMessage(), e);
+        }
+    }
+
+    public String loadMetadata(long chatId, String key) {
+        final String sql = "SELECT value FROM " + qIdent("metadata") + " WHERE key = ?";
+        try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setString(1, key);
+            try (ResultSet rs = st.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("value");
+                }
+            }
+        } catch (SQLException e) {
+            log.error("БД: ошибка загрузки метаданных для чата {}: {}", chatId, e.getMessage(), e);
+        }
+        return null;
+    }
+
+    /* ============ monitor schema ============ */
+
     public void prepareMonitorSchema() {
         final String tMonitorResults = qIdent("monitor_results");
 
@@ -386,108 +418,6 @@ public class DatabaseManager {
             log.error("БД: ошибка подготовки схемы мониторинга: {}", e.getMessage(), e);
         }
     }
-
-    public void saveMonitorResult(MonitorResult result) {
-        final String sql = "INSERT OR IGNORE INTO " + qIdent("monitor_results") +
-                "(chat_id, chat_title, message_id, message_date, keyword, message_text, sender_id, sender_name, found_date) " +
-                "VALUES(?,?,?,?,?,?,?,?,?)";
-
-        try (Connection c = open(0); PreparedStatement st = c.prepareStatement(sql)) {
-            st.setLong(1, result.getChatId());
-            st.setString(2, result.getChatTitle());
-            st.setLong(3, result.getMessageId());
-            st.setString(4, result.getMessageDate().toString());
-            st.setString(5, result.getKeyword());
-            st.setString(6, result.getMessageText());
-            st.setString(7, result.getSenderId());
-            st.setString(8, result.getSenderName());
-            st.setString(9, LocalDateTime.now().toString());
-
-            st.executeUpdate();
-        } catch (SQLException e) {
-            log.error("БД: ошибка сохранения результата мониторинга: {}", e.getMessage(), e);
-        }
-    }
-
-    public List<MonitorResult> getMonitorResultsByChatAndMessage(long chatId, long messageId, String keyword) {
-        List<MonitorResult> results = new ArrayList<>();
-        String sql = "SELECT * FROM " + qIdent("monitor_results") +
-                " WHERE chat_id = ? AND message_id = ? AND keyword = ?";
-
-        try (Connection c = open(0); PreparedStatement st = c.prepareStatement(sql)) {
-            st.setLong(1, chatId);
-            st.setLong(2, messageId);
-            st.setString(3, keyword);
-
-            try (ResultSet rs = st.executeQuery()) {
-                while (rs.next()) {
-                    MonitorResult result = new MonitorResult();
-                    result.setChatId(rs.getLong("chat_id"));
-                    result.setChatTitle(rs.getString("chat_title"));
-                    result.setMessageId(rs.getLong("message_id"));
-                    result.setMessageDate(LocalDateTime.parse(rs.getString("message_date")));
-                    result.setKeyword(rs.getString("keyword"));
-                    result.setMessageText(rs.getString("message_text"));
-                    result.setSenderId(rs.getString("sender_id"));
-                    result.setSenderName(rs.getString("sender_name"));
-
-                    results.add(result);
-                }
-            }
-        } catch (SQLException e) {
-            log.error("БД: ошибка проверки существующего результата: {}", e.getMessage(), e);
-        }
-
-        return results;
-    }
-
-    public List<MonitorResult> getMonitorResults(String keywordFilter, LocalDateTime dateFrom, LocalDateTime dateTo) {
-        List<MonitorResult> results = new ArrayList<>();
-        String sql = "SELECT * FROM " + qIdent("monitor_results") + " WHERE 1=1";
-        List<Object> params = new ArrayList<>();
-
-        if (keywordFilter != null && !keywordFilter.isEmpty()) {
-            sql += " AND keyword LIKE ?";
-            params.add("%" + keywordFilter + "%");
-        }
-        if (dateFrom != null) {
-            sql += " AND message_date >= ?";
-            params.add(dateFrom.toString());
-        }
-        if (dateTo != null) {
-            sql += " AND message_date <= ?";
-            params.add(dateTo.toString());
-        }
-        sql += " ORDER BY message_date DESC";
-
-        try (Connection c = open(0); PreparedStatement st = c.prepareStatement(sql)) {
-            for (int i = 0; i < params.size(); i++) {
-                st.setObject(i + 1, params.get(i));
-            }
-
-            try (ResultSet rs = st.executeQuery()) {
-                while (rs.next()) {
-                    MonitorResult result = new MonitorResult();
-                    result.setChatId(rs.getLong("chat_id"));
-                    result.setChatTitle(rs.getString("chat_title"));
-                    result.setMessageId(rs.getLong("message_id"));
-                    result.setMessageDate(LocalDateTime.parse(rs.getString("message_date")));
-                    result.setKeyword(rs.getString("keyword"));
-                    result.setMessageText(rs.getString("message_text"));
-                    result.setSenderId(rs.getString("sender_id"));
-                    result.setSenderName(rs.getString("sender_name"));
-
-                    results.add(result);
-                }
-            }
-        } catch (SQLException e) {
-            log.error("БД: ошибка получения результатов мониторинга: {}", e.getMessage(), e);
-        }
-
-        return results;
-    }
-
-    /* ============ Checkpoint Schema & Methods ============ */
 
     public void prepareCheckpointSchema() {
         final String tCheckpoints = qIdent("checkpoints");
@@ -548,5 +478,65 @@ public class DatabaseManager {
         }
         // Если чата нет в таблице, возвращаем 0 (начало истории)
         return 0L;
+    }
+
+    /**
+     * MAX(message_id) из photos; если строк нет — 0.
+     */
+    public long getLastSavedPhotoId(long chatId) {
+        final String sql = "SELECT COALESCE(MAX(message_id),0) FROM " + qIdent("photos");
+        try (Connection c = open(chatId); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
+            return rs.next() ? rs.getLong(1) : 0L;
+        } catch (SQLException e) {
+            return 0L;
+        }
+    }
+
+    /**
+     * MAX(message_id) из videos; если строк нет — 0.
+     */
+    public long getLastSavedVideoId(long chatId) {
+        final String sql = "SELECT COALESCE(MAX(message_id),0) FROM " + qIdent("videos");
+        try (Connection c = open(chatId); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
+            return rs.next() ? rs.getLong(1) : 0L;
+        } catch (SQLException e) {
+            return 0L;
+        }
+    }
+
+    /**
+     * MAX(message_id) из audio; если строк нет — 0.
+     */
+    public long getLastSavedAudioId(long chatId) {
+        final String sql = "SELECT COALESCE(MAX(message_id),0) FROM " + qIdent("audio");
+        try (Connection c = open(chatId); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
+            return rs.next() ? rs.getLong(1) : 0L;
+        } catch (SQLException e) {
+            return 0L;
+        }
+    }
+
+    /**
+     * MAX(message_id) из documents; если строк нет — 0.
+     */
+    public long getLastSavedDocumentId(long chatId) {
+        final String sql = "SELECT COALESCE(MAX(message_id),0) FROM " + qIdent("documents");
+        try (Connection c = open(chatId); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
+            return rs.next() ? rs.getLong(1) : 0L;
+        } catch (SQLException e) {
+            return 0L;
+        }
+    }
+
+    /**
+     * MAX(message_id) из links; если строк нет — 0.
+     */
+    public long getLastSavedLinkId(long chatId) {
+        final String sql = "SELECT COALESCE(MAX(message_id),0) FROM " + qIdent("links");
+        try (Connection c = open(chatId); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
+            return rs.next() ? rs.getLong(1) : 0L;
+        } catch (SQLException e) {
+            return 0L;
+        }
     }
 }
