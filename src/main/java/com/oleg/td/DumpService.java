@@ -30,9 +30,8 @@ public class DumpService {
 
     /**
      * Старт дампа:
-     * 1) Подключаемся к TDLib (авторизация)
-     * 2) Для каждого чата создаём схему в БД
-     * 3) Запускаем координатор
+     * 1) Для каждого чата создаём схему в БД
+     * 2) Запускаем координатор
      */
     public synchronized void startDump(DumpRequest request) {
         if (running.get()) {
@@ -43,12 +42,9 @@ public class DumpService {
         progress = 0;
 
         try {
-            log.info("Инициализация авторизации TDLib...");
-            authFlow.wireInto();
-            authFlow.authorizeBlocking();
-
+            // Проверяем, что авторизация уже выполнена
             if (!authFlow.isAuthorized()) {
-                log.error("Авторизация не удалась — дамп прерван");
+                log.error("Авторизация не выполнена — дамп прерван");
                 return;
             }
 
