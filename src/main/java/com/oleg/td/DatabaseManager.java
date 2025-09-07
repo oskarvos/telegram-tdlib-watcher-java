@@ -1,3 +1,11 @@
+/* ===========================================================
+ *  DatabaseManager — управление SQLite-базами чатов
+ *  - Раздельные файлы БД:
+ *      DUMP   <название чата>.db — для дампа контента
+ *      SEARCH <название чата>.db — только для результатов поиска
+ *  - В SEARCH-БД создаём ТОЛЬКО таблицу search_results (+ служебные sqlite_*)
+ *  - «Удаление» в блоке поиска = логическая очистка SEARCH-БД (DROP TABLE + VACUUM), файлы не трогаем
+ * =========================================================== */
 package com.oleg.td;
 
 import com.oleg.td.search.SearchResult;
@@ -6,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -17,16 +26,19 @@ import java.util.regex.Pattern;
 
 @Component
 public class DatabaseManager {
+    /* ===================== Константы и зависимости ===================== */
     private static final Logger log = LoggerFactory.getLogger(DatabaseManager.class);
 
     /**
-     * каталог с файлами БД чатов: tdlib/db/
+     * Каталог с файлами БД чатов: tdlib/db/
      */
     private final Path dbDir = Paths.get("tdlib", "db");
 
     private final ChatResolver chatResolver;
 
-    // Паттерн для проверки допустимости имени файла
+    /**
+     * Паттерн для очистки имени файла
+     */
     private static final Pattern INVALID_FILENAME_CHARS = Pattern.compile("[\\\\/:*?\"<>|]");
 
     public DatabaseManager(ChatResolver chatResolver) {
@@ -38,21 +50,17 @@ public class DatabaseManager {
         }
     }
 
+    /* ===================== Вспомогательные утилиты ===================== */
+
+    /**
+     * Квотирование идентификатора для SQL
+     */
     private static String qIdent(String ident) {
         return "\"" + ident.replace("\"", "\"\"") + "\"";
     }
 
     /**
-     * Получает путь к файлу БД на основе названия чата
-     */
-    private Path dbPath(long chatId) {
-        String chatName = getChatNameForDatabase(chatId);
-        String safeFileName = sanitizeFileName(chatName, chatId) + ".db";
-        return dbDir.resolve(safeFileName);
-    }
-
-    /**
-     * Получает название чата для использования в имени БД
+     * Заголовок чата по chatId для использования в имя файла
      */
     private String getChatNameForDatabase(long chatId) {
         try {
@@ -63,51 +71,77 @@ public class DatabaseManager {
         } catch (Exception e) {
             log.warn("БД: не удалось получить название чата {}: {}", chatId, e.getMessage());
         }
-
-        // Fallback: используем ID если не удалось получить название
+        // Fallback: если не удалось получить заголовок — используем ID
         return "chat_" + Math.abs(chatId);
     }
 
     /**
-     * Очищает имя файла от недопустимых символов
+     * Очистка имени файла от недопустимых символов, ограничение длины
      */
     private String sanitizeFileName(String fileName, long chatId) {
-        if (fileName == null || fileName.isEmpty()) {
-            return "unknown_chat";
-        }
-
-        // Заменяем недопустимые символы на подчеркивания
-        String sanitized = INVALID_FILENAME_CHARS.matcher(fileName).replaceAll("_");
-
-        // Убираем начальные и конечные пробелы/точки
-        sanitized = sanitized.trim();
-        while (sanitized.endsWith(".")) {
-            sanitized = sanitized.substring(0, sanitized.length() - 1).trim();
-        }
-
-        // Если после очистки имя пустое, используем fallback
-        if (sanitized.isEmpty()) {
-            return "chat_" + Math.abs(chatId);
-        }
-
-        // Ограничиваем длину имени файла
-        if (sanitized.length() > 100) {
-            sanitized = sanitized.substring(0, 100);
-        }
-
+        if (fileName == null || fileName.isEmpty()) return "unknown_chat";
+        String sanitized = INVALID_FILENAME_CHARS.matcher(fileName).replaceAll("_").trim();
+        while (sanitized.endsWith(".")) sanitized = sanitized.substring(0, sanitized.length() - 1).trim();
+        if (sanitized.isEmpty()) return "chat_" + Math.abs(chatId);
+        if (sanitized.length() > 100) sanitized = sanitized.substring(0, 100);
         return sanitized;
+    }
+
+    /* ===================== Пути/URL/соединения к БД ===================== */
+
+    /**
+     * Путь к БД ДАМПА: DUMP <chat>.db (оставляем как дефолт для обратной совместимости)
+     */
+    private Path dumpDbPath(long chatId) {
+        String chatName = getChatNameForDatabase(chatId);
+        String safe = sanitizeFileName("DUMP " + chatName, chatId) + ".db";
+        return dbDir.resolve(safe);
+    }
+
+    /**
+     * Путь к БД ПОИСКА: SEARCH <chat>.db
+     */
+    private Path searchDbPath(long chatId) {
+        String chatName = getChatNameForDatabase(chatId);
+        String safe = sanitizeFileName("SEARCH " + chatName, chatId) + ".db";
+        return dbDir.resolve(safe);
+    }
+
+    /**
+     * СТАРЫЙ метод — теперь возвращает путь ДАМП-БД (для уже существующих вызовов в проекте)
+     */
+    private Path dbPath(long chatId) {
+        return dumpDbPath(chatId);
     }
 
     private String dbUrl(long chatId) {
         return "jdbc:sqlite:" + dbPath(chatId);
     }
 
+    private String searchDbUrl(long chatId) {
+        return "jdbc:sqlite:" + searchDbPath(chatId);
+    }
+
+    /**
+     * Соединение с ДАМП-БД
+     */
     private Connection open(long chatId) throws SQLException {
         return DriverManager.getConnection(dbUrl(chatId));
     }
 
-    /* ================= schema ================= */
+    /**
+     * Соединение с SEARCH-БД
+     */
+    private Connection openSearch(long chatId) throws SQLException {
+        return DriverManager.getConnection(searchDbUrl(chatId));
+    }
 
+    /* ===================== Схемы БД ===================== */
+
+    /**
+     * Схема ДАМП-БД (DUMP): таблицы для сообщений/медиа/ссылок/метаданных/чекпоинтов.
+     * ВНИМАНИЕ: здесь нет таблицы search_results — она живёт только в SEARCH-БД.
+     */
     public void prepareSchema(long chatId) {
         final String tMessages = qIdent("messages");
         final String tPhotos = qIdent("photos");
@@ -116,7 +150,6 @@ public class DatabaseManager {
         final String tDocuments = qIdent("documents");
         final String tLinks = qIdent("links");
         final String tMetadata = qIdent("metadata");
-        final String tSearchResults = qIdent("search_results");
         final String tCheckpoints = qIdent("checkpoints");
         final String iLinks = qIdent("links_idx");
 
@@ -171,6 +204,42 @@ public class DatabaseManager {
                 "key TEXT PRIMARY KEY," +
                 "value TEXT" +
                 ")";
+        final String createCheckpoints = "CREATE TABLE IF NOT EXISTS " + tCheckpoints + " (" +
+                "chat_id INTEGER PRIMARY KEY," +
+                "last_message_id INTEGER NOT NULL DEFAULT 0," +
+                "last_updated TEXT" +
+                ")";
+        final String idxLinks = "CREATE INDEX IF NOT EXISTS " + iLinks + " ON " + tLinks + "(url)";
+
+        try (Connection c = open(chatId); Statement s = c.createStatement()) {
+            s.execute(createMessages);
+            s.execute(createPhotos);
+            s.execute(createVideos);
+            s.execute(createAudio);
+            s.execute(createDocuments);
+            s.execute(createLinks);
+            s.execute(createMetadata);
+            s.execute(createCheckpoints);
+            s.execute(idxLinks);
+
+            // защитное добавление file_path в медиа-таблицы (на случай миграций)
+            addColumnIfMissing(c, "photos", "file_path", "TEXT");
+            addColumnIfMissing(c, "videos", "file_path", "TEXT");
+            addColumnIfMissing(c, "audio", "file_path", "TEXT");
+            addColumnIfMissing(c, "documents", "file_path", "TEXT");
+
+            log.info("БД 'DUMP {}' схема готова", getChatNameForDatabase(chatId));
+        } catch (SQLException e) {
+            log.error("БД: ошибка подготовки схемы DUMP для '{}': {}", getChatNameForDatabase(chatId), e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Схема SEARCH-БД (SEARCH): ТОЛЬКО таблица search_results (+ индексы).
+     * Никаких других пользовательских таблиц.
+     */
+    public void prepareSearchSchema(long chatId) {
+        final String tSearchResults = qIdent("search_results");
         final String createSearchResults = "CREATE TABLE IF NOT EXISTS " + tSearchResults + " (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT," +
                 "message_id INTEGER," +
@@ -181,49 +250,31 @@ public class DatabaseManager {
                 "sender_name TEXT," +
                 "found_date TEXT" +
                 ")";
-        final String createCheckpoints = "CREATE TABLE IF NOT EXISTS " + tCheckpoints + " (" +
-                "chat_id INTEGER PRIMARY KEY," +
-                "last_message_id INTEGER NOT NULL DEFAULT 0," +
-                "last_updated TEXT" +
-                ")";
-        final String idxLinks = "CREATE INDEX IF NOT EXISTS " + iLinks + " ON " + tLinks + "(url)";
         final String idxSearchKeyword = "CREATE INDEX IF NOT EXISTS search_keyword_idx ON " + tSearchResults + "(keyword)";
         final String idxSearchDate = "CREATE INDEX IF NOT EXISTS search_date_idx ON " + tSearchResults + "(message_date)";
 
-        try (Connection c = open(chatId); Statement s = c.createStatement()) {
-            s.execute(createMessages);
-            s.execute(createPhotos);
-            s.execute(createVideos);
-            s.execute(createAudio);
-            s.execute(createDocuments);
-            s.execute(createLinks);
-            s.execute(createMetadata);
+        try (Connection c = openSearch(chatId); Statement s = c.createStatement()) {
             s.execute(createSearchResults);
-            s.execute(createCheckpoints);
-            s.execute(idxLinks);
             s.execute(idxSearchKeyword);
             s.execute(idxSearchDate);
-
-            addColumnIfMissing(c, "photos", "file_path", "TEXT");
-            addColumnIfMissing(c, "videos", "file_path", "TEXT");
-            addColumnIfMissing(c, "audio", "file_path", "TEXT");
-            addColumnIfMissing(c, "documents", "file_path", "TEXT");
-
-            String chatName = getChatNameForDatabase(chatId);
-            log.info("БД '{}' схема готова", chatName);
+            log.info("БД 'SEARCH {}' схема готова (только search_results)", getChatNameForDatabase(chatId));
         } catch (SQLException e) {
-            String chatName = getChatNameForDatabase(chatId);
-            log.error("БД: ошибка подготовки схемы для чата '{}': {}", chatName, e.getMessage(), e);
+            log.error("БД: ошибка подготовки схемы SEARCH для '{}': {}", getChatNameForDatabase(chatId), e.getMessage(), e);
         }
     }
 
+    /**
+     * Добавляет столбец, если его нет (для миграций)
+     */
     private void addColumnIfMissing(Connection c, String table, String col, String type) {
         try (PreparedStatement ps = c.prepareStatement("PRAGMA table_info(" + qIdent(table) + ")");
              ResultSet rs = ps.executeQuery()) {
             boolean exists = false;
-            while (rs.next()) if (col.equalsIgnoreCase(rs.getString("name"))) {
-                exists = true;
-                break;
+            while (rs.next()) {
+                if (col.equalsIgnoreCase(rs.getString("name"))) {
+                    exists = true;
+                    break;
+                }
             }
             if (!exists) {
                 try (Statement s = c.createStatement()) {
@@ -236,7 +287,7 @@ public class DatabaseManager {
         }
     }
 
-    /* ============ incremental helpers ============ */
+    /* ===================== Инкрементальные хелперы (DUMP) ===================== */
 
     /**
      * MAX(id) из messages; если строк нет — 0.
@@ -273,8 +324,11 @@ public class DatabaseManager {
         return 0L;
     }
 
-    /* ============ upserts ============ */
+    /* ===================== Upsert-операции (DUMP) ===================== */
 
+    /**
+     * Сохранение сообщения
+     */
     public void saveMessage(long chatId, long messageId, long date, String senderId, Long replyTo, String text) {
         final String sql = "INSERT OR IGNORE INTO " + qIdent("messages") +
                 "(id, date, sender_id, reply_to, text) VALUES(?,?,?,?,?)";
@@ -291,6 +345,9 @@ public class DatabaseManager {
         }
     }
 
+    /**
+     * Сохранение фото
+     */
     public void savePhoto(long chatId, long messageId, Integer fileId, String remoteId,
                           Integer w, Integer h, String caption, String filePath) {
         final String sql = "INSERT OR REPLACE INTO " + qIdent("photos") +
@@ -312,6 +369,9 @@ public class DatabaseManager {
         }
     }
 
+    /**
+     * Сохранение видео
+     */
     public void saveVideo(long chatId, long messageId, Integer fileId, String remoteId,
                           Integer duration, Integer w, Integer h, String caption, String filePath) {
         final String sql = "INSERT OR REPLACE INTO " + qIdent("videos") +
@@ -335,6 +395,9 @@ public class DatabaseManager {
         }
     }
 
+    /**
+     * Сохранение аудио
+     */
     public void saveAudio(long chatId, long messageId, Integer fileId, String remoteId,
                           Integer duration, String mime, String filePath) {
         final String sql = "INSERT OR REPLACE INTO " + qIdent("audio") +
@@ -354,6 +417,9 @@ public class DatabaseManager {
         }
     }
 
+    /**
+     * Сохранение документа
+     */
     public void saveDocument(long chatId, long messageId, Integer fileId, String remoteId,
                              String fileName, String mimeType, String filePath) {
         final String sql = "INSERT OR REPLACE INTO " + qIdent("documents") +
@@ -372,6 +438,9 @@ public class DatabaseManager {
         }
     }
 
+    /**
+     * Сохранение ссылки
+     */
     public void saveLink(long chatId, long messageId, String urlStr, String context) {
         final String sql = "INSERT INTO " + qIdent("links") + "(message_id, url, context) VALUES(?,?,?)";
         try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
@@ -384,6 +453,9 @@ public class DatabaseManager {
         }
     }
 
+    /**
+     * Сохранение/загрузка метаданных (DUMP-БД)
+     */
     public void saveMetadata(long chatId, String key, String value) {
         final String sql = "INSERT OR REPLACE INTO " + qIdent("metadata") + "(key, value) VALUES(?, ?)";
         try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
@@ -400,9 +472,7 @@ public class DatabaseManager {
         try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
             st.setString(1, key);
             try (ResultSet rs = st.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getString("value");
-                }
+                if (rs.next()) return rs.getString("value");
             }
         } catch (SQLException e) {
             log.error("БД: ошибка загрузки метаданных для чата {}: {}", chatId, e.getMessage(), e);
@@ -411,20 +481,14 @@ public class DatabaseManager {
     }
 
     /**
-     * Сохраняет или обновляет контрольную точку для указанного чата.
-     *
-     * @param chatId        ID чата
-     * @param lastMessageId ID последнего обработанного сообщения в этом чате
+     * Контрольные точки (DUMP-БД)
      */
     public void saveCheckpoint(long chatId, long lastMessageId) {
-        // Используем REPLACE, так как chat_id является PRIMARY KEY
-        final String sql = "REPLACE INTO " + qIdent("checkpoints") +
-                "(chat_id, last_message_id, last_updated) VALUES(?,?,?)";
-
+        final String sql = "REPLACE INTO " + qIdent("checkpoints") + "(chat_id, last_message_id, last_updated) VALUES(?,?,?)";
         try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
             st.setLong(1, chatId);
             st.setLong(2, lastMessageId);
-            st.setString(3, LocalDateTime.now().toString()); // Текущее время как метка обновления
+            st.setString(3, LocalDateTime.now().toString());
             st.executeUpdate();
             log.debug("БД: сохранена контрольная точка для чата {}: last_message_id={}", chatId, lastMessageId);
         } catch (SQLException e) {
@@ -432,26 +496,178 @@ public class DatabaseManager {
         }
     }
 
-    /**
-     * Загружает контрольную точку для указанного чата.
-     *
-     * @param chatId ID чата
-     * @return ID последнего обработанного сообщения. Если запись не найдена, возвращает 0.
-     */
     public long loadCheckpoint(long chatId) {
         final String sql = "SELECT last_message_id FROM " + qIdent("checkpoints") + " WHERE chat_id = ?";
         try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
             st.setLong(1, chatId);
             try (ResultSet rs = st.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getLong("last_message_id");
-                }
+                if (rs.next()) return rs.getLong("last_message_id");
             }
         } catch (SQLException e) {
             log.error("БД: ошибка загрузки контрольной точки для чата {}: {}", chatId, e.getMessage(), e);
         }
-        // Если чата нет в таблице, возвращаем 0 (начало истории)
         return 0L;
+    }
+
+    /* ===================== Операции с результатами поиска (SEARCH) ===================== */
+
+    /**
+     * Вставка результата поиска в SEARCH-БД
+     */
+    public void saveSearchResultSearchDb(long chatId, long messageId, LocalDateTime messageDate,
+                                         String keyword, String messageText, String senderId, String senderName) {
+        final String sql = "INSERT INTO " + qIdent("search_results") +
+                "(message_id, message_date, keyword, message_text, sender_id, sender_name, found_date) " +
+                "VALUES(?,?,?,?,?,?,?)";
+        try (Connection c = openSearch(chatId); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setLong(1, messageId);
+            st.setString(2, messageDate.toString());
+            st.setString(3, keyword);
+            st.setString(4, messageText);
+            st.setString(5, senderId);
+            st.setString(6, senderName);
+            st.setString(7, LocalDateTime.now().toString());
+            st.executeUpdate();
+        } catch (SQLException e) {
+            log.error("БД(SEARCH): ошибка сохранения результата поиска: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Кол-во результатов в SEARCH-БД
+     */
+    public int getSearchResultsCountInSearchDb(long chatId) {
+        final String sql = "SELECT COUNT(*) FROM " + qIdent("search_results");
+        try (Connection c = openSearch(chatId); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
+            return rs.next() ? rs.getInt(1) : 0;
+        } catch (SQLException e) {
+            log.error("БД(SEARCH): ошибка получения количества результатов поиска: {}", e.getMessage(), e);
+            return 0;
+        }
+    }
+
+    /**
+     * Чтение результатов из SEARCH-БД
+     */
+    public List<SearchResult> getSearchResultsFromSearchDb(long chatId) {
+        final String sql = "SELECT * FROM " + qIdent("search_results") + " ORDER BY found_date DESC";
+        List<SearchResult> results = new ArrayList<>();
+        try (Connection c = openSearch(chatId); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
+            while (rs.next()) {
+                SearchResult r = new SearchResult();
+                r.setId(rs.getLong("id"));
+                r.setChatId(chatId);
+                r.setChatTitle(getChatNameForDatabase(chatId));
+                r.setMessageId(rs.getLong("message_id"));
+                r.setMessageDate(LocalDateTime.parse(rs.getString("message_date")));
+                r.setKeyword(rs.getString("keyword"));
+                r.setMessageText(rs.getString("message_text"));
+                r.setSenderId(rs.getString("sender_id"));
+                r.setSenderName(rs.getString("sender_name"));
+                r.setFoundDate(LocalDateTime.parse(rs.getString("found_date")));
+                results.add(r);
+            }
+        } catch (SQLException e) {
+            log.error("БД(SEARCH): ошибка получения результатов поиска: {}", e.getMessage(), e);
+        }
+        return results;
+    }
+
+    /* ===================== Очистка SEARCH-БД (кнопка «Удалить базу» в блоке поиска) ===================== */
+
+    /**
+     * Логическая очистка всех SEARCH-БД:
+     * - проходим по файлам "SEARCH *.db"
+     * - дропаем ВСЕ пользовательские таблицы (в т.ч. search_results)
+     * - выполняем VACUUM
+     * - файлы не удаляем
+     */
+    public void clearSearchChatDatabases() {
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "SEARCH *.db")) {
+            for (Path p : ds) {
+                try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p.toString())) {
+                    dropAllUserTables(c); // sqlite_sequence/ sqlite_master не трогаем
+                    try (Statement s = c.createStatement()) {
+                        s.execute("VACUUM");
+                    }
+                    log.info("Очищена SEARCH-БД: {}", p.getFileName());
+                } catch (SQLException e) {
+                    log.error("БД: ошибка обработки {}: {}", p, e.getMessage(), e);
+                }
+            }
+        } catch (IOException e) {
+            log.error("БД: ошибка перебора каталога {}: {}", dbDir, e.getMessage(), e);
+        }
+    }
+
+    /* ===================== Служебные хелперы для БД ===================== */
+
+    /**
+     * Проверка наличия таблицы
+     */
+    private boolean tableExists(Connection c, String table) {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?")) {
+            ps.setString(1, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            log.warn("БД: не удалось проверить наличие таблицы {}: {}", table, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Количество строк в таблице (0, если таблицы нет/ошибка)
+     */
+    private long tableCount(Connection c, String table) {
+        if (!tableExists(c, table)) return 0L;
+        String sql = "SELECT COUNT(*) FROM " + qIdent(table);
+        try (Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
+            return rs.next() ? rs.getLong(1) : 0L;
+        } catch (SQLException e) {
+            log.warn("БД: не удалось получить COUNT(*) из {}: {}", table, e.getMessage());
+            return 0L;
+        }
+    }
+
+    /**
+     * Дропает все пользовательские таблицы в БД.
+     * Системные таблицы SQLite (sqlite_sequence) не трогаем.
+     */
+    private void dropAllUserTables(Connection c) throws SQLException {
+        List<String> tables = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement("SELECT name FROM sqlite_master WHERE type='table'")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String name = rs.getString(1);
+                    if (!"sqlite_sequence".equalsIgnoreCase(name)) {
+                        tables.add(name);
+                    }
+                }
+            }
+        }
+        try (Statement s = c.createStatement()) {
+            for (String t : tables) {
+                s.execute("DROP TABLE IF EXISTS " + qIdent(t));
+            }
+        }
+    }
+
+    /* ===================== (Не используется сейчас) Удаление файла БД ===================== */
+
+    /**
+     * Физическое удаление файла SEARCH-БД конкретного чата (не используется кнопкой)
+     */
+    public void deleteSearchDatabaseFile(long chatId) {
+        try {
+            Path path = searchDbPath(chatId);
+            Files.deleteIfExists(path);
+            log.info("Файл SEARCH-БД удалён: {}", path);
+        } catch (IOException e) {
+            log.error("БД: ошибка удаления файла SEARCH-БД: {}", e.getMessage(), e);
+        }
     }
 
     /**
@@ -514,150 +730,11 @@ public class DatabaseManager {
         }
     }
 
-    public void saveSearchResult(long chatId, long messageId, LocalDateTime messageDate,
-                                 String keyword, String messageText, String senderId, String senderName) {
-        final String sql = "INSERT INTO " + qIdent("search_results") +
-                "(message_id, message_date, keyword, message_text, sender_id, sender_name, found_date) " +
-                "VALUES(?,?,?,?,?,?,?)";
-
-        try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
-            st.setLong(1, messageId);
-            st.setString(2, messageDate.toString());
-            st.setString(3, keyword);
-            st.setString(4, messageText);
-            st.setString(5, senderId);
-            st.setString(6, senderName);
-            st.setString(7, LocalDateTime.now().toString());
-            st.executeUpdate();
-        } catch (SQLException e) {
-            log.error("БД: ошибка сохранения результата поиска: {}", e.getMessage(), e);
-        }
-    }
-
-    public int getSearchResultsCount(long chatId) {
-        final String sql = "SELECT COUNT(*) FROM " + qIdent("search_results");
-        try (Connection c = open(chatId); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
-            return rs.next() ? rs.getInt(1) : 0;
-        } catch (SQLException e) {
-            log.error("БД: ошибка получения количества результатов поиска: {}", e.getMessage(), e);
-            return 0;
-        }
-    }
-
-    public List<SearchResult> getSearchResults(long chatId) {
-        final String sql = "SELECT * FROM " + qIdent("search_results") + " ORDER BY found_date DESC";
-        List<SearchResult> results = new ArrayList<>();
-
-        try (Connection c = open(chatId); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
-            while (rs.next()) {
-                SearchResult result = new SearchResult();
-                result.setId(rs.getLong("id"));
-                result.setChatId(chatId);
-                result.setChatTitle(getChatNameForDatabase(chatId));
-                result.setMessageId(rs.getLong("message_id"));
-                result.setMessageDate(LocalDateTime.parse(rs.getString("message_date")));
-                result.setKeyword(rs.getString("keyword"));
-                result.setMessageText(rs.getString("message_text"));
-                result.setSenderId(rs.getString("sender_id"));
-                result.setSenderName(rs.getString("sender_name"));
-                result.setFoundDate(LocalDateTime.parse(rs.getString("found_date")));
-                results.add(result);
-            }
-        } catch (SQLException e) {
-            log.error("БД: ошибка получения результатов поиска: {}", e.getMessage(), e);
-        }
-
-        return results;
-    }
-
-    public void deleteSearchDatabase(long chatId) {
-        try {
-            Path dbPath = dbPath(chatId);
-            Files.deleteIfExists(dbPath);
-            log.info("БД поиска удалена: {}", dbPath);
-        } catch (IOException e) {
-            log.error("БД: ошибка удаления базы данных поиска: {}", e.getMessage(), e);
-        }
-    }
-
     /**
-     * Очищает (дропает таблицы) во всех БД чатов, где выполнялся поиск.
-     * Признак: есть таблица search_results и она содержит записи.
-     * Файлы .db на диске НЕ удаляются.
+     * Совместимость: старое имя метода из контроллера
      */
-    public void clearSearchChatDatabases() {
-        try (java.nio.file.DirectoryStream<java.nio.file.Path> ds = Files.newDirectoryStream(dbDir, "*.db")) {
-            for (java.nio.file.Path p : ds) {
-                try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p.toString())) {
-                    if (isSearchDbByContent(c)) {
-                        dropAllUserTables(c);
-                        try (Statement s = c.createStatement()) {
-                            s.execute("VACUUM");
-                        }
-                        log.info("Очищена БД чата (поиск): {}", p.getFileName());
-                    } else {
-                        log.debug("Пропущена БД {} — нет признаков поиска", p.getFileName());
-                    }
-                } catch (SQLException e) {
-                    log.error("БД: ошибка обработки {}: {}", p, e.getMessage(), e);
-                }
-            }
-        } catch (IOException e) {
-            log.error("БД: ошибка перебора каталога {}: {}", dbDir, e.getMessage(), e);
-        }
-    }
-
-    /* ===== Вспомогательные методы ===== */
-
-    private boolean isSearchDbByContent(Connection c) {
-        // Есть таблица search_results и в ней > 0 записей — считаем, что в этой БД выполнялся поиск
-        if (!tableExists(c, "search_results")) return false;
-        return tableCount(c, "search_results") > 0;
-    }
-
-    private boolean tableExists(Connection c, String table) {
-        try (PreparedStatement ps = c.prepareStatement(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?")) {
-            ps.setString(1, table);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
-            }
-        } catch (SQLException e) {
-            log.warn("БД: не удалось проверить наличие таблицы {}: {}", table, e.getMessage());
-            return false;
-        }
-    }
-
-    private long tableCount(Connection c, String table) {
-        if (!tableExists(c, table)) return 0L;
-        String sql = "SELECT COUNT(*) FROM " + qIdent(table);
-        try (Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
-            return rs.next() ? rs.getLong(1) : 0L;
-        } catch (SQLException e) {
-            log.warn("БД: не удалось получить COUNT(*) из {}: {}", table, e.getMessage());
-            return 0L;
-        }
-    }
-
-    private void dropAllUserTables(Connection c) throws SQLException {
-        java.util.List<String> tables = new java.util.ArrayList<>();
-        try (PreparedStatement ps = c.prepareStatement(
-                "SELECT name FROM sqlite_master WHERE type='table'")) {
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    String name = rs.getString(1);
-                    // системные таблицы SQLite лучше не трогать
-                    if (!"sqlite_sequence".equalsIgnoreCase(name)) {
-                        tables.add(name);
-                    }
-                }
-            }
-        }
-        try (Statement s = c.createStatement()) {
-            for (String t : tables) {
-                s.execute("DROP TABLE IF EXISTS " + qIdent(t));
-            }
-        }
+    public void clearAllSearchDatabases() {
+        clearSearchChatDatabases();
     }
 
 }

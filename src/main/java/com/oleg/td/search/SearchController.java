@@ -40,8 +40,7 @@ public class SearchController {
 
     @DeleteMapping("/database")
     public void deleteDatabase() {
-        // Очищаем БД ТОЛЬКО тех чатов, где был поиск
-        databaseManager.clearSearchChatDatabases();
+        databaseManager.clearAllSearchDatabases(); // только SEARCH-базы
     }
 
     @GetMapping("/results")

@@ -1,3 +1,9 @@
+/* ===========================================================
+ *  SearchCoordinator — обход истории чатов и сохранение совпадений
+ *  - Работает с TDLib (TdJsonClient)
+ *  - Ищет по сообщениям, сохраняет результаты ТОЛЬКО в SEARCH-БД
+ *  - SEARCH-БД содержит одну пользовательскую таблицу search_results
+ * =========================================================== */
 package com.oleg.td.search;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -18,6 +24,7 @@ import java.util.regex.Pattern;
 
 @Component
 public class SearchCoordinator {
+    /* ===================== Константы/зависимости ===================== */
     private static final Logger log = LoggerFactory.getLogger(SearchCoordinator.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -33,6 +40,19 @@ public class SearchCoordinator {
         this.db = db;
     }
 
+    /* ===================== Основной цикл поиска по чатам ===================== */
+
+    /**
+     * Ищем в указанных чатах. Для каждого чата:
+     *  - готовим SEARCH-БД (только search_results)
+     *  - листаем историю батчами
+     *  - проверяем каждое текстовое сообщение на совпадение
+     *  - совпадения пишем в SEARCH-БД
+     *
+     * @param request параметры поиска (чаты, keyword, флаги)
+     * @param progressCallback колбэк на каждое обработанное сообщение
+     * @param foundCallback колбэк на каждое найденное совпадение
+     */
     public void searchChats(SearchRequest request, Runnable progressCallback, Runnable foundCallback) {
         stopRequested = false;
 
@@ -46,15 +66,16 @@ public class SearchCoordinator {
             String chatName = resolver.getChatTitle(chatId);
             log.info("Начинаем поиск в чате '{}'", chatName);
 
-            // Подготавливаем схему для данного чата
-            db.prepareSchema(chatId);
+            // --- готовим минимальную схему SEARCH-БД для этого чата
+            db.prepareSearchSchema(chatId);
 
             long fromMessageId = 0;
             boolean reachedEnd = false;
             int totalMessagesProcessed = 0;
-            final int MAX_MESSAGES = 10000;
+            final int MAX_MESSAGES = 10000; // предохранитель
 
             while (!stopRequested && !reachedEnd && totalMessagesProcessed < MAX_MESSAGES) {
+                // --- запрос истории TDLib
                 ObjectNode req = MAPPER.createObjectNode();
                 req.put("@type", "getChatHistory");
                 req.put("chat_id", chatId);
@@ -77,6 +98,7 @@ public class SearchCoordinator {
                     break;
                 }
 
+                // --- обработка пачки сообщений
                 for (JsonNode msg : messages) {
                     if (stopRequested) break;
                     if (totalMessagesProcessed >= MAX_MESSAGES) break;
@@ -92,15 +114,13 @@ public class SearchCoordinator {
                     }
                 }
 
+                // --- смещаемся к более старым сообщениям
                 if (!reachedEnd && totalMessagesProcessed < MAX_MESSAGES) {
                     long oldestMessageId = Long.MAX_VALUE;
                     for (JsonNode msg : messages) {
                         long msgId = msg.path("id").asLong();
-                        if (msgId < oldestMessageId) {
-                            oldestMessageId = msgId;
-                        }
+                        if (msgId < oldestMessageId) oldestMessageId = msgId;
                     }
-
                     if (oldestMessageId != Long.MAX_VALUE) {
                         fromMessageId = oldestMessageId;
                     } else {
@@ -108,7 +128,7 @@ public class SearchCoordinator {
                     }
 
                     try {
-                        Thread.sleep(100);
+                        Thread.sleep(100); // щадящая пауза между запросами
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         break;
@@ -120,7 +140,13 @@ public class SearchCoordinator {
         }
     }
 
-    private void processMessageForSearch(long chatId, String chatTitle, JsonNode msg, SearchRequest request, Runnable foundCallback) {
+    /* ===================== Обработка одного сообщения ===================== */
+
+    /**
+     * Проверка текстового сообщения на совпадение и сохранение результата в SEARCH-БД.
+     */
+    private void processMessageForSearch(long chatId, String chatTitle, JsonNode msg,
+                                         SearchRequest request, Runnable foundCallback) {
         long messageId = msg.path("id").asLong();
         long date = msg.path("date").asLong(0);
         LocalDateTime messageDate = LocalDateTime.ofInstant(Instant.ofEpochSecond(date), ZoneId.systemDefault());
@@ -137,20 +163,19 @@ public class SearchCoordinator {
             messageText = ft.path("text").asText(null);
         }
 
-        // Проверяем, содержит ли сообщение ключевое слово
         if (containsKeyword(messageText, request.getKeyword(), request.isCaseSensitive(), request.isUseRegex())) {
-            // Сохраняем результат поиска
-            db.saveSearchResult(chatId, messageId, messageDate,
+            db.saveSearchResultSearchDb(chatId, messageId, messageDate,
                     request.getKeyword(), messageText, senderId, senderName);
             log.info("Найдено совпадение в чате '{}', сообщение {}: {}", chatTitle, messageId, messageText);
             if (foundCallback != null) foundCallback.run();
         }
     }
 
+    /* ===================== Поисковая логика по строкам ===================== */
+
+    /** Проверка содержания на совпадение по подстроке или regex */
     private boolean containsKeyword(String text, String keyword, boolean caseSensitive, boolean useRegex) {
-        if (text == null || keyword == null || keyword.isEmpty()) {
-            return false;
-        }
+        if (text == null || keyword == null || keyword.isEmpty()) return false;
 
         if (useRegex) {
             try {
@@ -162,20 +187,20 @@ public class SearchCoordinator {
                 return false;
             }
         } else {
-            if (caseSensitive) {
-                return text.contains(keyword);
-            } else {
-                return text.toLowerCase().contains(keyword.toLowerCase());
-            }
+            return caseSensitive
+                    ? text.contains(keyword)
+                    : text.toLowerCase().contains(keyword.toLowerCase());
         }
     }
 
+    /** Получение отображаемого имени отправителя (пока отдаём идентификатор) */
     private String getSenderName(String senderId) {
-        // Здесь можно реализовать логику получения имени отправителя
-        // Пока возвращаем идентификатор отправителя
         return senderId;
     }
 
+    /* ===================== Управление процессом ===================== */
+
+    /** Запрос на остановку внешним кодом */
     public void stop() {
         stopRequested = true;
     }
