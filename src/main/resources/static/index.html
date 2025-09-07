@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>TDLib Дамп и Поиск Чатов</title>
+
+    <!-- Иконки как в твоём примере -->
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+
+    <!-- ВАЖНО: относительный путь, без /static -->
+    <link rel="stylesheet" href="css/app.css"/>
+</head>
+<body>
+<div class="mode-switcher">
+    <button id="dumpModeBtn" class="active" aria-controls="dumpContainer" aria-selected="true">Режим выгрузки</button>
+    <button id="searchModeBtn" aria-controls="searchContainer" aria-selected="false">Режим поиска</button>
+</div>
+
+<div class="container" id="dumpContainer">
+    <div class="logo"><i class="fab fa-telegram"></i></div>
+    <h1>TDLib Дамп Чатов</h1>
+
+    <div class="form-group">
+        <label for="chats">Ссылки или ID чатов (по одному на строку):</label>
+        <textarea id="chats" placeholder="https://t.me/..., @channel, 123456789"></textarea>
+    </div>
+
+    <div class="checkbox-group">
+        <div class="checkbox-item"><input type="checkbox" id="photos" checked><label for="photos">Фотографии</label></div>
+        <div class="checkbox-item"><input type="checkbox" id="videos" checked><label for="videos">Видео</label></div>
+        <div class="checkbox-item"><input type="checkbox" id="links"  checked><label for="links">Ссылки</label></div>
+        <div class="checkbox-item"><input type="checkbox" id="messages" checked><label for="messages">Сообщения</label></div>
+        <div class="checkbox-item"><input type="checkbox" id="textDocuments"><label for="textDocuments">Текстовые документы</label></div>
+        <div class="checkbox-item"><input type="checkbox" id="audio" checked><label for="audio">Аудио файлы</label></div>
+    </div>
+
+    <div class="text-document-extensions hidden">
+        <label for="textExtensions">Введите расширения текстовых документов (через запятую):</label>
+        <input type="text" id="textExtensions" placeholder="txt, pdf, docx, java, html"/>
+    </div>
+
+    <div class="buttons">
+        <button id="startBtn" class="btn-primary"><i class="fas fa-play-circle"></i> Начать дамп</button>
+        <button id="stopBtn" class="btn-danger"><i class="fas fa-stop-circle"></i> Остановить</button>
+    </div>
+
+    <div class="progress-container">
+        <div class="progress-label"><span>Прогресс:</span><span id="progress-value">0%</span></div>
+        <div id="progress"><div id="progress-bar"></div></div>
+        <div class="status" id="status">Готово к началу</div>
+    </div>
+</div>
+
+<div class="container hidden" id="searchContainer">
+    <div class="logo"><i class="fas fa-search"></i></div>
+    <h1>Поиск в чатах</h1>
+
+    <div class="form-group">
+        <label for="searchChats">Чаты для поиска (по одному на строку):</label>
+        <textarea id="searchChats" placeholder="https://t.me/..., @channel, 123456789"></textarea>
+    </div>
+
+    <div class="form-group">
+        <label for="searchKeyword">Ключевое слово для поиска:</label>
+        <input type="text" id="searchKeyword" placeholder="например: акция|скидка">
+    </div>
+
+    <div class="checkbox-group">
+        <div class="checkbox-item"><input type="checkbox" id="caseSensitive"><label for="caseSensitive">Чувствительность к регистру</label></div>
+        <div class="checkbox-item"><input type="checkbox" id="regexMode"><label for="regexMode">Регулярные выражения</label></div>
+    </div>
+
+    <div class="buttons">
+        <button id="startSearchBtn" class="btn-primary"><i class="fas fa-play"></i> Начать поиск</button>
+        <button id="stopSearchBtn" class="btn-danger"><i class="fas fa-stop"></i> Остановить</button>
+        <button id="deleteSearchDbBtn" class="btn-success"><i class="fas fa-trash"></i> Удалить БД поиска</button>
+    </div>
+
+    <div class="progress-container">
+        <div class="progress-label"><span>Обработано сообщений:</span><span id="searchProcessedValue">0</span></div>
+        <div class="progress-label"><span>Найдено совпадений:</span><span id="searchFoundValue">0</span></div>
+        <div id="searchProgress"><div id="searchProgress-bar"></div></div>
+        <div class="status" id="searchStatus">Поиск не запущен</div>
+    </div>
+</div>
+
+<div id="toasts" class="toasts" aria-live="polite" aria-atomic="true"></div>
+<div class="footer"><p>TDLib Chat Dump &amp; Search © 2025</p></div>
+
+<!-- ВАЖНО: относительный путь, без /static -->
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
