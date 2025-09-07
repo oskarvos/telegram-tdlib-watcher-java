@@ -3,6 +3,8 @@
  *  - Работает с TDLib (TdJsonClient)
  *  - Ищет по сообщениям, сохраняет результаты ТОЛЬКО в SEARCH-БД
  *  - SEARCH-БД содержит одну пользовательскую таблицу search_results
+ *  - Новая логика: при повторном поиске обрабатываем только новые сообщения.
+ *    Чекпоинт хранится в DUMP-БД -> metadata("search_last_message_id").
  * =========================================================== */
 package com.oleg.td.search;
 
@@ -48,6 +50,7 @@ public class SearchCoordinator {
      *  - листаем историю батчами
      *  - проверяем каждое текстовое сообщение на совпадение
      *  - совпадения пишем в SEARCH-БД
+     *  - ⚠ при повторном запуске: пропускаем всё, что <= последнего обработанного id
      *
      * @param request параметры поиска (чаты, keyword, флаги)
      * @param progressCallback колбэк на каждое обработанное сообщение
@@ -69,10 +72,28 @@ public class SearchCoordinator {
             // --- готовим минимальную схему SEARCH-БД для этого чата
             db.prepareSearchSchema(chatId);
 
-            long fromMessageId = 0;
+            // --- гарантируем наличие таблицы metadata в DUMP-БД (для чекпоинта поиска)
+            db.prepareSchema(chatId);
+
+            // --- читаем чекпоинт прошлого поиска из DUMP-БД
+            long lastSearchProcessedId = 0L;
+            try {
+                String v = db.loadMetadata(chatId, "search_last_message_id");
+                if (v != null && !v.isBlank()) {
+                    lastSearchProcessedId = Long.parseLong(v.trim());
+                }
+            } catch (Exception ignore) {
+                // если парсинг не удался — начнём с нуля
+            }
+            if (lastSearchProcessedId > 0) {
+                log.info("Чат '{}': продолжим поиск с сообщений новее id={}", chatName, lastSearchProcessedId);
+            }
+
+            long fromMessageId = 0;                 // начинаем с самых новых
             boolean reachedEnd = false;
             int totalMessagesProcessed = 0;
-            final int MAX_MESSAGES = 10000; // предохранитель
+            final int MAX_MESSAGES = 10000;         // предохранитель
+            long maxProcessedId = 0L;               // максимальный id, который реально обработали в этом запуске
 
             while (!stopRequested && !reachedEnd && totalMessagesProcessed < MAX_MESSAGES) {
                 // --- запрос истории TDLib
@@ -98,12 +119,25 @@ public class SearchCoordinator {
                     break;
                 }
 
-                // --- обработка пачки сообщений
+                // --- обработка пачки сообщений (идут от новых к старым)
                 for (JsonNode msg : messages) {
                     if (stopRequested) break;
                     if (totalMessagesProcessed >= MAX_MESSAGES) break;
 
                     long mid = msg.path("id").asLong();
+
+                    // если дошли до уже обработанных ранее — прекращаем
+                    if (lastSearchProcessedId > 0 && mid <= lastSearchProcessedId) {
+                        log.info("Чат '{}': достигли уже обработанных сообщений (mid={} <= {}), стоп",
+                                chatName, mid, lastSearchProcessedId);
+                        reachedEnd = true;
+                        break;
+                    }
+
+                    // фиксируем макс. id, который мы реально увидели в этом запуске
+                    if (mid > maxProcessedId) {
+                        maxProcessedId = mid;
+                    }
 
                     try {
                         processMessageForSearch(chatId, chatName, msg, request, foundCallback);
@@ -134,6 +168,15 @@ public class SearchCoordinator {
                         break;
                     }
                 }
+            }
+
+            // --- если в этом запуске действительно были обработаны новые сообщения — обновим чекпоинт
+            if (maxProcessedId > 0) {
+                long newCheckpoint = Math.max(lastSearchProcessedId, maxProcessedId);
+                db.saveMetadata(chatId, "search_last_message_id", Long.toString(newCheckpoint));
+                log.info("Чат '{}': обновили чекпоинт поиска search_last_message_id={}", chatName, newCheckpoint);
+            } else {
+                log.info("Чат '{}': новых сообщений не найдено, чекпоинт не меняем", chatName);
             }
 
             log.info("Поиск в чате '{}' завершён. Обработано сообщений: {}", chatName, totalMessagesProcessed);
