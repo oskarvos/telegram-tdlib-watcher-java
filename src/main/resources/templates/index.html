@@ -165,12 +165,12 @@
             background: #d62c1a;
         }
 
-        #showSearchResultsBtn, #deleteSearchDbBtn {
+        #deleteSearchDbBtn {
             background: #27ae60;
             color: white;
         }
 
-        #showSearchResultsBtn:hover, #deleteSearchDbBtn:hover {
+        #deleteSearchDbBtn:hover {
             background: #219a52;
         }
 
@@ -263,6 +263,16 @@
             border-left: 4px solid #6a11cb;
         }
 
+        .search-stats {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 15px;
+            padding: 10px;
+            background: #f0f8ff;
+            border-radius: 8px;
+            font-weight: 600;
+        }
+
         @media (max-width: 768px) {
             .checkbox-group {
                 grid-template-columns: repeat(2, 1fr);
@@ -285,7 +295,6 @@
     </style>
 </head>
 <body>
-<!-- Разметка остается без изменений -->
 <div class="mode-switcher">
     <button id="dumpModeBtn" class="active" onclick="app.showDumpMode()">Режим выгрузки</button>
     <button id="searchModeBtn" onclick="app.showSearchMode()">Режим поиска</button>
@@ -392,25 +401,21 @@
         <button id="deleteSearchDbBtn" onclick="searchMode.deleteSearchDatabase()">
             <i class="fas fa-trash"></i> Удалить БД поиска
         </button>
-        <button id="showSearchResultsBtn" onclick="searchMode.showSearchResults()">
-            <i class="fas fa-list"></i> Показать результаты
-        </button>
     </div>
 
     <div class="progress-container">
         <div class="progress-label">
             <span>Обработано сообщений:</span>
-            <span id="searchProgressValue">0</span>
+            <span id="searchProcessedValue">0</span>
+        </div>
+        <div class="progress-label">
+            <span>Найдено совпадений:</span>
+            <span id="searchFoundValue">0</span>
         </div>
         <div id="searchProgress">
             <div id="searchProgress-bar"></div>
         </div>
         <div class="status" id="searchStatus">Поиск не запущен</div>
-    </div>
-
-    <div id="searchResults" class="results-container" style="display: none;">
-        <h3>Результаты поиска</h3>
-        <div id="searchResultsList"></div>
     </div>
 </div>
 
@@ -636,7 +641,7 @@
 
             document.getElementById('searchProgress-bar').classList.remove('green');
             this.setStatus('Начинаем поиск...', '#edf7ff', '#2c3e50');
-            this.setProgress(0);
+            this.setProgress(0, 0);
 
             try {
                 await this.post('/api/search/start', request);
@@ -664,12 +669,12 @@
         async pollSearchProgress() {
             try {
                 const data = await this.get('/api/search/progress');
-                this.setProgress(data.processedMessages || 0);
+                this.setProgress(data.processedMessages || 0, data.foundMessages || 0);
 
                 if (data.running) {
-                    this.setStatus(`Поиск выполняется... Обработано сообщений: ${data.processedMessages}`, '#edf7ff', '#2c3e50');
+                    this.setStatus(`Поиск выполняется... Обработано: ${data.processedMessages}, Найдено: ${data.foundMessages}`, '#edf7ff', '#2c3e50');
                 } else {
-                    this.setProgress(data.processedMessages, true);
+                    this.setProgress(data.processedMessages, data.foundMessages, true);
                     this.setStatus('Поиск завершен!', '#e7f6ec', '#27ae60');
                     if (this.pollInterval) clearInterval(this.pollInterval);
                 }
@@ -688,48 +693,15 @@
             }
         }
 
-        async showSearchResults() {
-            try {
-                const results = await this.get('/api/search/results');
-                this.displayResults(results);
-            } catch (error) {
-                this.setStatus('Ошибка получения результатов: ' + error.message, '#ffecec', '#e74c3c');
-            }
-        }
-
-        displayResults(results) {
-            const resultsContainer = document.getElementById('searchResults');
-            const resultsList = document.getElementById('searchResultsList');
-
-            resultsList.innerHTML = '';
-
-            if (results.length === 0) {
-                resultsList.innerHTML = '<p>Результаты не найдены</p>';
-            } else {
-                results.forEach(result => {
-                    const resultElement = document.createElement('div');
-                    resultElement.className = 'result-item';
-                    resultElement.innerHTML = `
-                            <strong>Чат:</strong> ${result.chatTitle}<br>
-                            <strong>Дата сообщения:</strong> ${new Date(result.messageDate).toLocaleString()}<br>
-                            <strong>Отправитель:</strong> ${result.senderName || result.senderId}<br>
-                            <strong>Сообщение:</strong> ${result.messageText}<br>
-                            <strong>Найдено:</strong> ${new Date(result.foundDate).toLocaleString()}
-                        `;
-                    resultsList.appendChild(resultElement);
-                });
-            }
-
-            resultsContainer.style.display = 'block';
-        }
-
-        setProgress(processedMessages, isComplete = false) {
+        setProgress(processed, found, isComplete = false) {
+            const processedValue = document.getElementById('searchProcessedValue');
+            const foundValue = document.getElementById('searchFoundValue');
             const progressBar = document.getElementById('searchProgress-bar');
-            const progressValue = document.getElementById('searchProgressValue');
+
+            processedValue.textContent = processed;
+            foundValue.textContent = found;
 
             // Для поиска мы просто показываем количество обработанных сообщений
-            progressValue.textContent = processedMessages;
-
             // Можно добавить логику для отображения прогресса в процентах, если будет известен общий объем
             if (isComplete) {
                 progressBar.classList.add('green');

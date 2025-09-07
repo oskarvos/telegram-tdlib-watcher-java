@@ -33,11 +33,8 @@ public class SearchCoordinator {
         this.db = db;
     }
 
-    public void searchChats(SearchRequest request, Runnable progressCallback) {
+    public void searchChats(SearchRequest request, Runnable progressCallback, Runnable foundCallback) {
         stopRequested = false;
-
-        // Подготавливаем схему для поиска (используем chatId = 0 для общей БД поиска)
-        db.prepareSearchSchema();
 
         for (String chatRef : request.getChats()) {
             if (stopRequested) {
@@ -48,6 +45,9 @@ public class SearchCoordinator {
             long chatId = resolver.resolveFlexible(chatRef.trim());
             String chatName = resolver.getChatTitle(chatId);
             log.info("Начинаем поиск в чате '{}'", chatName);
+
+            // Подготавливаем схему для данного чата
+            db.prepareSchema(chatId);
 
             long fromMessageId = 0;
             boolean reachedEnd = false;
@@ -84,7 +84,7 @@ public class SearchCoordinator {
                     long mid = msg.path("id").asLong();
 
                     try {
-                        processMessageForSearch(chatId, chatName, msg, request);
+                        processMessageForSearch(chatId, chatName, msg, request, foundCallback);
                         totalMessagesProcessed++;
                         if (progressCallback != null) progressCallback.run();
                     } catch (Exception ex) {
@@ -120,7 +120,7 @@ public class SearchCoordinator {
         }
     }
 
-    private void processMessageForSearch(long chatId, String chatTitle, JsonNode msg, SearchRequest request) {
+    private void processMessageForSearch(long chatId, String chatTitle, JsonNode msg, SearchRequest request, Runnable foundCallback) {
         long messageId = msg.path("id").asLong();
         long date = msg.path("date").asLong(0);
         LocalDateTime messageDate = LocalDateTime.ofInstant(Instant.ofEpochSecond(date), ZoneId.systemDefault());
@@ -140,9 +140,10 @@ public class SearchCoordinator {
         // Проверяем, содержит ли сообщение ключевое слово
         if (containsKeyword(messageText, request.getKeyword(), request.isCaseSensitive(), request.isUseRegex())) {
             // Сохраняем результат поиска
-            db.saveSearchResult(chatId, chatTitle, messageId, messageDate,
+            db.saveSearchResult(chatId, messageId, messageDate,
                     request.getKeyword(), messageText, senderId, senderName);
             log.info("Найдено совпадение в чате '{}', сообщение {}: {}", chatTitle, messageId, messageText);
+            if (foundCallback != null) foundCallback.run();
         }
     }
 

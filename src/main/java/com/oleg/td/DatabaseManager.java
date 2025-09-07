@@ -11,6 +11,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.*;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Pattern;
 
 @Component
@@ -114,6 +116,8 @@ public class DatabaseManager {
         final String tDocuments = qIdent("documents");
         final String tLinks = qIdent("links");
         final String tMetadata = qIdent("metadata");
+        final String tSearchResults = qIdent("search_results");
+        final String tCheckpoints = qIdent("checkpoints");
         final String iLinks = qIdent("links_idx");
 
         final String createMessages = "CREATE TABLE IF NOT EXISTS " + tMessages + " (" +
@@ -167,7 +171,24 @@ public class DatabaseManager {
                 "key TEXT PRIMARY KEY," +
                 "value TEXT" +
                 ")";
+        final String createSearchResults = "CREATE TABLE IF NOT EXISTS " + tSearchResults + " (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                "message_id INTEGER," +
+                "message_date TEXT," +
+                "keyword TEXT," +
+                "message_text TEXT," +
+                "sender_id TEXT," +
+                "sender_name TEXT," +
+                "found_date TEXT" +
+                ")";
+        final String createCheckpoints = "CREATE TABLE IF NOT EXISTS " + tCheckpoints + " (" +
+                "chat_id INTEGER PRIMARY KEY," +
+                "last_message_id INTEGER NOT NULL DEFAULT 0," +
+                "last_updated TEXT" +
+                ")";
         final String idxLinks = "CREATE INDEX IF NOT EXISTS " + iLinks + " ON " + tLinks + "(url)";
+        final String idxSearchKeyword = "CREATE INDEX IF NOT EXISTS search_keyword_idx ON " + tSearchResults + "(keyword)";
+        final String idxSearchDate = "CREATE INDEX IF NOT EXISTS search_date_idx ON " + tSearchResults + "(message_date)";
 
         try (Connection c = open(chatId); Statement s = c.createStatement()) {
             s.execute(createMessages);
@@ -177,7 +198,11 @@ public class DatabaseManager {
             s.execute(createDocuments);
             s.execute(createLinks);
             s.execute(createMetadata);
+            s.execute(createSearchResults);
+            s.execute(createCheckpoints);
             s.execute(idxLinks);
+            s.execute(idxSearchKeyword);
+            s.execute(idxSearchDate);
 
             addColumnIfMissing(c, "photos", "file_path", "TEXT");
             addColumnIfMissing(c, "videos", "file_path", "TEXT");
@@ -385,59 +410,6 @@ public class DatabaseManager {
         return null;
     }
 
-    /* ============ monitor schema ============ */
-
-    public void prepareMonitorSchema() {
-        final String tMonitorResults = qIdent("monitor_results");
-
-        final String createMonitorResults = "CREATE TABLE IF NOT EXISTS " + tMonitorResults + " (" +
-                "id INTEGER PRIMARY KEY AUTOINCREMENT," +
-                "chat_id INTEGER," +
-                "chat_title TEXT," +
-                "message_id INTEGER," +
-                "message_date TEXT," + // ISO format
-                "keyword TEXT," +
-                "message_text TEXT," +
-                "sender_id TEXT," +
-                "sender_name TEXT," +
-                "found_date TEXT," + // When we found it
-                "UNIQUE(chat_id, message_id, keyword)" +
-                ")";
-
-        final String idxMonitorChat = "CREATE INDEX IF NOT EXISTS monitor_chat_idx ON " + tMonitorResults + "(chat_id)";
-        final String idxMonitorKeyword = "CREATE INDEX IF NOT EXISTS monitor_keyword_idx ON " + tMonitorResults + "(keyword)";
-        final String idxMonitorDate = "CREATE INDEX IF NOT EXISTS monitor_date_idx ON " + tMonitorResults + "(message_date)";
-
-        prepareCheckpointSchema();
-
-        try (Connection c = open(0); Statement s = c.createStatement()) { // Use chat_id 0 for monitor DB
-            s.execute(createMonitorResults);
-            s.execute(idxMonitorChat);
-            s.execute(idxMonitorKeyword);
-            s.execute(idxMonitorDate);
-            log.info("БД: схема мониторинга готова");
-        } catch (SQLException e) {
-            log.error("БД: ошибка подготовки схемы мониторинга: {}", e.getMessage(), e);
-        }
-    }
-
-    public void prepareCheckpointSchema() {
-        final String tCheckpoints = qIdent("checkpoints");
-
-        final String createCheckpoints = "CREATE TABLE IF NOT EXISTS " + tCheckpoints + " (" +
-                "chat_id INTEGER PRIMARY KEY," + // ID чата
-                "last_message_id INTEGER NOT NULL DEFAULT 0," + // ID последнего обработанного сообщения
-                "last_updated TEXT" + // Время последнего обновления точки
-                ")";
-
-        try (Connection c = open(0); Statement s = c.createStatement()) { // Используем БД мониторинга (chat_id=0)
-            s.execute(createCheckpoints);
-            log.info("БД: схема контрольных точек готова");
-        } catch (SQLException e) {
-            log.error("БД: ошибка подготовки схемы контрольных точек: {}", e.getMessage(), e);
-        }
-    }
-
     /**
      * Сохраняет или обновляет контрольную точку для указанного чата.
      *
@@ -449,7 +421,7 @@ public class DatabaseManager {
         final String sql = "REPLACE INTO " + qIdent("checkpoints") +
                 "(chat_id, last_message_id, last_updated) VALUES(?,?,?)";
 
-        try (Connection c = open(0); PreparedStatement st = c.prepareStatement(sql)) {
+        try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
             st.setLong(1, chatId);
             st.setLong(2, lastMessageId);
             st.setString(3, LocalDateTime.now().toString()); // Текущее время как метка обновления
@@ -468,7 +440,7 @@ public class DatabaseManager {
      */
     public long loadCheckpoint(long chatId) {
         final String sql = "SELECT last_message_id FROM " + qIdent("checkpoints") + " WHERE chat_id = ?";
-        try (Connection c = open(0); PreparedStatement st = c.prepareStatement(sql)) {
+        try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
             st.setLong(1, chatId);
             try (ResultSet rs = st.executeQuery()) {
                 if (rs.next()) {
@@ -542,71 +514,46 @@ public class DatabaseManager {
         }
     }
 
-    // Добавляем в класс DatabaseManager
-
-    public void prepareSearchSchema() {
-        final String tSearchResults = qIdent("search_results");
-
-        final String createSearchResults = "CREATE TABLE IF NOT EXISTS " + tSearchResults + " (" +
-                "id INTEGER PRIMARY KEY AUTOINCREMENT," +
-                "chat_id INTEGER," +
-                "chat_title TEXT," +
-                "message_id INTEGER," +
-                "message_date TEXT," + // ISO format
-                "keyword TEXT," +
-                "message_text TEXT," +
-                "sender_id TEXT," +
-                "sender_name TEXT," +
-                "found_date TEXT" + // When we found it
-                ")";
-
-        final String idxSearchChat = "CREATE INDEX IF NOT EXISTS search_chat_idx ON " + tSearchResults + "(chat_id)";
-        final String idxSearchKeyword = "CREATE INDEX IF NOT EXISTS search_keyword_idx ON " + tSearchResults + "(keyword)";
-        final String idxSearchDate = "CREATE INDEX IF NOT EXISTS search_date_idx ON " + tSearchResults + "(message_date)";
-
-        try (Connection c = open(0); Statement s = c.createStatement()) {
-            s.execute(createSearchResults);
-            s.execute(idxSearchChat);
-            s.execute(idxSearchKeyword);
-            s.execute(idxSearchDate);
-            log.info("БД: схема поиска готова");
-        } catch (SQLException e) {
-            log.error("БД: ошибка подготовки схемы поиска: {}", e.getMessage(), e);
-        }
-    }
-
-    public void saveSearchResult(long chatId, String chatTitle, long messageId, LocalDateTime messageDate,
+    public void saveSearchResult(long chatId, long messageId, LocalDateTime messageDate,
                                  String keyword, String messageText, String senderId, String senderName) {
         final String sql = "INSERT INTO " + qIdent("search_results") +
-                "(chat_id, chat_title, message_id, message_date, keyword, message_text, sender_id, sender_name, found_date) " +
-                "VALUES(?,?,?,?,?,?,?,?,?)";
+                "(message_id, message_date, keyword, message_text, sender_id, sender_name, found_date) " +
+                "VALUES(?,?,?,?,?,?,?)";
 
-        try (Connection c = open(0); PreparedStatement st = c.prepareStatement(sql)) {
-            st.setLong(1, chatId);
-            st.setString(2, chatTitle);
-            st.setLong(3, messageId);
-            st.setString(4, messageDate.toString());
-            st.setString(5, keyword);
-            st.setString(6, messageText);
-            st.setString(7, senderId);
-            st.setString(8, senderName);
-            st.setString(9, LocalDateTime.now().toString());
+        try (Connection c = open(chatId); PreparedStatement st = c.prepareStatement(sql)) {
+            st.setLong(1, messageId);
+            st.setString(2, messageDate.toString());
+            st.setString(3, keyword);
+            st.setString(4, messageText);
+            st.setString(5, senderId);
+            st.setString(6, senderName);
+            st.setString(7, LocalDateTime.now().toString());
             st.executeUpdate();
         } catch (SQLException e) {
             log.error("БД: ошибка сохранения результата поиска: {}", e.getMessage(), e);
         }
     }
 
-    public java.util.List<SearchResult> getSearchResults() {
-        final String sql = "SELECT * FROM " + qIdent("search_results") + " ORDER BY found_date DESC";
-        java.util.List<SearchResult> results = new java.util.ArrayList<>();
+    public int getSearchResultsCount(long chatId) {
+        final String sql = "SELECT COUNT(*) FROM " + qIdent("search_results");
+        try (Connection c = open(chatId); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
+            return rs.next() ? rs.getInt(1) : 0;
+        } catch (SQLException e) {
+            log.error("БД: ошибка получения количества результатов поиска: {}", e.getMessage(), e);
+            return 0;
+        }
+    }
 
-        try (Connection c = open(0); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
+    public List<SearchResult> getSearchResults(long chatId) {
+        final String sql = "SELECT * FROM " + qIdent("search_results") + " ORDER BY found_date DESC";
+        List<SearchResult> results = new ArrayList<>();
+
+        try (Connection c = open(chatId); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
             while (rs.next()) {
                 SearchResult result = new SearchResult();
                 result.setId(rs.getLong("id"));
-                result.setChatId(rs.getLong("chat_id"));
-                result.setChatTitle(rs.getString("chat_title"));
+                result.setChatId(chatId);
+                result.setChatTitle(getChatNameForDatabase(chatId));
                 result.setMessageId(rs.getLong("message_id"));
                 result.setMessageDate(LocalDateTime.parse(rs.getString("message_date")));
                 result.setKeyword(rs.getString("keyword"));
@@ -623,13 +570,94 @@ public class DatabaseManager {
         return results;
     }
 
-    public void deleteSearchDatabase() {
+    public void deleteSearchDatabase(long chatId) {
         try {
-            Path dbPath = dbPath(0);
+            Path dbPath = dbPath(chatId);
             Files.deleteIfExists(dbPath);
             log.info("БД поиска удалена: {}", dbPath);
         } catch (IOException e) {
             log.error("БД: ошибка удаления базы данных поиска: {}", e.getMessage(), e);
         }
     }
+
+    /**
+     * Очищает (дропает таблицы) во всех БД чатов, где выполнялся поиск.
+     * Признак: есть таблица search_results и она содержит записи.
+     * Файлы .db на диске НЕ удаляются.
+     */
+    public void clearSearchChatDatabases() {
+        try (java.nio.file.DirectoryStream<java.nio.file.Path> ds = Files.newDirectoryStream(dbDir, "*.db")) {
+            for (java.nio.file.Path p : ds) {
+                try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p.toString())) {
+                    if (isSearchDbByContent(c)) {
+                        dropAllUserTables(c);
+                        try (Statement s = c.createStatement()) {
+                            s.execute("VACUUM");
+                        }
+                        log.info("Очищена БД чата (поиск): {}", p.getFileName());
+                    } else {
+                        log.debug("Пропущена БД {} — нет признаков поиска", p.getFileName());
+                    }
+                } catch (SQLException e) {
+                    log.error("БД: ошибка обработки {}: {}", p, e.getMessage(), e);
+                }
+            }
+        } catch (IOException e) {
+            log.error("БД: ошибка перебора каталога {}: {}", dbDir, e.getMessage(), e);
+        }
+    }
+
+    /* ===== Вспомогательные методы ===== */
+
+    private boolean isSearchDbByContent(Connection c) {
+        // Есть таблица search_results и в ней > 0 записей — считаем, что в этой БД выполнялся поиск
+        if (!tableExists(c, "search_results")) return false;
+        return tableCount(c, "search_results") > 0;
+    }
+
+    private boolean tableExists(Connection c, String table) {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?")) {
+            ps.setString(1, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            log.warn("БД: не удалось проверить наличие таблицы {}: {}", table, e.getMessage());
+            return false;
+        }
+    }
+
+    private long tableCount(Connection c, String table) {
+        if (!tableExists(c, table)) return 0L;
+        String sql = "SELECT COUNT(*) FROM " + qIdent(table);
+        try (Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
+            return rs.next() ? rs.getLong(1) : 0L;
+        } catch (SQLException e) {
+            log.warn("БД: не удалось получить COUNT(*) из {}: {}", table, e.getMessage());
+            return 0L;
+        }
+    }
+
+    private void dropAllUserTables(Connection c) throws SQLException {
+        java.util.List<String> tables = new java.util.ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT name FROM sqlite_master WHERE type='table'")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String name = rs.getString(1);
+                    // системные таблицы SQLite лучше не трогать
+                    if (!"sqlite_sequence".equalsIgnoreCase(name)) {
+                        tables.add(name);
+                    }
+                }
+            }
+        }
+        try (Statement s = c.createStatement()) {
+            for (String t : tables) {
+                s.execute("DROP TABLE IF EXISTS " + qIdent(t));
+            }
+        }
+    }
+
 }

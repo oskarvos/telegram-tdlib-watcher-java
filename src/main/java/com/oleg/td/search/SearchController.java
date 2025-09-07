@@ -1,14 +1,26 @@
 package com.oleg.td.search;
 
+import com.oleg.td.ChatDumpCoordinator;
+import com.oleg.td.ChatResolver;
+import com.oleg.td.DatabaseManager; // <--- добавить
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/search")
 public class SearchController {
     private final SearchService searchService;
+    private final ChatDumpCoordinator chatDumpCoordinator;
+    private final ChatResolver chatResolver;
+    private final DatabaseManager databaseManager; // <--- добавить
 
-    public SearchController(SearchService searchService) {
+    public SearchController(SearchService searchService,
+                            ChatDumpCoordinator chatDumpCoordinator,
+                            ChatResolver chatResolver,
+                            DatabaseManager databaseManager) { // <--- добавить
         this.searchService = searchService;
+        this.chatDumpCoordinator = chatDumpCoordinator;
+        this.chatResolver = chatResolver;
+        this.databaseManager = databaseManager; // <--- добавить
     }
 
     @PostMapping("/start")
@@ -28,12 +40,12 @@ public class SearchController {
 
     @DeleteMapping("/database")
     public void deleteDatabase() {
-        searchService.deleteSearchDatabase();
+        // Очищаем БД ТОЛЬКО тех чатов, где был поиск
+        databaseManager.clearSearchChatDatabases();
     }
 
     @GetMapping("/results")
     public java.util.List<SearchResult> getResults() {
-        // Реализацию этого метода нужно добавить в DatabaseManager
         return java.util.Collections.emptyList();
     }
 }
