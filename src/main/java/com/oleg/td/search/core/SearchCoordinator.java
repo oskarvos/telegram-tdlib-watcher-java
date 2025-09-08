@@ -192,9 +192,13 @@ public class SearchCoordinator {
         }
     }
 
-    /** Подстрока/regex-поиск */
+    /** Подстрока/regex-поиск с поддержкой пустого ключа (0 символов) */
     private boolean containsKeyword(String text, String keyword, boolean caseSensitive, boolean useRegex) {
-        if (text == null || keyword == null || keyword.isEmpty()) return false;
+        // Пустой ключ — матчим любое НЕпустое сообщение/подпись (индексация)
+        if (keyword == null || keyword.isEmpty()) {
+            return text != null && !text.isBlank();
+        }
+        if (text == null) return false;
 
         if (useRegex) {
             try {

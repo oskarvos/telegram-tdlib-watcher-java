@@ -6,14 +6,47 @@
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/css/app.css"/>
+
+    <!-- Оверрайды только для этой страницы -->
+    <style>
+        /* Только для страницы с режимами */
+        .page-tools .container {
+            max-width: 1125px;
+        }
+
+        /* У всех секций единая «точка старта» контента */
+        .page-tools section[aria-label] {
+            margin-top: 0;
+        }
+
+        .page-tools section[aria-label] .form-group:first-child {
+            margin-top: 0;
+        }
+
+        /* 4 колонки чекбоксов на широких экранах */
+        @media (min-width: 1024px) {
+            .page-tools .checkbox-group {
+                grid-template-columns: repeat(4, 1fr);
+            }
+        }
+
+        /* Единый старт контента на странице инструментов: ровно 5см от верхнего края */
+        .page-tools {
+            justify-content: flex-start;
+            padding-top: 1cm;
+        }
+        .page-tools .container {
+            margin-top: 0; /* чтобы не добавлялся +20px сверху из .container */
+        }
+    </style>
 </head>
-<body>
+<body class="page-tools">
 <div class="container">
     <h1>TDLib Tools</h1>
 
     <div class="mode-switcher" role="tablist" aria-label="Режимы">
-        <button id="dumpModeBtn"    class="active" role="tab" aria-selected="true">Дамп</button>
-        <button id="searchModeBtn"  role="tab" aria-selected="false">Поиск</button>
+        <button id="dumpModeBtn" class="active" role="tab" aria-selected="true">Дамп</button>
+        <button id="searchModeBtn" role="tab" aria-selected="false">Поиск</button>
         <button id="monitorModeBtn" role="tab" aria-selected="false">Мониторинг</button>
     </div>
 
@@ -27,28 +60,35 @@ id: 123456789"></textarea>
         </div>
 
         <div class="checkbox-group">
-            <div class="checkbox-item"><input id="photos"   type="checkbox"><label for="photos">Фото</label></div>
-            <div class="checkbox-item"><input id="videos"   type="checkbox"><label for="videos">Видео</label></div>
-            <div class="checkbox-item"><input id="links"    type="checkbox"><label for="links">Ссылки</label></div>
-            <div class="checkbox-item"><input id="messages" type="checkbox" checked><label for="messages">Текстовые сообщения</label></div>
-            <div class="checkbox-item"><input id="textDocuments" type="checkbox"><label for="textDocuments">Текстовые документы</label></div>
-            <div class="checkbox-item"><input id="audio"    type="checkbox"><label for="audio">Аудио</label></div>
+            <div class="checkbox-item"><input id="photos" type="checkbox"><label for="photos">Фото</label></div>
+            <div class="checkbox-item"><input id="videos" type="checkbox"><label for="videos">Видео</label></div>
+            <div class="checkbox-item"><input id="links" type="checkbox"><label for="links">Ссылки</label></div>
+            <div class="checkbox-item"><input id="messages" type="checkbox" checked><label for="messages">Текстовые
+                сообщения</label></div>
+            <div class="checkbox-item"><input id="textDocuments" type="checkbox"><label for="textDocuments">Текстовые
+                документы</label></div>
+            <div class="checkbox-item"><input id="audio" type="checkbox"><label for="audio">Аудио</label></div>
         </div>
 
         <div class="text-document-extensions hidden">
             <label>Расширения текстовых файлов (через запятую, без точки)</label>
-            <input id="textExtensions" type="text" placeholder="txt,pdf,doc,docx,rtf,md,csv,json,xml,py,java,js,html,css"/>
-            <div style="margin-top:6px;color:#555;font-size:13px;">Если оставить пустым — будут использованы дефолтные расширения сервиса.</div>
+            <input id="textExtensions" type="text"
+                   placeholder="txt,pdf,doc,docx,rtf,md,csv,json,xml,py,java,js,html,css"/>
+            <div style="margin-top:6px;color:#555;font-size:13px;">Если оставить пустым — будут использованы дефолтные
+                расширения сервиса.
+            </div>
         </div>
 
         <div class="buttons">
             <button class="btn-primary" id="startBtn">Начать дамп</button>
-            <button class="btn-danger"  id="stopBtn">Остановить</button>
+            <button class="btn-danger" id="stopBtn">Остановить</button>
         </div>
 
         <div class="progress-container">
             <div class="progress-label"><span>Прогресс дампа</span><span id="progress-value">0%</span></div>
-            <div id="progress"><div id="progress-bar"></div></div>
+            <div id="progress">
+                <div id="progress-bar"></div>
+            </div>
             <div id="status">Ожидание…</div>
         </div>
     </section>
@@ -60,21 +100,38 @@ id: 123456789"></textarea>
             <textarea id="searchChats" rows="3"></textarea>
         </div>
         <div class="form-group">
-            <label>Ключевое слово / Regex</label>
-            <input id="searchKeyword" type="text" placeholder="например, скидка|акция"/>
+            <label>Ключевое слово / Regex
+                <small id="kwLenHint" style="color:#666;font-weight:400;margin-left:6px;">0/30</small>
+            </label>
+            <input id="searchKeyword" type="text" maxlength="30"
+                   placeholder="0–30 символов, можно пусто (тогда — все сообщения)"/>
         </div>
         <div class="checkbox-group">
-            <div class="checkbox-item"><input id="caseSensitive" type="checkbox"><label for="caseSensitive">Чувствительно к регистру</label></div>
-            <div class="checkbox-item"><input id="regexMode" type="checkbox"><label for="regexMode">Использовать regex</label></div>
+            <div class="checkbox-item"><input id="caseSensitive" type="checkbox"><label for="caseSensitive">Чувствительно
+                к регистру</label></div>
+            <div class="checkbox-item"><input id="regexMode" type="checkbox"><label for="regexMode">Использовать
+                regex</label></div>
+        </div>
+        <div class="checkbox-item">
+            <input id="lengthMode" type="checkbox">
+            <label for="lengthMode">Искать по длине</label>
+        </div>
+        <div class="checkbox-item" style="display:flex;align-items:center;gap:8px;min-width:180px;">
+            <label for="lengthValue" style="margin:0;">Длина</label>
+            <input id="lengthValue" type="number" min="1" max="30" value="17" style="width:90px;" disabled>
+            <span style="color:#666;">символов</span>
         </div>
         <div class="buttons">
             <button class="btn-primary" id="startSearchBtn">Начать поиск</button>
-            <button class="btn-danger"  id="stopSearchBtn">Остановить</button>
+            <button class="btn-danger" id="stopSearchBtn">Остановить</button>
         </div>
 
         <div class="progress-container">
-            <div class="progress-label"><span>Статистика</span><span><span id="searchProcessedValue">0</span> / найдено: <span id="searchFoundValue">0</span></span></div>
-            <div id="searchProgress"><div id="searchProgress-bar"></div></div>
+            <div class="progress-label"><span>Статистика</span><span><span id="searchProcessedValue">0</span> / найдено: <span
+                    id="searchFoundValue">0</span></span></div>
+            <div id="searchProgress">
+                <div id="searchProgress-bar"></div>
+            </div>
             <div id="searchStatus">Ожидание…</div>
         </div>
 
@@ -100,8 +157,10 @@ id: 123456789"></textarea>
             <input id="monitorKeyword" type="text" placeholder="например, оплата|счёт"/>
         </div>
         <div class="checkbox-group">
-            <div class="checkbox-item"><input id="monitorCaseSensitive" type="checkbox"><label for="monitorCaseSensitive">Регистрозависимо</label></div>
-            <div class="checkbox-item"><input id="monitorRegexMode" type="checkbox"><label for="monitorRegexMode">Regex</label></div>
+            <div class="checkbox-item"><input id="monitorCaseSensitive" type="checkbox"><label
+                    for="monitorCaseSensitive">Регистрозависимо</label></div>
+            <div class="checkbox-item"><input id="monitorRegexMode" type="checkbox"><label
+                    for="monitorRegexMode">Regex</label></div>
             <div class="checkbox-item" style="align-items:center;">
                 <label for="monitorInterval">Интервал опроса</label>
             </div>
@@ -120,15 +179,18 @@ id: 123456789"></textarea>
 
         <div class="buttons">
             <button class="btn-primary" id="startMonitorBtn">Старт мониторинга</button>
-            <button class="btn-danger"  id="stopMonitorBtn">Стоп</button>
+            <button class="btn-danger" id="stopMonitorBtn">Стоп</button>
         </div>
 
         <div class="progress-container">
             <div class="progress-label">
                 <span>Сообщений обработано</span>
-                <span><span id="monitorProcessedValue">0</span> (совпадений: <span id="monitorFoundValue">0</span>)</span>
+                <span><span id="monitorProcessedValue">0</span> (совпадений: <span
+                        id="monitorFoundValue">0</span>)</span>
             </div>
-            <div id="monitorProgress"><div id="monitorProgress-bar"></div></div>
+            <div id="monitorProgress">
+                <div id="monitorProgress-bar"></div>
+            </div>
             <div id="monitorStatus" style="margin-top:10px;">Ожидание…</div>
         </div>
 

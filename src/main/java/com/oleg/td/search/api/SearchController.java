@@ -5,7 +5,9 @@ import com.oleg.td.integrations.telegram.ChatResolver;
 import com.oleg.td.persistence.DatabaseManager;
 import com.oleg.td.search.core.SearchService;
 import com.oleg.td.search.model.SearchResult;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/search")
@@ -27,6 +29,14 @@ public class SearchController {
 
     @PostMapping("/start")
     public void start(@RequestBody SearchRequest request) {
+        final String kw = request.getKeyword() == null ? "" : request.getKeyword();
+        if (kw.length() > 30) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Ключевое слово должно быть длиной 0–30 символов"
+            );
+        }
+        // Пустой ключ допустим — обработаем на координаторе (совпадение для любого непустого текста)
         searchService.startSearch(request);
     }
 

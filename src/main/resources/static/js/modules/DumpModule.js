@@ -1,5 +1,5 @@
-import { ApiClient } from '../apiClient.js';
-import { Notifier } from '../components/Notifier.js';
+import {ApiClient} from '../apiClient.js';
+import {Notifier} from '../components/Notifier.js';
 
 
 export class DumpModule extends ApiClient {
@@ -34,9 +34,12 @@ export class DumpModule extends ApiClient {
         };
 
 
-        this.dom.chkTextDocs.addEventListener('change', () => { this.toggleTextDocumentExtensions(); this.saveState(); });
+        this.dom.chkTextDocs.addEventListener('change', () => {
+            this.toggleTextDocumentExtensions();
+            this.saveState();
+        });
         this.dom.btnStart.addEventListener('click', () => this.start());
-        this.dom.btnStop .addEventListener('click', () => this.stop());
+        this.dom.btnStop.addEventListener('click', () => this.stop());
 
 
 // Сохранение состояния формы
@@ -52,27 +55,41 @@ export class DumpModule extends ApiClient {
 
 
 // === Persistence ===
-    get storageKey() { return 'td.dump.state'; }
+    get storageKey() {
+        return 'td.dump.state';
+    }
+
     saveState() {
-        const s = this.#collect();
+        const s = {
+            chats: (this.dom.chats.value || '').split('\n').map(v => v.trim()).filter(Boolean),
+            keyword: (this.dom.keyword.value || '').slice(0, this.MAX_KEYWORD_LEN).trim(),
+            caseSensitive: !!this.dom.case.checked,
+            useRegex: !!this.dom.regex.checked,
+            lengthMode: !!this.dom.lengthMode?.checked,
+            lengthValue: Number(this.dom.lengthValue?.value) || 0
+        };
         localStorage.setItem(this.storageKey, JSON.stringify(s));
     }
+
     restoreState() {
         try {
             const raw = localStorage.getItem(this.storageKey);
             if (!raw) return;
             const s = JSON.parse(raw);
             this.dom.chats.value = (s.chats || []).join('\n');
-            this.dom.photos.checked = !!s.photos;
-            this.dom.videos.checked = !!s.videos;
-            this.dom.links.checked = !!s.links;
-            this.dom.messages.checked = !!s.messages;
-            this.dom.chkTextDocs.checked = !!s.textDocuments;
-            this.dom.audio.checked = !!s.audio;
-            this.dom.extInput.value = s.textDocumentExtensions || '';
-        } catch {}
-    }
+            const kw = (s.keyword || '').slice(0, this.MAX_KEYWORD_LEN);
+            this.dom.keyword.value = kw;
+            this.dom.case.checked = !!s.caseSensitive;
+            this.dom.regex.checked = !!s.useRegex;
 
+            if (this.dom.lengthMode) this.dom.lengthMode.checked = !!s.lengthMode;
+            if (this.dom.lengthValue && s.lengthValue != null) {
+                this.dom.lengthValue.value = String(s.lengthValue);
+            }
+        } catch {
+            // ignore
+        }
+    }
 
     toggleTextDocumentExtensions() {
         const visible = this.dom.chkTextDocs.checked;
@@ -93,6 +110,7 @@ export class DumpModule extends ApiClient {
             textDocumentExtensions: this.dom.extInput.value.trim() || null
         };
     }
+
     async start() {
         const req = this.#collect();
 
@@ -132,8 +150,18 @@ export class DumpModule extends ApiClient {
     }
 
 
-    #beginPolling(){ this.#endPolling(); this.#pollOnce(); this.pollInterval = setInterval(() => this.#pollOnce(), 1000); }
-    #endPolling(){ if (this.pollInterval) { clearInterval(this.pollInterval); this.pollInterval = null; } }
+    #beginPolling() {
+        this.#endPolling();
+        this.#pollOnce();
+        this.pollInterval = setInterval(() => this.#pollOnce(), 1000);
+    }
+
+    #endPolling() {
+        if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+        }
+    }
 
 
     async #pollOnce() {
@@ -155,12 +183,13 @@ export class DumpModule extends ApiClient {
     }
 
 
-    setProgress(percent, complete=false){
+    setProgress(percent, complete = false) {
         this.dom.bar.style.width = percent + '%';
         this.dom.label.textContent = percent + '%';
         this.dom.bar.classList.toggle('green', !!complete);
     }
-    setStatus(text, bg, color){
+
+    setStatus(text, bg, color) {
         this.dom.status.textContent = text;
         this.dom.status.style.backgroundColor = bg;
         this.dom.status.style.color = color;
