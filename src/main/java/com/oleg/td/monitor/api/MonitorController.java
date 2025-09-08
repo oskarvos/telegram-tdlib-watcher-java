@@ -1,0 +1,37 @@
+package com.oleg.td.monitor.api;
+
+import com.oleg.td.monitor.core.MonitorService;
+import com.oleg.td.monitor.persistence.MonitorDbManager;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/monitor")
+public class MonitorController {
+    private final MonitorService service;
+    private final MonitorDbManager db;
+
+    public MonitorController(MonitorService service, MonitorDbManager db) {
+        this.service = service;
+        this.db = db;
+    }
+
+    @PostMapping("/start")
+    public void start(@RequestBody MonitorRequest request) {
+        service.startMonitoring(request);
+    }
+
+    @PostMapping("/stop")
+    public void stop() {
+        service.stopMonitoring();
+    }
+
+    @GetMapping("/progress")
+    public MonitorProgress progress() {
+        return service.getProgress();
+    }
+
+    @DeleteMapping("/database")
+    public void deleteDatabase() {
+        db.clearMonitorChatDatabases(); // чистим все MONITOR-БД и сбрасываем чекпоинты мониторинга
+    }
+}

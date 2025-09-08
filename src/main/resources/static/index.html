@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>TDLib Дамп и Поиск Чатов</title>
+    <title>TDLib Чатов</title>
 
     <!-- Иконки как в твоём примере -->
     <link rel="stylesheet"
@@ -16,11 +16,12 @@
 <div class="mode-switcher">
     <button id="dumpModeBtn" class="active" aria-controls="dumpContainer" aria-selected="true">Режим выгрузки</button>
     <button id="searchModeBtn" aria-controls="searchContainer" aria-selected="false">Режим поиска</button>
+    <button id="monitorModeBtn" aria-controls="monitorContainer" aria-selected="false">Режим мониторинга</button>
 </div>
 
 <div class="container" id="dumpContainer">
     <div class="logo"><i class="fab fa-telegram"></i></div>
-    <h1>TDLib Дамп Чатов</h1>
+    <h1>Дамп чатов</h1>
 
     <div class="form-group">
         <label for="chats">Ссылки или ID чатов (по одному на строку):</label>
@@ -96,8 +97,57 @@
     </div>
 </div>
 
+<div class="container hidden" id="monitorContainer">
+    <div class="logo"><i class="fas fa-bell"></i></div>
+    <h1>Мониторинг чатов</h1>
+
+    <div class="form-group">
+        <label for="monitorChats">Чаты (по одному на строке):</label>
+        <textarea id="monitorChats" placeholder="https://t.me/..., @channel, 123456789"></textarea>
+    </div>
+
+    <div class="form-group">
+        <label for="monitorKeyword">Ключевое слово / выражение:</label>
+        <input type="text" id="monitorKeyword" placeholder="например: акция|скидка">
+    </div>
+
+    <div class="checkbox-group">
+        <div class="checkbox-item"><input type="checkbox" id="monitorCaseSensitive"><label for="monitorCaseSensitive">Чувствительность
+            к регистру</label></div>
+        <div class="checkbox-item"><input type="checkbox" id="monitorRegexMode"><label for="monitorRegexMode">Регулярные
+            выражения</label></div>
+        <div class="checkbox-item" style="align-items:center;">
+            <label for="monitorInterval" style="margin:0 8px 0 0;">Интервал опроса</label>
+            <select id="monitorInterval">
+                <option value="1s">1 сек</option>
+                <option value="30s">30 сек</option>
+                <option value="1m" selected>1 мин</option>
+                <option value="5m">5 мин</option>
+                <option value="30m">30 мин</option>
+                <option value="1h">1 час</option>
+                <option value="1d">1 день</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="buttons">
+        <button id="startMonitorBtn" class="btn-primary"><i class="fas fa-play"></i> Старт мониторинг</button>
+        <button id="stopMonitorBtn" class="btn-danger"><i class="fas fa-stop"></i> Стоп</button>
+        <button id="deleteMonitorDbBtn" class="btn-success"><i class="fas fa-trash"></i> Удалить БД мониторинга</button>
+    </div>
+
+    <div class="progress-container">
+        <div class="progress-label"><span>Обработано сообщений:</span><span id="monitorProcessedValue">0</span></div>
+        <div class="progress-label"><span>Обнаружено совпадений:</span><span id="monitorFoundValue">0</span></div>
+        <div id="searchProgress">
+            <div id="monitorProgress-bar"></div>
+        </div>
+        <div class="status" id="monitorStatus">Мониторинг не запущен</div>
+    </div>
+</div>
+
 <div id="toasts" class="toasts" aria-live="polite" aria-atomic="true"></div>
-<div class="footer"><p>TDLib Chat Dump &amp; Search © 2025</p></div>
+<div class="footer"><p>TDLib Chat © 2025</p></div>
 
 <!-- ВАЖНО: относительный путь, без /static -->
 <script type="module" src="js/main.js"></script>
