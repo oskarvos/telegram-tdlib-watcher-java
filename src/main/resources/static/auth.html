@@ -15,6 +15,7 @@
 <div class="container">
     <h1>Авторизация в Telegram</h1>
 
+
     <!-- Шаг 1 -->
     <div id="step1">
         <div class="form-group">
@@ -32,13 +33,18 @@
         <div class="form-group">
             <label><input id="useTestDc" type="checkbox"/> Использовать тестовый DC</label>
         </div>
+        <div class="form-group">
+            <label><input id="rememberCreds" type="checkbox"/> Запомнить введённые данные</label>
+        </div>
         <div class="buttons">
             <button class="btn-primary" id="btnSendCode">Отправить код</button>
         </div>
         <div id="s1status" class="status"></div>
     </div>
 
+
     <hr style="margin:20px 0"/>
+
 
     <!-- Шаг 2 -->
     <div id="step2" class="hidden">
@@ -58,8 +64,10 @@
     </div>
 </div>
 
+
 <div id="toasts" class="toasts"></div>
 <div class="footer">TDLib Web • Авторизация</div>
+
 
 <script type="module" src="/js/auth.js"></script>
 </body>

@@ -18,9 +18,9 @@ public class HomeController {
         return authFlow.isAuthorized() ? "forward:/index.html" : "forward:/auth.html";
     }
 
-    // дополнительный alias, чтобы можно было явно перейти на приложение
+    // При прямом заходе/обновлении /app: если не авторизованы — уходим на / (авторизация)
     @GetMapping("/app")
     public String app() {
-        return "forward:/index.html";
+        return authFlow.isAuthorized() ? "forward:/index.html" : "redirect:/";
     }
 }

@@ -1,5 +1,6 @@
 import { ApiClient } from '../apiClient.js';
-import { Notifier }   from '../components/Notifier.js';
+import { Notifier } from '../components/Notifier.js';
+
 
 export class DumpModule extends ApiClient {
     constructor() {
@@ -7,38 +8,77 @@ export class DumpModule extends ApiClient {
         this.notify = new Notifier();
         this.pollInterval = null;
 
+
         this.dom = {
             container: document.getElementById('dumpContainer'),
             chkTextDocs: document.getElementById('textDocuments'),
             extBlock: document.querySelector('.text-document-extensions'),
             extInput: document.getElementById('textExtensions'),
 
-            chats:    document.getElementById('chats'),
-            photos:   document.getElementById('photos'),
-            videos:   document.getElementById('videos'),
-            links:    document.getElementById('links'),
+
+            chats: document.getElementById('chats'),
+            photos: document.getElementById('photos'),
+            videos: document.getElementById('videos'),
+            links: document.getElementById('links'),
             messages: document.getElementById('messages'),
-            audio:    document.getElementById('audio'),
+            audio: document.getElementById('audio'),
+
 
             btnStart: document.getElementById('startBtn'),
-            btnStop:  document.getElementById('stopBtn'),
+            btnStop: document.getElementById('stopBtn'),
 
-            bar:      document.getElementById('progress-bar'),
-            label:    document.getElementById('progress-value'),
-            status:   document.getElementById('status'),
+
+            bar: document.getElementById('progress-bar'),
+            label: document.getElementById('progress-value'),
+            status: document.getElementById('status'),
         };
 
-        this.dom.chkTextDocs.addEventListener('change', () => this.toggleTextDocumentExtensions());
+
+        this.dom.chkTextDocs.addEventListener('change', () => { this.toggleTextDocumentExtensions(); this.saveState(); });
         this.dom.btnStart.addEventListener('click', () => this.start());
         this.dom.btnStop .addEventListener('click', () => this.stop());
 
+
+// Сохранение состояния формы
+        [this.dom.chats, this.dom.extInput]
+            .forEach(el => el.addEventListener('input', () => this.saveState()));
+        [this.dom.photos, this.dom.videos, this.dom.links, this.dom.messages, this.dom.audio]
+            .forEach(el => el.addEventListener('change', () => this.saveState()));
+
+
+        this.restoreState();
         this.toggleTextDocumentExtensions();
     }
+
+
+// === Persistence ===
+    get storageKey() { return 'td.dump.state'; }
+    saveState() {
+        const s = this.#collect();
+        localStorage.setItem(this.storageKey, JSON.stringify(s));
+    }
+    restoreState() {
+        try {
+            const raw = localStorage.getItem(this.storageKey);
+            if (!raw) return;
+            const s = JSON.parse(raw);
+            this.dom.chats.value = (s.chats || []).join('\n');
+            this.dom.photos.checked = !!s.photos;
+            this.dom.videos.checked = !!s.videos;
+            this.dom.links.checked = !!s.links;
+            this.dom.messages.checked = !!s.messages;
+            this.dom.chkTextDocs.checked = !!s.textDocuments;
+            this.dom.audio.checked = !!s.audio;
+            this.dom.extInput.value = s.textDocumentExtensions || '';
+        } catch {}
+    }
+
 
     toggleTextDocumentExtensions() {
         const visible = this.dom.chkTextDocs.checked;
         this.dom.extBlock.classList.toggle('hidden', !visible);
     }
+
 
     #collect() {
         const chats = (this.dom.chats.value || '').split(/\r?\n|,|;/g).map(s => s.trim()).filter(Boolean);
@@ -53,17 +93,20 @@ export class DumpModule extends ApiClient {
             textDocumentExtensions: this.dom.extInput.value.trim() || null
         };
     }
-
     async start() {
         const req = this.#collect();
 
-        if (!req.chats.length)   return this.setStatus('Ошибка: не указаны чаты', '#ffecec', '#e74c3c');
+
+        if (!req.chats.length) return this.setStatus('Ошибка: не указаны чаты', '#ffecec', '#e74c3c');
         if (!req.photos && !req.videos && !req.links && !req.messages && !req.textDocuments && !req.audio)
             return this.setStatus('Ошибка: не выбран ни один тип контента', '#ffecec', '#e74c3c');
 
+
+        this.saveState();
         this.dom.bar.classList.remove('green');
         this.setStatus('Запуск дампа...', '#edf7ff', '#2c3e50');
         this.setProgress(0);
+
 
         try {
             await this.post('/start', req);
@@ -76,6 +119,7 @@ export class DumpModule extends ApiClient {
         }
     }
 
+
     async stop() {
         this.setStatus('Останавливаем...', '#fff4e6', '#e67e22');
         try {
@@ -87,8 +131,10 @@ export class DumpModule extends ApiClient {
         }
     }
 
+
     #beginPolling(){ this.#endPolling(); this.#pollOnce(); this.pollInterval = setInterval(() => this.#pollOnce(), 1000); }
     #endPolling(){ if (this.pollInterval) { clearInterval(this.pollInterval); this.pollInterval = null; } }
+
 
     async #pollOnce() {
         try {
@@ -107,6 +153,7 @@ export class DumpModule extends ApiClient {
             this.#endPolling();
         }
     }
+
 
     setProgress(percent, complete=false){
         this.dom.bar.style.width = percent + '%';
