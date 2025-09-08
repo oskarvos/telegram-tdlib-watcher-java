@@ -2,9 +2,9 @@ package com.oleg.td.search.api;
 
 import com.oleg.td.dump.core.ChatDumpCoordinator;
 import com.oleg.td.integrations.telegram.ChatResolver;
-import com.oleg.td.persistence.DatabaseManager; // <--- добавить
-import com.oleg.td.search.model.SearchResult;
+import com.oleg.td.persistence.DatabaseManager;
 import com.oleg.td.search.core.SearchService;
+import com.oleg.td.search.model.SearchResult;
 import org.springframework.web.bind.annotation.*;
 
 @RestController

@@ -1,100 +1,126 @@
-// Логика блока «Поиск». Вызовы и тексты статусов совпадают с образцом.
-(function (global) {
-    function SearchMode() {
-        ApiClient.call(this);
+// Логика блока «Поиск»: запуск/стоп/очистка БД и опрос прогресса.
+import { ApiClient } from '../apiClient.js';
+import { Notifier } from '../components/Notifier.js';
+
+export class SearchModule extends ApiClient {
+    constructor() {
+        super();
+        this.notify = new Notifier();
         this.pollInterval = null;
-    }
 
-    SearchMode.prototype = Object.create(ApiClient.prototype);
+        // DOM
+        this.dom = {
+            searchContainer: document.getElementById('searchContainer'),
 
-    SearchMode.prototype.startSearch = async function () {
-        var chats = (document.getElementById('searchChats').value || '')
-            .split(/\n+/).map(function (s) {
-                return s.trim();
-            }).filter(Boolean);
-        var keyword = document.getElementById('searchKeyword').value.trim();
+            chats:   document.getElementById('searchChats'),
+            keyword: document.getElementById('searchKeyword'),
+            case:    document.getElementById('caseSensitive'),
+            regex:   document.getElementById('regexMode'),
 
-        if (!chats.length)
-            return this.setStatus('Ошибка: не указаны чаты для поиска', '#ffecec', '#e74c3c');
-        if (!keyword)
-            return this.setStatus('Ошибка: не указано ключевое слово', '#ffecec', '#e74c3c');
+            btnStart: document.getElementById('startSearchBtn'),
+            btnStop:  document.getElementById('stopSearchBtn'),
+            btnDelDb: document.getElementById('deleteSearchDbBtn'),
 
-        var req = {
-            chats: chats,
-            keyword: keyword,
-            caseSensitive: document.getElementById('caseSensitive').checked,
-            useRegex: document.getElementById('regexMode').checked
+            processed: document.getElementById('searchProcessedValue'),
+            found:     document.getElementById('searchFoundValue'),
+            bar:       document.getElementById('searchProgress-bar'),
+            status:    document.getElementById('searchStatus'),
         };
 
-        document.getElementById('searchProgress-bar').classList.remove('green');
+        // Навешиваем обработчики
+        this.dom.btnStart.addEventListener('click', () => this.startSearch());
+        this.dom.btnStop .addEventListener('click', () => this.stopSearch());
+        this.dom.btnDelDb.addEventListener('click', () => this.deleteSearchDatabase());
+    }
+
+    #collectRequest() {
+        const chats = (this.dom.chats.value || '')
+            .split(/\n+/).map(s => s.trim()).filter(Boolean);
+
+        return {
+            chats,
+            keyword: this.dom.keyword.value.trim(),
+            caseSensitive: this.dom.case.checked,
+            useRegex: this.dom.regex.checked
+        };
+    }
+
+    async startSearch() {
+        const req = this.#collectRequest();
+
+        if (!req.chats.length)
+            return this.setStatus('Ошибка: не указаны чаты для поиска', '#ffecec', '#e74c3c');
+
+        if (!req.keyword)
+            return this.setStatus('Ошибка: не указано ключевое слово', '#ffecec', '#e74c3c');
+
+        this.dom.bar.classList.remove('green');
         this.setStatus('Начинаем поиск...', '#edf7ff', '#2c3e50');
-        this.setProgress(0, 0);
+        this.setProgress(0, 0, false);
 
         try {
             await this.post('/api/search/start', req);
             this.setStatus('Поиск выполняется...', '#edf7ff', '#2c3e50');
-            var self = this;
-            if (this.pollInterval) clearInterval(this.pollInterval);
-            this.pollInterval = setInterval(function () {
-                self.pollSearchProgress();
-            }, 1000);
+            this.notify.info('Поиск запущен');
+            this.#beginPolling();
         } catch (e) {
             this.setStatus('Ошибка запуска: ' + e.message, '#ffecec', '#e74c3c');
+            this.notify.error(e.message);
         }
-    };
+    }
 
-    SearchMode.prototype.stopSearch = async function () {
+    async stopSearch() {
         this.setStatus('Останавливаем поиск...', '#fff4e6', '#e67e22');
         try {
             await this.post('/api/search/stop', {});
             this.setStatus('Поиск остановлен', '#ffecec', '#e74c3c');
-            if (this.pollInterval) clearInterval(this.pollInterval);
+            this.#endPolling();
         } catch (e) {
             this.setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c');
         }
-    };
+    }
 
-    SearchMode.prototype.pollSearchProgress = async function () {
-        try {
-            var data = await this.get('/api/search/progress');
-            var processed = (data && data.processedMessages) || 0;
-            var found = (data && data.foundMessages) || 0;
-            this.setProgress(processed, found);
-
-            if (data && data.running) {
-                this.setStatus('Поиск выполняется... Обработано: ' + processed + ', Найдено: ' + found, '#edf7ff', '#2c3e50');
-            } else {
-                this.setProgress(processed, found, true);
-                this.setStatus('Поиск завершен!', '#e7f6ec', '#27ae60');
-                if (this.pollInterval) clearInterval(this.pollInterval);
-            }
-        } catch (e) {
-            this.setStatus('Ошибка запроса прогресса: ' + e.message, '#ffecec', '#e74c3c');
-            if (this.pollInterval) clearInterval(this.pollInterval);
-        }
-    };
-
-    SearchMode.prototype.deleteSearchDatabase = async function () {
+    async deleteSearchDatabase() {
         try {
             await this.del('/api/search/database');
             this.setStatus('База данных поиска удалена', '#e7f6ec', '#27ae60');
+            this.notify.ok('SEARCH-БД очищена');
         } catch (e) {
             this.setStatus('Ошибка удаления БД: ' + e.message, '#ffecec', '#e74c3c');
         }
-    };
+    }
 
-    SearchMode.prototype.setProgress = function (processed, found, complete) {
-        document.getElementById('searchProcessedValue').textContent = processed;
-        document.getElementById('searchFoundValue').textContent = found;
-        var bar = document.getElementById('searchProgress-bar');
-        if (complete) bar.classList.add('green'); else bar.classList.remove('green');
-    };
-    SearchMode.prototype.setStatus = function (text, bg, color) {
-        var el = document.getElementById('searchStatus');
-        el.textContent = text;
-        el.style.backgroundColor = bg;
-        el.style.color = color;
-    };
+    #beginPolling() { this.#endPolling(); this.#pollOnce(); this.pollInterval = setInterval(() => this.#pollOnce(), 1000); }
+    #endPolling()   { if (this.pollInterval) { clearInterval(this.pollInterval); this.pollInterval = null; } }
 
-    global.SearchMode = SearchMode;
-})(window);
+    async #pollOnce() {
+        try {
+            const p = await this.get('/api/search/progress');
+            const processed = p?.processedMessages || 0;
+            const found     = p?.foundMessages || 0;
+            this.setProgress(processed, found, !p?.running);
+
+            if (p?.running) {
+                this.setStatus(`Поиск выполняется... Обработано: ${processed}, Найдено: ${found}`, '#edf7ff', '#2c3e50');
+            } else {
+                this.setStatus('Поиск завершен!', '#e7f6ec', '#27ae60');
+                this.#endPolling();
+            }
+        } catch (e) {
+            this.setStatus('Ошибка запроса прогресса: ' + e.message, '#ffecec', '#e74c3c');
+            this.#endPolling();
+        }
+    }
+
+    setProgress(processed, found, complete = false) {
+        this.dom.processed.textContent = processed;
+        this.dom.found.textContent = found;
+        this.dom.bar.classList.toggle('green', !!complete);
+    }
+
+    setStatus(text, bg, color) {
+        this.dom.status.textContent = text;
+        this.dom.status.style.backgroundColor = bg;
+        this.dom.status.style.color = color;
+    }
+}

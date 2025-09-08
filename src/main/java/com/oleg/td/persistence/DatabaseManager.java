@@ -583,23 +583,44 @@ public class DatabaseManager {
      * - выполняем VACUUM
      * - файлы не удаляем
      */
+    /** Полная логическая очистка всех SEARCH-БД + сброс чекпоинтов поиска во всех DUMP-БД */
     public void clearSearchChatDatabases() {
+        // 1) Очистка всех SEARCH *.db
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "SEARCH *.db")) {
             for (Path p : ds) {
-                try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p.toString())) {
-                    dropAllUserTables(c); // sqlite_sequence/ sqlite_master не трогаем
-                    try (Statement s = c.createStatement()) {
-                        s.execute("VACUUM");
-                    }
+                try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p)) {
+                    dropAllUserTables(c);
+                    try (Statement s = c.createStatement()) { s.execute("VACUUM"); }
                     log.info("Очищена SEARCH-БД: {}", p.getFileName());
                 } catch (SQLException e) {
-                    log.error("БД: ошибка обработки {}: {}", p, e.getMessage(), e);
+                    log.error("БД(SEARCH): ошибка обработки {}: {}", p, e.getMessage(), e);
+                }
+            }
+        } catch (IOException e) {
+            log.error("БД: ошибка перебора каталога {}: {}", dbDir, e.getMessage(), e);
+        }
+
+        // 2) Сброс ключа search_last_message_id во всех DUMP *.db
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "DUMP *.db")) {
+            for (Path p : ds) {
+                try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p)) {
+                    if (tableExists(c, "metadata")) {
+                        try (PreparedStatement ps = c.prepareStatement(
+                                "DELETE FROM " + qIdent("metadata") + " WHERE key = ?")) {
+                            ps.setString(1, "search_last_message_id");
+                            ps.executeUpdate();
+                        }
+                        log.info("DUMP-БД {}: сброшен search_last_message_id", p.getFileName());
+                    }
+                } catch (SQLException e) {
+                    log.error("БД(DUMP): ошибка сброса чекпоинта в {}: {}", p.getFileName(), e.getMessage(), e);
                 }
             }
         } catch (IOException e) {
             log.error("БД: ошибка перебора каталога {}: {}", dbDir, e.getMessage(), e);
         }
     }
+
 
     /* ===================== Служебные хелперы для БД ===================== */
 
@@ -737,5 +758,34 @@ public class DatabaseManager {
     public void clearAllSearchDatabases() {
         clearSearchChatDatabases();
     }
+
+    /** Сброс чекпоинта поиска (ключ search_last_message_id) в DUMP-БД конкретного чата */
+    public void resetSearchCheckpoint(long chatId) {
+        try (Connection c = open(chatId)) {
+            if (tableExists(c, "metadata")) {
+                try (PreparedStatement ps =
+                             c.prepareStatement("DELETE FROM " + qIdent("metadata") + " WHERE key = ?")) {
+                    ps.setString(1, "search_last_message_id");
+                    ps.executeUpdate();
+                }
+            }
+            log.info("БД(DUMP {}): сброшен чекпоинт поиска search_last_message_id",
+                    getChatNameForDatabase(chatId));
+        } catch (SQLException e) {
+            log.error("БД(DUMP): ошибка сброса чекпоинта поиска для {}: {}", chatId, e.getMessage(), e);
+        }
+    }
+
+    /** Очистить SEARCH-БД конкретного чата (дроп всех пользовательских таблиц + VACUUM) */
+    public void clearSearchDatabase(long chatId) {
+        try (Connection c = openSearch(chatId)) {
+            dropAllUserTables(c);
+            try (Statement s = c.createStatement()) { s.execute("VACUUM"); }
+            log.info("Очищена SEARCH-БД для чата {}", getChatNameForDatabase(chatId));
+        } catch (SQLException e) {
+            log.error("БД(SEARCH): ошибка очистки для чата {}: {}", chatId, e.getMessage(), e);
+        }
+    }
+
 
 }

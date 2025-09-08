@@ -1,31 +1,23 @@
-// Базовый HTTP-клиент (fetch + JSON). Делаем глобальным.
-(function (global) {
-    function ApiClient(baseUrl) {
-        this.baseUrl = baseUrl || '';
-    }
+// Базовый HTTP-клиент для REST вызовов бэкенда.
+export class ApiClient {
+    constructor(baseUrl = '') { this.baseUrl = baseUrl; }
 
-    ApiClient.prototype.request = async function (endpoint, options) {
-        const res = await fetch((this.baseUrl || '') + endpoint, Object.assign({
-            headers: {'Content-Type': 'application/json'}
-        }, options || {}));
-        const ct = res.headers.get('content-type') || '';
-        const parse = async () => (ct.includes('application/json') ? res.json() : res.text());
+    async request(endpoint, options = {}) {
+        const res = await fetch(`${this.baseUrl}${endpoint}`, {
+            headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+            ...options
+        });
+        const contentType = res.headers.get('content-type') || '';
+        const parse = async () => contentType.includes('application/json') ? res.json() : res.text();
+
         if (!res.ok) {
             const msg = await parse().catch(() => res.statusText);
             throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
         }
         return parse();
-    };
+    }
 
-    ApiClient.prototype.get = function (e) {
-        return this.request(e, {method: 'GET'});
-    };
-    ApiClient.prototype.post = function (e, d) {
-        return this.request(e, {method: 'POST', body: JSON.stringify(d || {})});
-    };
-    ApiClient.prototype.del = function (e) {
-        return this.request(e, {method: 'DELETE'});
-    };
-
-    global.ApiClient = ApiClient;
-})(window);
+    get(endpoint)     { return this.request(endpoint, { method: 'GET' }); }
+    post(endpoint, d) { return this.request(endpoint, { method: 'POST', body: JSON.stringify(d || {}) }); }
+    del(endpoint)     { return this.request(endpoint, { method: 'DELETE' }); }
+}

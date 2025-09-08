@@ -1,26 +1,15 @@
-// Простой тост-уведомитель. Делаем глобальным.
-(function (global) {
-    function Notifier(root) {
-        this.root = root || document.getElementById('toasts');
-    }
+// Простейшие тост-уведомления (правый нижний угол).
+export class Notifier {
+    constructor(root = document.getElementById('toasts')) { this.root = root; }
+    info(msg)  { this.#push(msg, ''); }
+    ok(msg)    { this.#push(msg, 'ok'); }
+    error(msg) { this.#push(msg, 'error'); }
 
-    Notifier.prototype.info = function (m) {
-        this._push(m, '');
-    };
-    Notifier.prototype.ok = function (m) {
-        this._push(m, 'ok');
-    };
-    Notifier.prototype.error = function (m) {
-        this._push(m, 'error');
-    };
-    Notifier.prototype._push = function (msg, cls) {
-        var el = document.createElement('div');
-        el.className = 'toast ' + (cls || '');
-        el.textContent = msg;
+    #push(message, cls) {
+        const el = document.createElement('div');
+        el.className = `toast ${cls}`;
+        el.textContent = message;
         this.root.appendChild(el);
-        setTimeout(function () {
-            el.remove();
-        }, 4000);
-    };
-    global.Notifier = Notifier;
-})(window);
+        setTimeout(() => el.remove(), 4000);
+    }
+}

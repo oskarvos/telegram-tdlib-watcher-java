@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8" />
+    <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>TDLib Дамп и Поиск Чатов</title>
 
@@ -28,12 +28,16 @@
     </div>
 
     <div class="checkbox-group">
-        <div class="checkbox-item"><input type="checkbox" id="photos" checked><label for="photos">Фотографии</label></div>
+        <div class="checkbox-item"><input type="checkbox" id="photos" checked><label for="photos">Фотографии</label>
+        </div>
         <div class="checkbox-item"><input type="checkbox" id="videos" checked><label for="videos">Видео</label></div>
-        <div class="checkbox-item"><input type="checkbox" id="links"  checked><label for="links">Ссылки</label></div>
-        <div class="checkbox-item"><input type="checkbox" id="messages" checked><label for="messages">Сообщения</label></div>
-        <div class="checkbox-item"><input type="checkbox" id="textDocuments"><label for="textDocuments">Текстовые документы</label></div>
-        <div class="checkbox-item"><input type="checkbox" id="audio" checked><label for="audio">Аудио файлы</label></div>
+        <div class="checkbox-item"><input type="checkbox" id="links" checked><label for="links">Ссылки</label></div>
+        <div class="checkbox-item"><input type="checkbox" id="messages" checked><label for="messages">Сообщения</label>
+        </div>
+        <div class="checkbox-item"><input type="checkbox" id="textDocuments"><label for="textDocuments">Текстовые
+            документы</label></div>
+        <div class="checkbox-item"><input type="checkbox" id="audio" checked><label for="audio">Аудио файлы</label>
+        </div>
     </div>
 
     <div class="text-document-extensions hidden">
@@ -48,7 +52,9 @@
 
     <div class="progress-container">
         <div class="progress-label"><span>Прогресс:</span><span id="progress-value">0%</span></div>
-        <div id="progress"><div id="progress-bar"></div></div>
+        <div id="progress">
+            <div id="progress-bar"></div>
+        </div>
         <div class="status" id="status">Готово к началу</div>
     </div>
 </div>
@@ -68,8 +74,10 @@
     </div>
 
     <div class="checkbox-group">
-        <div class="checkbox-item"><input type="checkbox" id="caseSensitive"><label for="caseSensitive">Чувствительность к регистру</label></div>
-        <div class="checkbox-item"><input type="checkbox" id="regexMode"><label for="regexMode">Регулярные выражения</label></div>
+        <div class="checkbox-item"><input type="checkbox" id="caseSensitive"><label for="caseSensitive">Чувствительность
+            к регистру</label></div>
+        <div class="checkbox-item"><input type="checkbox" id="regexMode"><label for="regexMode">Регулярные
+            выражения</label></div>
     </div>
 
     <div class="buttons">
@@ -81,7 +89,9 @@
     <div class="progress-container">
         <div class="progress-label"><span>Обработано сообщений:</span><span id="searchProcessedValue">0</span></div>
         <div class="progress-label"><span>Найдено совпадений:</span><span id="searchFoundValue">0</span></div>
-        <div id="searchProgress"><div id="searchProgress-bar"></div></div>
+        <div id="searchProgress">
+            <div id="searchProgress-bar"></div>
+        </div>
         <div class="status" id="searchStatus">Поиск не запущен</div>
     </div>
 </div>

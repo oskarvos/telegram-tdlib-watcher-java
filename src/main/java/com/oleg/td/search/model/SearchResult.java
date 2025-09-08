@@ -32,33 +32,83 @@ public class SearchResult {
     }
 
     // Геттеры и сеттеры для всех полей
-    public long getId() { return id; }
-    public void setId(long id) { this.id = id; }
+    public long getId() {
+        return id;
+    }
 
-    public long getChatId() { return chatId; }
-    public void setChatId(long chatId) { this.chatId = chatId; }
+    public void setId(long id) {
+        this.id = id;
+    }
 
-    public String getChatTitle() { return chatTitle; }
-    public void setChatTitle(String chatTitle) { this.chatTitle = chatTitle; }
+    public long getChatId() {
+        return chatId;
+    }
 
-    public long getMessageId() { return messageId; }
-    public void setMessageId(long messageId) { this.messageId = messageId; }
+    public void setChatId(long chatId) {
+        this.chatId = chatId;
+    }
 
-    public LocalDateTime getMessageDate() { return messageDate; }
-    public void setMessageDate(LocalDateTime messageDate) { this.messageDate = messageDate; }
+    public String getChatTitle() {
+        return chatTitle;
+    }
 
-    public String getKeyword() { return keyword; }
-    public void setKeyword(String keyword) { this.keyword = keyword; }
+    public void setChatTitle(String chatTitle) {
+        this.chatTitle = chatTitle;
+    }
 
-    public String getMessageText() { return messageText; }
-    public void setMessageText(String messageText) { this.messageText = messageText; }
+    public long getMessageId() {
+        return messageId;
+    }
 
-    public String getSenderId() { return senderId; }
-    public void setSenderId(String senderId) { this.senderId = senderId; }
+    public void setMessageId(long messageId) {
+        this.messageId = messageId;
+    }
 
-    public String getSenderName() { return senderName; }
-    public void setSenderName(String senderName) { this.senderName = senderName; }
+    public LocalDateTime getMessageDate() {
+        return messageDate;
+    }
 
-    public LocalDateTime getFoundDate() { return foundDate; }
-    public void setFoundDate(LocalDateTime foundDate) { this.foundDate = foundDate; }
+    public void setMessageDate(LocalDateTime messageDate) {
+        this.messageDate = messageDate;
+    }
+
+    public String getKeyword() {
+        return keyword;
+    }
+
+    public void setKeyword(String keyword) {
+        this.keyword = keyword;
+    }
+
+    public String getMessageText() {
+        return messageText;
+    }
+
+    public void setMessageText(String messageText) {
+        this.messageText = messageText;
+    }
+
+    public String getSenderId() {
+        return senderId;
+    }
+
+    public void setSenderId(String senderId) {
+        this.senderId = senderId;
+    }
+
+    public String getSenderName() {
+        return senderName;
+    }
+
+    public void setSenderName(String senderName) {
+        this.senderName = senderName;
+    }
+
+    public LocalDateTime getFoundDate() {
+        return foundDate;
+    }
+
+    public void setFoundDate(LocalDateTime foundDate) {
+        this.foundDate = foundDate;
+    }
 }

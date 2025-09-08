@@ -1,4 +1,4 @@
-/* ===== Стили 1в1 как в образце ===== */
+/* ===== БАЗА — как в образце ===== */
 * {
     box-sizing: border-box;
     margin: 0;
@@ -17,10 +17,15 @@ body {
     color: #333;
 }
 
+/* ВСПОМОГАТЕЛЬНОЕ: класс скрытия */
+.hidden {
+    display: none !important;
+}
+
 .container {
     width: 100%;
     max-width: 750px;
-    background-color: white;
+    background-color: #fff;
     border-radius: 16px;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
     padding: 35px;
@@ -84,7 +89,6 @@ textarea:focus, input:focus {
     box-shadow: 0 0 0 3px rgba(106, 17, 203, 0.2);
 }
 
-/* Чекбоксы */
 .checkbox-group {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -119,7 +123,6 @@ textarea:focus, input:focus {
     font-weight: 500;
 }
 
-/* Кнопки */
 .buttons {
     display: flex;
     gap: 20px;
@@ -141,40 +144,38 @@ button {
     gap: 10px;
 }
 
-#startBtn, #startSearchBtn {
+.btn-primary {
     background: #6a11cb;
-    color: white;
+    color: #fff;
 }
 
-#startBtn:hover, #startSearchBtn:hover {
+.btn-primary:hover {
     background: #5a0fb8;
 }
 
-#stopBtn, #stopSearchBtn {
+.btn-danger {
     background: #e74c3c;
-    color: white;
+    color: #fff;
 }
 
-#stopBtn:hover, #stopSearchBtn:hover {
+.btn-danger:hover {
     background: #d62c1a;
 }
 
-#deleteSearchDbBtn {
+.btn-success {
     background: #27ae60;
-    color: white;
+    color: #fff;
 }
 
-#deleteSearchDbBtn:hover {
+.btn-success:hover {
     background: #219a52;
 }
 
-/* Блок расширений — по умолчанию скрыт */
+/* По образцу: блок расширений скрыт по умолчанию */
 .text-document-extensions {
-    display: none;
     margin-top: 15px;
 }
 
-/* Прогресс и статус */
 .progress-container {
     margin-top: 20px;
 }
@@ -222,7 +223,6 @@ button {
     opacity: 0.8;
 }
 
-/* Переключатель режимов */
 .mode-switcher {
     display: flex;
     gap: 10px;
@@ -243,7 +243,6 @@ button {
     background: #6a11cb;
 }
 
-/* Прочее (как в образце) */
 .results-container {
     margin-top: 20px;
     padding: 20px;
@@ -256,7 +255,7 @@ button {
 .result-item {
     padding: 15px;
     margin-bottom: 10px;
-    background: white;
+    background: #fff;
     border-radius: 8px;
     border-left: 4px solid #6a11cb;
 }

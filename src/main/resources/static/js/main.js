@@ -1,44 +1,60 @@
-// Точка входа. Делаем всё глобальным, чтобы inline onclick из HTML работал 1в1 как в образце.
-(function (global) {
-    // «Приложение»: только переключение видимости блоков
-    function App(dumpMode, searchMode) {
-        this.dumpMode = dumpMode;
-        this.searchMode = searchMode;
+// Точка входа фронта: создаём модули, настраиваем переключение режимов.
+import { DumpModule } from './modules/DumpModule.js';
+import { SearchModule } from './modules/SearchModule.js';
 
-        this.dumpContainer = document.getElementById('dumpContainer');
+class App {
+    constructor() {
+        this.dumpModule = new DumpModule();
+        this.searchModule = new SearchModule();
+
+        // Кнопки переключателя
+        this.btnDump   = document.getElementById('dumpModeBtn');
+        this.btnSearch = document.getElementById('searchModeBtn');
+
+        // Контейнеры
+        this.dumpContainer   = document.getElementById('dumpContainer');
         this.searchContainer = document.getElementById('searchContainer');
-        this.dumpBtn = document.getElementById('dumpModeBtn');
-        this.searchBtn = document.getElementById('searchModeBtn');
+
+        // Навесим обработчики кликов
+        this.btnDump.addEventListener('click',   () => this.showDumpMode());
+        this.btnSearch.addEventListener('click', () => this.showSearchMode());
+
+        // Начальный экран — «Дамп»
+        this.showDumpMode();
     }
 
-    // Показ «Дамп»
-    App.prototype.showDumpMode = function () {
-        this.dumpContainer.style.display = 'block';
-        this.searchContainer.style.display = 'none';
-        this.dumpBtn.classList.add('active');
-        this.searchBtn.classList.remove('active');
-    };
+    showDumpMode() {
+        // показать дамп, скрыть поиск
+        this.dumpContainer.classList.remove('hidden');
+        this.searchContainer.classList.add('hidden');
 
-    // Показ «Поиск»
-    App.prototype.showSearchMode = function () {
-        this.dumpContainer.style.display = 'none';
-        this.searchContainer.style.display = 'block';
-        this.dumpBtn.classList.remove('active');
-        this.searchBtn.classList.add('active');
-    };
+        // визуально подсветить активную кнопку
+        this.btnDump.classList.add('active');
+        this.btnDump.setAttribute('aria-selected', 'true');
 
-    // Инициализация после загрузки DOM
-    document.addEventListener('DOMContentLoaded', function () {
-        var dm = new DumpMode();
-        var sm = new SearchMode();
-        var app = new App(dm, sm);
+        this.btnSearch.classList.remove('active');
+        this.btnSearch.setAttribute('aria-selected', 'false');
+    }
 
-        // Экспорт в глобал: для inline onclick вида app.showDumpMode() / dumpMode.startDump()
-        global.app = app;
-        global.dumpMode = dm;
-        global.searchMode = sm;
+    showSearchMode() {
+        // показать поиск, скрыть дамп
+        this.dumpContainer.classList.add('hidden');
+        this.searchContainer.classList.remove('hidden');
 
-        // По умолчанию — как в образце: показываем «Дамп»
-        app.showDumpMode();
-    });
-})(window);
+        // визуально подсветить активную кнопку
+        this.btnSearch.classList.add('active');
+        this.btnSearch.setAttribute('aria-selected', 'true');
+
+        this.btnDump.classList.remove('active');
+        this.btnDump.setAttribute('aria-selected', 'false');
+    }
+}
+
+// Инициализация
+document.addEventListener('DOMContentLoaded', () => {
+    // Экземпляр приложения — если вдруг захочешь дергать методы из консоли
+    window.app = new App();
+    // Также можно получить доступ к модулям:
+    window.dumpMode = window.app.dumpModule;
+    window.searchMode = window.app.searchModule;
+});
