@@ -1,18 +1,12 @@
 package com.oleg.td.dump.api;
 
 import com.oleg.td.dump.core.DumpService;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
-/**
- * Простой REST-контроллер:
- * - POST /start    — старт дампа
- * - POST /stop     — останов
- * - GET  /progress — прогресс
- */
+
+// was: @RestController (без префикса)
 @RestController
+@RequestMapping("/api/dump")
 public class DumpController {
     private final DumpService dumpService;
 
@@ -35,3 +29,4 @@ public class DumpController {
         return dumpService.getProgress();
     }
 }
+

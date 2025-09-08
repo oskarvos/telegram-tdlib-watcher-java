@@ -34,4 +34,14 @@ public class MonitorController {
     public void deleteDatabase() {
         db.clearMonitorChatDatabases(); // чистим все MONITOR-БД и сбрасываем чекпоинты мониторинга
     }
+
+    @GetMapping("/results")
+    public java.util.List<com.oleg.td.monitor.model.MonitorHit> results(
+            @RequestParam("chat") String chatRef,
+            @RequestParam(value = "limit", required = false, defaultValue = "100") int limit,
+            @RequestParam(value = "offset", required = false, defaultValue = "0") int offset) {
+        long chatId = service.resolveChatId(chatRef); // см. хелпер ниже
+        return db.getMonitorResults(chatId, limit, offset);
+    }
+
 }

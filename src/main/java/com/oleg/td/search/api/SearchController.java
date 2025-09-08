@@ -46,7 +46,8 @@ public class SearchController {
     }
 
     @GetMapping("/results")
-    public java.util.List<SearchResult> getResults() {
-        return java.util.Collections.emptyList();
+    public java.util.List<SearchResult> getResults(@RequestParam("chat") String chatRef) {
+        long chatId = chatResolver.resolveFlexible(chatRef);
+        return databaseManager.getSearchResultsFromSearchDb(chatId);
     }
 }

@@ -1,49 +1,68 @@
-// Точка входа фронта: создаём модули, настраиваем переключение режимов.
-import { DumpModule } from './modules/DumpModule.js';
-import { SearchModule } from './modules/SearchModule.js';
+// Точка входа приложения
+import { DumpModule }    from './modules/DumpModule.js';
+import { SearchModule }  from './modules/SearchModule.js';
 import { MonitorModule } from './modules/MonitorModule.js';
 
 class App {
     constructor() {
-        this.dumpModule = new DumpModule();
-        this.searchModule = new SearchModule();
-        this.monitorModule = new MonitorModule(); // <-- новое
+        this.dump    = new DumpModule();
+        this.search  = new SearchModule();
+        this.monitor = new MonitorModule();
 
         this.btnDump    = document.getElementById('dumpModeBtn');
         this.btnSearch  = document.getElementById('searchModeBtn');
-        this.btnMonitor = document.getElementById('monitorModeBtn'); // <-- новое
+        this.btnMonitor = document.getElementById('monitorModeBtn');
 
         this.dumpContainer    = document.getElementById('dumpContainer');
         this.searchContainer  = document.getElementById('searchContainer');
-        this.monitorContainer = document.getElementById('monitorContainer'); // <-- новое
+        this.monitorContainer = document.getElementById('monitorContainer');
 
-        this.btnDump.addEventListener('click',    () => this.showDumpMode());
-        this.btnSearch.addEventListener('click',  () => this.showSearchMode());
-        this.btnMonitor.addEventListener('click', () => this.showMonitorMode()); // <-- новое
+        this.btnDump   .addEventListener('click', () => this.show(this.btnDump,   this.dumpContainer));
+        this.btnSearch .addEventListener('click', () => this.show(this.btnSearch, this.searchContainer));
+        this.btnMonitor.addEventListener('click', () => this.show(this.btnMonitor,this.monitorContainer));
 
-        this.showDumpMode();
+        // По умолчанию — «Дамп»
+        this.show(this.btnDump, this.dumpContainer);
     }
 
-    #setActive(btnActive, contActive){
-        for (const el of [this.dumpContainer, this.searchContainer, this.monitorContainer]) {
-            el.classList.toggle('hidden', el !== contActive);
-        }
-        for (const b of [this.btnDump, this.btnSearch, this.btnMonitor]) {
-            const active = b === btnActive;
+    show(activeBtn, activeContainer){
+        // панели
+        [this.dumpContainer, this.searchContainer, this.monitorContainer]
+            .forEach(c => c.classList.toggle('hidden', c !== activeContainer));
+        // кнопки
+        [this.btnDump, this.btnSearch, this.btnMonitor].forEach(b => {
+            const active = b === activeBtn;
             b.classList.toggle('active', active);
             b.setAttribute('aria-selected', active ? 'true' : 'false');
-        }
+        });
     }
-
-    showDumpMode()    { this.#setActive(this.btnDump,    this.dumpContainer); }
-    showSearchMode()  { this.#setActive(this.btnSearch,  this.searchContainer); }
-    showMonitorMode() { this.#setActive(this.btnMonitor, this.monitorContainer); }
 }
 
-document.addEventListener('DOMContentLoaded', () => { window.app = new App();
+function normalizeChat(s){
+    s = (s || '').trim();
 
-    // Также можно получить доступ к модулям:
-    window.dumpMode = window.app.dumpModule;
-    window.searchMode = window.app.searchModule;
-    window.monitorModule = window.app.monitorModule;
-});
+    // если по ошибке написали @перед URL — уберём @
+    if (/^@https?:\/\//i.test(s) || /^@t\.me\//i.test(s)) s = s.replace(/^@+/, '');
+
+    // t.me ссылки -> оставляем как есть (их умеет резолвить бэкенд)
+    if (/^https?:\/\/t\.me\//i.test(s) || /^t\.me\//i.test(s)) return s;
+
+    // id: ... -> убираем префикс
+    s = s.replace(/^id:\s*/i, '');
+
+    // допускаем @username или чистый username
+    if (s.startsWith('@')) return s;
+    if (/^[a-z0-9_]{5,}$/i.test(s)) return '@' + s; // «оглавлиним» чистый username
+
+    return s; // вернём как есть (например, -100…)
+}
+
+function splitChats(text){
+    return (text || '')
+        .split(/\r?\n|,|;/g)
+        .map(normalizeChat)
+        .map(s => s.trim())
+        .filter(Boolean);
+}
+
+document.addEventListener('DOMContentLoaded', () => { window.app = new App(); });

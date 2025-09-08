@@ -192,4 +192,34 @@ public class MonitorDbManager {
             for (String t : tables) s.execute("DROP TABLE IF EXISTS " + q(t));
         }
     }
+
+    public java.util.List<com.oleg.td.monitor.model.MonitorHit> getMonitorResults(long chatId, int limit, int offset){
+        final String sql = "SELECT rowid AS id, message_id, message_date, keyword, message_text, " +
+                "sender_id, sender_name, found_date FROM " + q("monitor_results") +
+                " ORDER BY found_date DESC LIMIT ? OFFSET ?";
+        java.util.List<com.oleg.td.monitor.model.MonitorHit> list = new java.util.ArrayList<>();
+        try (Connection c = openMonitor(chatId); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setInt(1, Math.max(1, limit));
+            ps.setInt(2, Math.max(0, offset));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    com.oleg.td.monitor.model.MonitorHit h = new com.oleg.td.monitor.model.MonitorHit();
+                    h.setId(rs.getLong("id"));
+                    h.setChatId(chatId);
+                    h.setChatTitle(chatName(chatId));
+                    h.setMessageId(rs.getLong("message_id"));
+                    h.setMessageDate(java.time.LocalDateTime.parse(rs.getString("message_date")));
+                    h.setKeyword(rs.getString("keyword"));
+                    h.setMessageText(rs.getString("message_text"));
+                    h.setSenderId(rs.getString("sender_id"));
+                    h.setSenderName(rs.getString("sender_name"));
+                    h.setFoundDate(java.time.LocalDateTime.parse(rs.getString("found_date")));
+                    list.add(h);
+                }
+            }
+        } catch (SQLException e){
+            log.error("MONITOR get results err: {}", e.getMessage(), e);
+        }
+        return list;
+    }
 }

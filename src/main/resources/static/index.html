@@ -1,123 +1,112 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>TDLib Чатов</title>
-
-    <!-- Иконки как в твоём примере -->
-    <link rel="stylesheet"
-          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
-
-    <!-- ВАЖНО: относительный путь, без /static -->
-    <link rel="stylesheet" href="css/app.css"/>
+    <meta charset="utf-8"/>
+    <title>TDLib Tools</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/css/app.css"/>
 </head>
 <body>
-<div class="mode-switcher">
-    <button id="dumpModeBtn" class="active" aria-controls="dumpContainer" aria-selected="true">Режим выгрузки</button>
-    <button id="searchModeBtn" aria-controls="searchContainer" aria-selected="false">Режим поиска</button>
-    <button id="monitorModeBtn" aria-controls="monitorContainer" aria-selected="false">Режим мониторинга</button>
-</div>
+<div class="container">
+    <h1>TDLib Tools</h1>
 
-<div class="container" id="dumpContainer">
-    <div class="logo"><i class="fab fa-telegram"></i></div>
-    <h1>Дамп чатов</h1>
-
-    <div class="form-group">
-        <label for="chats">Ссылки или ID чатов (по одному на строку):</label>
-        <textarea id="chats" placeholder="https://t.me/..., @channel, 123456789"></textarea>
+    <div class="mode-switcher" role="tablist" aria-label="Режимы">
+        <button id="dumpModeBtn"    class="active" role="tab" aria-selected="true">Дамп</button>
+        <button id="searchModeBtn"  role="tab" aria-selected="false">Поиск</button>
+        <button id="monitorModeBtn" role="tab" aria-selected="false">Мониторинг</button>
     </div>
 
-    <div class="checkbox-group">
-        <div class="checkbox-item"><input type="checkbox" id="photos" checked><label for="photos">Фотографии</label>
+    <!-- ===== ДАМП ===== -->
+    <section id="dumpContainer" aria-label="Дамп">
+        <div class="form-group">
+            <label>Чаты (по одному в строке, @username, t.me/*, id, first:name)</label>
+            <textarea id="chats" rows="4" placeholder="@somechannel
+t.me/c/12345/6
+id: 123456789"></textarea>
         </div>
-        <div class="checkbox-item"><input type="checkbox" id="videos" checked><label for="videos">Видео</label></div>
-        <div class="checkbox-item"><input type="checkbox" id="links" checked><label for="links">Ссылки</label></div>
-        <div class="checkbox-item"><input type="checkbox" id="messages" checked><label for="messages">Сообщения</label>
+
+        <div class="checkbox-group">
+            <div class="checkbox-item"><input id="photos"   type="checkbox"><label for="photos">Фото</label></div>
+            <div class="checkbox-item"><input id="videos"   type="checkbox"><label for="videos">Видео</label></div>
+            <div class="checkbox-item"><input id="links"    type="checkbox"><label for="links">Ссылки</label></div>
+            <div class="checkbox-item"><input id="messages" type="checkbox" checked><label for="messages">Текстовые сообщения</label></div>
+            <div class="checkbox-item"><input id="textDocuments" type="checkbox"><label for="textDocuments">Текстовые документы</label></div>
+            <div class="checkbox-item"><input id="audio"    type="checkbox"><label for="audio">Аудио</label></div>
         </div>
-        <div class="checkbox-item"><input type="checkbox" id="textDocuments"><label for="textDocuments">Текстовые
-            документы</label></div>
-        <div class="checkbox-item"><input type="checkbox" id="audio" checked><label for="audio">Аудио файлы</label>
+
+        <div class="text-document-extensions hidden">
+            <label>Расширения текстовых файлов (через запятую, без точки)</label>
+            <input id="textExtensions" type="text" placeholder="txt,pdf,doc,docx,rtf,md,csv,json,xml,py,java,js,html,css"/>
+            <div style="margin-top:6px;color:#555;font-size:13px;">Если оставить пустым — будут использованы дефолтные расширения сервиса.</div>
         </div>
-    </div>
 
-    <div class="text-document-extensions hidden">
-        <label for="textExtensions">Введите расширения текстовых документов (через запятую):</label>
-        <input type="text" id="textExtensions" placeholder="txt, pdf, docx, java, html"/>
-    </div>
-
-    <div class="buttons">
-        <button id="startBtn" class="btn-primary"><i class="fas fa-play-circle"></i> Начать дамп</button>
-        <button id="stopBtn" class="btn-danger"><i class="fas fa-stop-circle"></i> Остановить</button>
-    </div>
-
-    <div class="progress-container">
-        <div class="progress-label"><span>Прогресс:</span><span id="progress-value">0%</span></div>
-        <div id="progress">
-            <div id="progress-bar"></div>
+        <div class="buttons">
+            <button class="btn-primary" id="startBtn">Начать дамп</button>
+            <button class="btn-danger"  id="stopBtn">Остановить</button>
         </div>
-        <div class="status" id="status">Готово к началу</div>
-    </div>
-</div>
 
-<div class="container hidden" id="searchContainer">
-    <div class="logo"><i class="fas fa-search"></i></div>
-    <h1>Поиск в чатах</h1>
-
-    <div class="form-group">
-        <label for="searchChats">Чаты для поиска (по одному на строку):</label>
-        <textarea id="searchChats" placeholder="https://t.me/..., @channel, 123456789"></textarea>
-    </div>
-
-    <div class="form-group">
-        <label for="searchKeyword">Ключевое слово для поиска:</label>
-        <input type="text" id="searchKeyword" placeholder="например: акция|скидка">
-    </div>
-
-    <div class="checkbox-group">
-        <div class="checkbox-item"><input type="checkbox" id="caseSensitive"><label for="caseSensitive">Чувствительность
-            к регистру</label></div>
-        <div class="checkbox-item"><input type="checkbox" id="regexMode"><label for="regexMode">Регулярные
-            выражения</label></div>
-    </div>
-
-    <div class="buttons">
-        <button id="startSearchBtn" class="btn-primary"><i class="fas fa-play"></i> Начать поиск</button>
-        <button id="stopSearchBtn" class="btn-danger"><i class="fas fa-stop"></i> Остановить</button>
-        <button id="deleteSearchDbBtn" class="btn-success"><i class="fas fa-trash"></i> Удалить БД поиска</button>
-    </div>
-
-    <div class="progress-container">
-        <div class="progress-label"><span>Обработано сообщений:</span><span id="searchProcessedValue">0</span></div>
-        <div class="progress-label"><span>Найдено совпадений:</span><span id="searchFoundValue">0</span></div>
-        <div id="searchProgress">
-            <div id="searchProgress-bar"></div>
+        <div class="progress-container">
+            <div class="progress-label"><span>Прогресс дампа</span><span id="progress-value">0%</span></div>
+            <div id="progress"><div id="progress-bar"></div></div>
+            <div id="status">Ожидание…</div>
         </div>
-        <div class="status" id="searchStatus">Поиск не запущен</div>
-    </div>
-</div>
+    </section>
 
-<div class="container hidden" id="monitorContainer">
-    <div class="logo"><i class="fas fa-bell"></i></div>
-    <h1>Мониторинг чатов</h1>
+    <!-- ===== ПОИСК ===== -->
+    <section id="searchContainer" class="hidden" aria-label="Поиск">
+        <div class="form-group">
+            <label>Чаты (по одному в строке)</label>
+            <textarea id="searchChats" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+            <label>Ключевое слово / Regex</label>
+            <input id="searchKeyword" type="text" placeholder="например, скидка|акция"/>
+        </div>
+        <div class="checkbox-group">
+            <div class="checkbox-item"><input id="caseSensitive" type="checkbox"><label for="caseSensitive">Чувствительно к регистру</label></div>
+            <div class="checkbox-item"><input id="regexMode" type="checkbox"><label for="regexMode">Использовать regex</label></div>
+        </div>
+        <div class="buttons">
+            <button class="btn-primary" id="startSearchBtn">Начать поиск</button>
+            <button class="btn-danger"  id="stopSearchBtn">Остановить</button>
+        </div>
 
-    <div class="form-group">
-        <label for="monitorChats">Чаты (по одному на строке):</label>
-        <textarea id="monitorChats" placeholder="https://t.me/..., @channel, 123456789"></textarea>
-    </div>
+        <div class="progress-container">
+            <div class="progress-label"><span>Статистика</span><span><span id="searchProcessedValue">0</span> / найдено: <span id="searchFoundValue">0</span></span></div>
+            <div id="searchProgress"><div id="searchProgress-bar"></div></div>
+            <div id="searchStatus">Ожидание…</div>
+        </div>
 
-    <div class="form-group">
-        <label for="monitorKeyword">Ключевое слово / выражение:</label>
-        <input type="text" id="monitorKeyword" placeholder="например: акция|скидка">
-    </div>
+        <div class="form-group" style="margin-top:16px;">
+            <label>Показать результаты для чата</label>
+            <input id="searchResultsChat" type="text" placeholder="@channel_or_id"/>
+            <div class="buttons" style="margin-top:10px;">
+                <button class="btn-success" id="loadSearchResultsBtn">Обновить результаты</button>
+                <button class="btn-danger" id="deleteSearchDbBtn">Очистить SEARCH-БД</button>
+            </div>
+        </div>
+        <div class="results-container" id="searchResults"></div>
+    </section>
 
-    <div class="checkbox-group">
-        <div class="checkbox-item"><input type="checkbox" id="monitorCaseSensitive"><label for="monitorCaseSensitive">Чувствительность
-            к регистру</label></div>
-        <div class="checkbox-item"><input type="checkbox" id="monitorRegexMode"><label for="monitorRegexMode">Регулярные
-            выражения</label></div>
-        <div class="checkbox-item" style="align-items:center;">
-            <label for="monitorInterval" style="margin:0 8px 0 0;">Интервал опроса</label>
+    <!-- ===== МОНИТОРИНГ ===== -->
+    <section id="monitorContainer" class="hidden" aria-label="Мониторинг">
+        <div class="form-group">
+            <label>Чаты (по одному в строке)</label>
+            <textarea id="monitorChats" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+            <label>Ключевое слово / Regex</label>
+            <input id="monitorKeyword" type="text" placeholder="например, оплата|счёт"/>
+        </div>
+        <div class="checkbox-group">
+            <div class="checkbox-item"><input id="monitorCaseSensitive" type="checkbox"><label for="monitorCaseSensitive">Регистрозависимо</label></div>
+            <div class="checkbox-item"><input id="monitorRegexMode" type="checkbox"><label for="monitorRegexMode">Regex</label></div>
+            <div class="checkbox-item" style="align-items:center;">
+                <label for="monitorInterval">Интервал опроса</label>
+            </div>
+        </div>
+        <div class="form-group">
             <select id="monitorInterval">
                 <option value="1s">1 сек</option>
                 <option value="30s">30 сек</option>
@@ -128,28 +117,36 @@
                 <option value="1d">1 день</option>
             </select>
         </div>
-    </div>
 
-    <div class="buttons">
-        <button id="startMonitorBtn" class="btn-primary"><i class="fas fa-play"></i> Старт мониторинг</button>
-        <button id="stopMonitorBtn" class="btn-danger"><i class="fas fa-stop"></i> Стоп</button>
-        <button id="deleteMonitorDbBtn" class="btn-success"><i class="fas fa-trash"></i> Удалить БД мониторинга</button>
-    </div>
-
-    <div class="progress-container">
-        <div class="progress-label"><span>Обработано сообщений:</span><span id="monitorProcessedValue">0</span></div>
-        <div class="progress-label"><span>Обнаружено совпадений:</span><span id="monitorFoundValue">0</span></div>
-        <div id="searchProgress">
-            <div id="monitorProgress-bar"></div>
+        <div class="buttons">
+            <button class="btn-primary" id="startMonitorBtn">Старт мониторинга</button>
+            <button class="btn-danger"  id="stopMonitorBtn">Стоп</button>
         </div>
-        <div class="status" id="monitorStatus">Мониторинг не запущен</div>
-    </div>
+
+        <div class="progress-container">
+            <div class="progress-label">
+                <span>Сообщений обработано</span>
+                <span><span id="monitorProcessedValue">0</span> (совпадений: <span id="monitorFoundValue">0</span>)</span>
+            </div>
+            <div id="monitorProgress"><div id="monitorProgress-bar"></div></div>
+            <div id="monitorStatus" style="margin-top:10px;">Ожидание…</div>
+        </div>
+
+        <div class="form-group" style="margin-top:16px;">
+            <label>Показать срабатывания для чата</label>
+            <input id="monitorResultsChat" type="text" placeholder="@channel_or_id"/>
+            <div class="buttons" style="margin-top:10px;">
+                <button class="btn-success" id="loadMonitorResultsBtn">Обновить результаты</button>
+                <button class="btn-danger" id="deleteMonitorDbBtn">Очистить MONITOR-БД + сброс чекпоинтов</button>
+            </div>
+        </div>
+        <div class="results-container" id="monitorResults"></div>
+    </section>
 </div>
 
-<div id="toasts" class="toasts" aria-live="polite" aria-atomic="true"></div>
-<div class="footer"><p>TDLib Chat © 2025</p></div>
+<div id="toasts" class="toasts"></div>
+<div class="footer">TDLib Web • Дамп / Поиск / Мониторинг</div>
 
-<!-- ВАЖНО: относительный путь, без /static -->
-<script type="module" src="js/main.js"></script>
+<script type="module" src="/js/main.js"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-// Базовый HTTP-клиент для REST вызовов бэкенда.
+// Базовый HTTP-клиент для REST вызовов бэка.
 export class ApiClient {
     constructor(baseUrl = '') { this.baseUrl = baseUrl; }
 
@@ -7,17 +7,18 @@ export class ApiClient {
             headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
             ...options
         });
-        const contentType = res.headers.get('content-type') || '';
-        const parse = async () => contentType.includes('application/json') ? res.json() : res.text();
+        const ct = res.headers.get('content-type') || '';
+        const parse = async () => ct.includes('application/json') ? res.json() : res.text();
+        const data = await parse().catch(() => null);
 
         if (!res.ok) {
-            const msg = await parse().catch(() => res.statusText);
-            throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+            const msg = typeof data === 'string' ? data : (data && (data.message || JSON.stringify(data))) || res.statusText;
+            throw new Error(msg);
         }
-        return parse();
+        return data;
     }
 
-    get(endpoint)     { return this.request(endpoint, { method: 'GET' }); }
+    get(endpoint)     { return this.request(endpoint, { method: 'GET'  }); }
     post(endpoint, d) { return this.request(endpoint, { method: 'POST', body: JSON.stringify(d || {}) }); }
     del(endpoint)     { return this.request(endpoint, { method: 'DELETE' }); }
 }

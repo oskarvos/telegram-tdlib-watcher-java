@@ -18,9 +18,17 @@ public class MonitorService {
     private final AtomicInteger found = new AtomicInteger(0);
 
     private final MonitorCoordinator coordinator;
+    // В MonitorService:
+    private final com.oleg.td.integrations.telegram.ChatResolver resolver;
 
-    public MonitorService(MonitorCoordinator coordinator) {
+    public MonitorService(MonitorCoordinator coordinator,
+                          com.oleg.td.integrations.telegram.ChatResolver resolver) {
         this.coordinator = coordinator;
+        this.resolver = resolver;
+    }
+
+    public long resolveChatId(String chatRef){
+        return resolver.resolveFlexible(chatRef);
     }
 
     public synchronized void startMonitoring(MonitorRequest req) {
