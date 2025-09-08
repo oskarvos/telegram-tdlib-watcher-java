@@ -28,12 +28,25 @@ public class AppInitializer {
                 config.isCaseInsensitive()
         );
         try {
-            authFlow.wireInto();
-            authFlow.authorizeBlocking();
+            authFlow.wireInto(); // слушатели апдейтов подключаем всегда
 
+            boolean missingApi = config.getTdlib().getApiId() <= 0
+                    || config.getTdlib().getApiHash() == null
+                    || config.getTdlib().getApiHash().isBlank();
+            boolean missingPhone = config.getAuth().getPhone() == null
+                    || config.getAuth().getPhone().isBlank();
+
+            if (missingApi || missingPhone) {
+                log.info("⏸️ Параметры TDLib не заданы (api_id/api_hash/phone). " +
+                        "Авторизацию не запускаю. Откройте страницу / для ввода данных.");
+                return; // важно: НИЧЕГО не вызываем, чтобы TDLib не упал
+            }
+
+            authFlow.authorizeBlocking();
             log.info("✅ Авторизация успешно завершена!");
         } catch (Exception e) {
             log.error("❌ Ошибка авторизации: {}", e.getMessage(), e);
         }
     }
+
 }

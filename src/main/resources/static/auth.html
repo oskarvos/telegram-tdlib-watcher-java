@@ -3,56 +3,68 @@
 <head>
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>TDLib — Старт</title>
+    <title>Авторизация TDLib</title>
     <link rel="stylesheet"
           href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
     <link rel="stylesheet" href="css/app.css"/>
     <style>
-        .container { max-width: 520px; }
-        .hint { font-size: 12px; color: #666; margin-top: 6px; }
+        .card { max-width: 520px; margin: 40px auto; background: #fff; border-radius: 16px; padding: 24px;
+            box-shadow: 0 12px 40px rgba(0,0,0,.15); }
+        .hidden { display: none !important; }
+        .footer { text-align:center; margin-top: 12px; color: #666; }
     </style>
 </head>
-<body>
-<div class="container">
-    <div class="logo"><i class="fab fa-telegram"></i></div>
-    <h1>Запуск TDLib</h1>
+<body style="background: linear-gradient(135deg,#6a11cb 0%,#2575fc 100%); min-height:100vh; display:flex; align-items:center;">
 
-    <div class="form-group">
-        <label for="apiId">td.tdlib.api-id</label>
-        <input type="text" id="apiId" placeholder="например, 123456"/>
+<div class="card">
+    <div class="logo" style="text-align:center; color:#6a11cb; font-size:48px; margin-bottom:10px;">
+        <i class="fab fa-telegram"></i>
+    </div>
+    <h1 style="text-align:center; margin-bottom:20px;">Вход в Telegram</h1>
+
+    <!-- Шаг 1: ввод api_id/api_hash/phone -->
+    <div id="step1">
+        <div class="form-group">
+            <label for="apiId">td.tdlib.api-id</label>
+            <input type="text" id="apiId" placeholder="напр. 20381234"/>
+        </div>
+        <div class="form-group">
+            <label for="apiHash">td.tdlib.api-hash</label>
+            <input type="text" id="apiHash" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"/>
+        </div>
+        <div class="form-group">
+            <label for="phone">td.auth.phone</label>
+            <input type="text" id="phone" placeholder="+37529xxxxxxx"/>
+        </div>
+        <div class="form-group" style="display:flex; gap:8px; align-items:center;">
+            <input type="checkbox" id="useTestDc"/>
+            <label for="useTestDc" style="margin:0;">use_test_dc</label>
+        </div>
+        <div class="buttons">
+            <button id="btnSendCode" class="btn-primary"><i class="fa fa-paper-plane"></i> Отправить код</button>
+        </div>
+        <div id="s1status" class="status" style="margin-top:10px;">Введите параметры и телефон</div>
     </div>
 
-    <div class="form-group">
-        <label for="apiHash">td.tdlib.api-hash</label>
-        <input type="text" id="apiHash" placeholder="например, 0123abcd..."/>
+    <!-- Шаг 2: ввод кода (и пароля 2FA при необходимости) -->
+    <div id="step2" class="hidden">
+        <div class="form-group">
+            <label for="code">Код из Telegram</label>
+            <input type="text" id="code" placeholder="код"/>
+        </div>
+        <div id="pwdWrap" class="form-group hidden">
+            <label for="password">Пароль (2FA)</label>
+            <input type="password" id="password" placeholder="если включен"/>
+        </div>
+        <div class="buttons">
+            <button id="btnVerify" class="btn-primary"><i class="fa fa-check"></i> Подтвердить</button>
+        </div>
+        <div id="s2status" class="status" style="margin-top:10px;">Ожидаем код</div>
     </div>
 
-    <div class="form-group">
-        <label for="phone">td.auth.phone</label>
-        <input type="text" id="phone" placeholder="+1234567890"/>
-    </div>
-
-    <div class="form-group">
-        <label for="code">Код из Telegram (SMS/в приложении)</label>
-        <input type="text" id="code" placeholder="12345"/>
-        <div class="hint">Если включена 2FA — ниже можно указать пароль.</div>
-    </div>
-
-    <div class="form-group">
-        <label for="pass">Пароль 2FA (опционально)</label>
-        <input type="password" id="pass" placeholder="••••••••"/>
-    </div>
-
-    <div class="buttons">
-        <button id="startAuthBtn" class="btn-primary">
-            <i class="fas fa-power-off"></i> Старт
-        </button>
-    </div>
-
-    <div class="status" id="authStatus">Укажите параметры и нажмите Старт</div>
+    <div class="footer">TDLib Web Auth • 2025</div>
 </div>
 
-<div id="toasts" class="toasts" aria-live="polite" aria-atomic="true"></div>
 <script type="module" src="js/auth.js"></script>
 </body>
 </html>

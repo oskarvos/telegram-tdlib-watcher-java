@@ -1,72 +1,127 @@
-// Лёгкий клиент для REST (не трогаем ваш ApiClient, чтобы не тянуть лишнее)
-const $ = (id) => document.getElementById(id);
-const statusBox = $('authStatus');
-
-function setStatus(text, bg = '#edf7ff', color = '#2c3e50') {
-    statusBox.textContent = text;
-    statusBox.style.backgroundColor = bg;
-    statusBox.style.color = color;
-}
-
-async function getJSON(url) {
-    const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
-    if (!r.ok) throw new Error(await r.text());
-    return r.json();
-}
-
-async function postJSON(url, body) {
-    const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify(body || {})
-    });
-    const ct = r.headers.get('content-type') || '';
-    const parse = async () => ct.includes('application/json') ? r.json() : r.text();
-    if (!r.ok) throw new Error(await parse());
-    return parse();
-}
-
-// если уже авторизованы — сразу в приложение
-(async () => {
-    try {
-        const s = await getJSON('/api/auth/status');
-        if (s.authorized) {
-            location.replace('/app');
-            return;
-        }
-        // префилд телефона, если есть
-        if (s.phoneMasked) $('phone').placeholder = s.phoneMasked;
-    } catch (e) {
-        // тихо
+class Api {
+    async request(url, opt={}) {
+        const r = await fetch(url, { headers: {'Content-Type':'application/json'}, ...opt });
+        const ct = r.headers.get('content-type')||'';
+        const parse = async () => ct.includes('application/json') ? r.json() : r.text();
+        const data = await parse();
+        if (!r.ok) throw new Error(typeof data === 'string' ? data : JSON.stringify(data));
+        return data;
     }
-})();
+    post(url, body) { return this.request(url, { method:'POST', body: JSON.stringify(body||{}) }); }
+    get(url) { return this.request(url, { method:'GET' }); }
+}
+const api = new Api();
 
-$('startAuthBtn').addEventListener('click', async () => {
-    const apiId  = parseInt($('apiId').value || '', 10);
-    const apiHash = ($('apiHash').value || '').trim();
-    const phone   = ($('phone').value || '').trim();
-    const code    = ($('code').value || '').trim();
-    const pass    = ($('pass').value || '').trim();
+const s1 = {
+    root: document.getElementById('step1'),
+    apiId: document.getElementById('apiId'),
+    apiHash: document.getElementById('apiHash'),
+    phone: document.getElementById('phone'),
+    useTestDc: document.getElementById('useTestDc'),
+    btn: document.getElementById('btnSendCode'),
+    status: document.getElementById('s1status'),
+};
+const s2 = {
+    root: document.getElementById('step2'),
+    code: document.getElementById('code'),
+    password: document.getElementById('password'),
+    pwdWrap: document.getElementById('pwdWrap'),
+    btn: document.getElementById('btnVerify'),
+    status: document.getElementById('s2status'),
+};
 
-    if (!apiId || !apiHash || !phone || !code) {
-        setStatus('Заполните api-id, api-hash, телефон и код.', '#ffecec', '#e74c3c');
+let pollTimer = null;
+function pollStatus() {
+    clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+        try {
+            const st = await api.get('/api/webauth/status');
+            if (!st.ok) return;
+            if (st.state === 'WAIT_CODE') {
+                s2.status.textContent = 'Ожидаем код';
+                s2.pwdWrap.classList.add('hidden');
+            } else if (st.state === 'WAIT_PASSWORD') {
+                s2.status.textContent = 'Требуется пароль 2FA';
+                s2.pwdWrap.classList.remove('hidden');
+            } else if (st.state === 'READY') {
+                s2.status.textContent = 'Готово! Переход...';
+                clearInterval(pollTimer);
+                setTimeout(() => { window.location.href = '/app'; }, 300);
+            } else {
+                s2.status.textContent = 'Статус: ' + st.state;
+            }
+        } catch (e) {
+            // ignore transient
+        }
+    }, 1000);
+}
+
+s1.btn.addEventListener('click', async () => {
+    const apiId = parseInt(s1.apiId.value.trim(), 10);
+    const apiHash = s1.apiHash.value.trim();
+    const phone = s1.phone.value.trim();
+    if (!apiId || !apiHash || !phone) {
+        s1.status.textContent = 'Заполните все поля';
+        s1.status.style.backgroundColor = '#ffecec';
+        s1.status.style.color = '#e74c3c';
         return;
     }
-
-    setStatus('Авторизуемся...', '#edf7ff', '#2c3e50');
-    $('startAuthBtn').disabled = true;
-
+    s1.btn.disabled = true;
+    s1.status.textContent = 'Отправляем код...';
     try {
-        const res = await postJSON('/api/auth/start', { apiId, apiHash, phone, code, pass });
-        if (res.authorized) {
-            setStatus('Готово! Переходим в приложение...', '#e7f6ec', '#27ae60');
-            setTimeout(() => location.replace('/app'), 300);
-        } else {
-            setStatus('Не авторизовано: ' + (res.message || 'Проверьте данные'), '#ffecec', '#e74c3c');
-        }
+        const res = await api.post('/api/webauth/start', {
+            apiId, apiHash, phone, useTestDc: s1.useTestDc.checked
+        });
+        if (!res.ok) throw new Error(res.message || 'Ошибка');
+        s1.root.classList.add('hidden');
+        s2.root.classList.remove('hidden');
+        s2.status.textContent = 'Код отправлен. Проверьте Telegram';
+        pollStatus();
     } catch (e) {
-        setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c');
+        s1.status.textContent = 'Ошибка: ' + e.message;
+        s1.status.style.backgroundColor = '#ffecec';
+        s1.status.style.color = '#e74c3c';
     } finally {
-        $('startAuthBtn').disabled = false;
+        s1.btn.disabled = false;
     }
 });
+
+s2.btn.addEventListener('click', async () => {
+    const code = s2.code.value.trim();
+    const password = s2.password.value.trim();
+    if (!code && s2.pwdWrap.classList.contains('hidden')) {
+        s2.status.textContent = 'Введите код';
+        s2.status.style.backgroundColor = '#ffecec';
+        s2.status.style.color = '#e74c3c';
+        return;
+    }
+    s2.btn.disabled = true;
+    s2.status.textContent = 'Подтверждаем...';
+    try {
+        const res = await api.post('/api/webauth/verify', { code, password });
+        if (!res.ok) throw new Error(res.message || 'Ошибка');
+        if (res.state === 'READY') {
+            window.location.href = '/app';
+            return;
+        }
+        // обновим UI по текущему состоянию
+        if (res.state === 'WAIT_PASSWORD') s2.pwdWrap.classList.remove('hidden');
+        s2.status.textContent = 'Статус: ' + res.state;
+    } catch (e) {
+        s2.status.textContent = 'Ошибка: ' + e.message;
+        s2.status.style.backgroundColor = '#ffecec';
+        s2.status.style.color = '#e74c3c';
+    } finally {
+        s2.btn.disabled = false;
+    }
+});
+
+// сразу проверим, может уже авторизованы
+(async () => {
+    try {
+        const st = await api.get('/api/webauth/status');
+        if (st.ok && st.state === 'READY') {
+            window.location.href = '/app';
+        }
+    } catch {}
+})();
