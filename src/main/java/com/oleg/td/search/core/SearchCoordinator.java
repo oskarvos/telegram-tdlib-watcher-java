@@ -3,8 +3,8 @@
  *  - Работает с TDLib (TdJsonClient)
  *  - Ищет по сообщениям, сохраняет результаты ТОЛЬКО в SEARCH-БД
  *  - SEARCH-БД содержит одну пользовательскую таблицу search_results
- *  - Новая логика: при повторном поиске обрабатываем только новые сообщения.
- *    Чекпоинт хранится в DUMP-БД -> metadata("search_last_message_id").
+ *  - Логика: на каждый новый запрос (новое слово) поиск выполняется
+ *    по ВОЗМОЖНО ПОЛНОЙ истории чата (без чекпоинтов/пропусков).
  * =========================================================== */
 package com.oleg.td.search.core;
 
@@ -27,7 +27,6 @@ import java.util.regex.Pattern;
 
 @Component
 public class SearchCoordinator {
-    /* ===================== Константы/зависимости ===================== */
     private static final Logger log = LoggerFactory.getLogger(SearchCoordinator.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -43,19 +42,11 @@ public class SearchCoordinator {
         this.db = db;
     }
 
-    /* ===================== Основной цикл поиска по чатам ===================== */
-
     /**
-     * Ищем в указанных чатах. Для каждого чата:
-     *  - готовим SEARCH-БД (только search_results)
-     *  - листаем историю батчами
-     *  - проверяем каждое текстовое сообщение на совпадение
-     *  - совпадения пишем в SEARCH-БД
-     *  - ⚠ при повторном запуске: пропускаем всё, что <= последнего обработанного id
-     *
-     * @param request параметры поиска (чаты, keyword, флаги)
-     * @param progressCallback колбэк на каждое обработанное сообщение
-     * @param foundCallback колбэк на каждое найденное совпадение
+     * Поиск по всей истории выбранных чатов.
+     * - Поддерживает подстроку или regex (чувствительность к регистру опциональна).
+     * - Ищет в тексте сообщений и в caption медиасообщений.
+     * - Пишет совпадения в SEARCH-БД (таблица search_results).
      */
     public void searchChats(SearchRequest request, Runnable progressCallback, Runnable foundCallback) {
         stopRequested = false;
@@ -68,36 +59,17 @@ public class SearchCoordinator {
 
             long chatId = resolver.resolveFlexible(chatRef.trim());
             String chatName = resolver.getChatTitle(chatId);
-            log.info("Начинаем поиск в чате '{}'", chatName);
+            log.info("Начинаем поиск в чате '{}' по ключу: {}", chatName, request.getKeyword());
 
-            // --- готовим минимальную схему SEARCH-БД для этого чата
+            // Готовим схему SEARCH-БД (для данного чата)
             db.prepareSearchSchema(chatId);
 
-            // --- гарантируем наличие таблицы metadata в DUMP-БД (для чекпоинта поиска)
-            db.prepareSchema(chatId);
-
-            // --- читаем чекпоинт прошлого поиска из DUMP-БД
-            long lastSearchProcessedId = 0L;
-            try {
-                String v = db.loadMetadata(chatId, "search_last_message_id");
-                if (v != null && !v.isBlank()) {
-                    lastSearchProcessedId = Long.parseLong(v.trim());
-                }
-            } catch (Exception ignore) {
-                // если парсинг не удался — начнём с нуля
-            }
-            if (lastSearchProcessedId > 0) {
-                log.info("Чат '{}': продолжим поиск с сообщений новее id={}", chatName, lastSearchProcessedId);
-            }
-
-            long fromMessageId = 0;                 // начинаем с самых новых
+            long fromMessageId = 0;          // старт с самых новых
             boolean reachedEnd = false;
             int totalMessagesProcessed = 0;
-            final int MAX_MESSAGES = 10000;         // предохранитель
-            long maxProcessedId = 0L;               // максимальный id, который реально обработали в этом запуске
+            final int MAX_MESSAGES = 100_000; // предохранитель на крайний случай
 
             while (!stopRequested && !reachedEnd && totalMessagesProcessed < MAX_MESSAGES) {
-                // --- запрос истории TDLib
                 ObjectNode req = MAPPER.createObjectNode();
                 req.put("@type", "getChatHistory");
                 req.put("chat_id", chatId);
@@ -107,7 +79,6 @@ public class SearchCoordinator {
                 req.put("only_local", false);
 
                 ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.MAIN);
-
                 if (!"messages".equals(resp.path("@type").asText())) {
                     log.warn("Ответ TDLib отличен от 'messages': {}", resp.path("@type").asText());
                     break;
@@ -120,42 +91,27 @@ public class SearchCoordinator {
                     break;
                 }
 
-                // --- обработка пачки сообщений (идут от новых к старым)
+                long oldestMessageId = Long.MAX_VALUE;
+
                 for (JsonNode msg : messages) {
                     if (stopRequested) break;
                     if (totalMessagesProcessed >= MAX_MESSAGES) break;
 
-                    long mid = msg.path("id").asLong();
-
-                    // если дошли до уже обработанных ранее — прекращаем
-                    if (lastSearchProcessedId > 0 && mid <= lastSearchProcessedId) {
-                        log.info("Чат '{}': достигли уже обработанных сообщений (mid={} <= {}), стоп",
-                                chatName, mid, lastSearchProcessedId);
-                        reachedEnd = true;
-                        break;
-                    }
-
-                    // фиксируем макс. id, который мы реально увидели в этом запуске
-                    if (mid > maxProcessedId) {
-                        maxProcessedId = mid;
-                    }
-
                     try {
                         processMessageForSearch(chatId, chatName, msg, request, foundCallback);
+                    } catch (Exception ex) {
+                        long mid = msg.path("id").asLong();
+                        log.error("Ошибка обработки сообщения {} из чата '{}': {}", mid, chatName, ex.getMessage(), ex);
+                    } finally {
                         totalMessagesProcessed++;
                         if (progressCallback != null) progressCallback.run();
-                    } catch (Exception ex) {
-                        log.error("Ошибка обработки сообщения {} из чата '{}': {}", mid, chatName, ex.getMessage(), ex);
                     }
+
+                    long mid = msg.path("id").asLong();
+                    if (mid < oldestMessageId) oldestMessageId = mid;
                 }
 
-                // --- смещаемся к более старым сообщениям
-                if (!reachedEnd && totalMessagesProcessed < MAX_MESSAGES) {
-                    long oldestMessageId = Long.MAX_VALUE;
-                    for (JsonNode msg : messages) {
-                        long msgId = msg.path("id").asLong();
-                        if (msgId < oldestMessageId) oldestMessageId = msgId;
-                    }
+                if (!reachedEnd) {
                     if (oldestMessageId != Long.MAX_VALUE) {
                         fromMessageId = oldestMessageId;
                     } else {
@@ -163,7 +119,7 @@ public class SearchCoordinator {
                     }
 
                     try {
-                        Thread.sleep(100); // щадящая пауза между запросами
+                        Thread.sleep(100); // щадящая пауза
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         break;
@@ -171,24 +127,11 @@ public class SearchCoordinator {
                 }
             }
 
-            // --- если в этом запуске действительно были обработаны новые сообщения — обновим чекпоинт
-            if (maxProcessedId > 0) {
-                long newCheckpoint = Math.max(lastSearchProcessedId, maxProcessedId);
-                db.saveMetadata(chatId, "search_last_message_id", Long.toString(newCheckpoint));
-                log.info("Чат '{}': обновили чекпоинт поиска search_last_message_id={}", chatName, newCheckpoint);
-            } else {
-                log.info("Чат '{}': новых сообщений не найдено, чекпоинт не меняем", chatName);
-            }
-
             log.info("Поиск в чате '{}' завершён. Обработано сообщений: {}", chatName, totalMessagesProcessed);
         }
     }
 
-    /* ===================== Обработка одного сообщения ===================== */
-
-    /**
-     * Проверка текстового сообщения на совпадение и сохранение результата в SEARCH-БД.
-     */
+    /** Проверка одного сообщения: текст + подписи у медиа */
     private void processMessageForSearch(long chatId, String chatTitle, JsonNode msg,
                                          SearchRequest request, Runnable foundCallback) {
         long messageId = msg.path("id").asLong();
@@ -201,23 +144,55 @@ public class SearchCoordinator {
         JsonNode content = msg.path("content");
         String ctype = content.path("@type").asText();
 
-        String messageText = "";
+        // Берём основной текст, если это messageText
+        StringBuilder sb = new StringBuilder();
         if ("messageText".equals(ctype)) {
             JsonNode ft = content.path("text");
-            messageText = ft.path("text").asText(null);
+            String text = ft.path("text").asText(null);
+            if (text != null) sb.append(text);
         }
 
-        if (containsKeyword(messageText, request.getKeyword(), request.isCaseSensitive(), request.isUseRegex())) {
-            db.saveSearchResultSearchDb(chatId, messageId, messageDate,
-                    request.getKeyword(), messageText, senderId, senderName);
-            log.info("Найдено совпадение в чате '{}', сообщение {}: {}", chatTitle, messageId, messageText);
+        // Добавляем caption для медиа (фото/видео/документы/аудио)
+        appendCaptionIfAny(ctype, content, sb);
+
+        String aggregatedText = sb.toString();
+        if (containsKeyword(aggregatedText, request.getKeyword(), request.isCaseSensitive(), request.isUseRegex())) {
+            db.saveSearchResultSearchDb(
+                    chatId,
+                    messageId,
+                    messageDate,
+                    request.getKeyword(),
+                    aggregatedText,
+                    senderId,
+                    senderName
+            );
+            log.info("Найдено совпадение в чате '{}', сообщение {}: {}", chatTitle, messageId, aggregatedText);
             if (foundCallback != null) foundCallback.run();
         }
     }
 
-    /* ===================== Поисковая логика по строкам ===================== */
+    private void appendCaptionIfAny(String ctype, JsonNode content, StringBuilder sb) {
+        // Унифицировано: если у контента есть поле "caption" с "text" — учитываем
+        switch (ctype) {
+            case "messagePhoto":
+            case "messageVideo":
+            case "messageDocument":
+            case "messageAudio":
+                JsonNode captionNode = content.path("caption");
+                if (!captionNode.isMissingNode()) {
+                    String c = captionNode.path("text").asText(null);
+                    if (c != null && !c.isEmpty()) {
+                        if (sb.length() > 0) sb.append('\n');
+                        sb.append(c);
+                    }
+                }
+                break;
+            default:
+                // другие типы нам не важны
+        }
+    }
 
-    /** Проверка содержания на совпадение по подстроке или regex */
+    /** Подстрока/regex-поиск */
     private boolean containsKeyword(String text, String keyword, boolean caseSensitive, boolean useRegex) {
         if (text == null || keyword == null || keyword.isEmpty()) return false;
 
@@ -237,14 +212,12 @@ public class SearchCoordinator {
         }
     }
 
-    /** Получение отображаемого имени отправителя (пока отдаём идентификатор) */
+    /** Отображаемое имя отправителя (пока — идентификатор) */
     private String getSenderName(String senderId) {
         return senderId;
     }
 
-    /* ===================== Управление процессом ===================== */
-
-    /** Запрос на остановку внешним кодом */
+    /** Внешний запрос на остановку */
     public void stop() {
         stopRequested = true;
     }
