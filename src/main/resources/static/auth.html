@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>TDLib — Старт</title>
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+    <link rel="stylesheet" href="css/app.css"/>
+    <style>
+        .container { max-width: 520px; }
+        .hint { font-size: 12px; color: #666; margin-top: 6px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="logo"><i class="fab fa-telegram"></i></div>
+    <h1>Запуск TDLib</h1>
+
+    <div class="form-group">
+        <label for="apiId">td.tdlib.api-id</label>
+        <input type="text" id="apiId" placeholder="например, 123456"/>
+    </div>
+
+    <div class="form-group">
+        <label for="apiHash">td.tdlib.api-hash</label>
+        <input type="text" id="apiHash" placeholder="например, 0123abcd..."/>
+    </div>
+
+    <div class="form-group">
+        <label for="phone">td.auth.phone</label>
+        <input type="text" id="phone" placeholder="+1234567890"/>
+    </div>
+
+    <div class="form-group">
+        <label for="code">Код из Telegram (SMS/в приложении)</label>
+        <input type="text" id="code" placeholder="12345"/>
+        <div class="hint">Если включена 2FA — ниже можно указать пароль.</div>
+    </div>
+
+    <div class="form-group">
+        <label for="pass">Пароль 2FA (опционально)</label>
+        <input type="password" id="pass" placeholder="••••••••"/>
+    </div>
+
+    <div class="buttons">
+        <button id="startAuthBtn" class="btn-primary">
+            <i class="fas fa-power-off"></i> Старт
+        </button>
+    </div>
+
+    <div class="status" id="authStatus">Укажите параметры и нажмите Старт</div>
+</div>
+
+<div id="toasts" class="toasts" aria-live="polite" aria-atomic="true"></div>
+<script type="module" src="js/auth.js"></script>
+</body>
+</html>
