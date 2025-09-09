@@ -30,13 +30,13 @@ public class SearchController {
     @PostMapping("/start")
     public void start(@RequestBody SearchRequest request) {
         final String kw = request.getKeyword() == null ? "" : request.getKeyword();
-        if (kw.length() > 30) {
+        // Либо совсем убрать ограничение, либо сделать щедрее, например 256
+        if (kw.length() > 256) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "Ключевое слово должно быть длиной 0–30 символов"
+                    "Ключевое слово слишком длинное"
             );
         }
-        // Пустой ключ допустим — обработаем на координаторе (совпадение для любого непустого текста)
         searchService.startSearch(request);
     }
 

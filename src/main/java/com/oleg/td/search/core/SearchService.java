@@ -83,7 +83,8 @@ public class SearchService {
             com.oleg.td.persistence.DatabaseManager.class.getDeclaredMethod("clearSearchChatDatabases");
             // если метод есть, просто вызовем его:
             // (у вас уже внедрён DatabaseManager в SearchCoordinator -> получите через отражение/или прокиньте зависимость)
-        } catch (Exception ignore) {}
+        } catch (Exception ignore) {
+        }
 
         // Если SearchService не имеет прямого доступа к db, проще — добавьте зависимость:
         // private final DatabaseManager db;
