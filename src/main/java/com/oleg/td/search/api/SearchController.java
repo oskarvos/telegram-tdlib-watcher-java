@@ -58,6 +58,7 @@ public class SearchController {
     @GetMapping("/results")
     public java.util.List<SearchResult> getResults(@RequestParam("chat") String chatRef) {
         long chatId = chatResolver.resolveFlexible(chatRef);
+        databaseManager.prepareSearchSchema(chatId); // <-- чтобы точно была таблица
         return databaseManager.getSearchResultsFromSearchDb(chatId);
     }
 }

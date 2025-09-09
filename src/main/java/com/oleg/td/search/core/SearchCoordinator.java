@@ -23,12 +23,17 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 @Component
 public class SearchCoordinator {
     private static final Logger log = LoggerFactory.getLogger(SearchCoordinator.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private final Map<Long, String> userNameCache = new ConcurrentHashMap<>();
+    private final Map<Long, String> chatTitleCache = new ConcurrentHashMap<>();
 
     private final TdJsonClient client;
     private final ChatResolver resolver;
@@ -216,9 +221,63 @@ public class SearchCoordinator {
         }
     }
 
-    /** Отображаемое имя отправителя (пока — идентификатор) */
-    private String getSenderName(String senderId) {
-        return senderId;
+    /** Отображаемое имя отправителя */
+    private String getSenderName(String senderIdJson) {
+        if (senderIdJson == null || senderIdJson.isBlank()) return "";
+
+        try {
+            JsonNode n = MAPPER.readTree(senderIdJson);
+            String type = n.path("@type").asText();
+
+            // Пользователь
+            if ("messageSenderUser".equals(type)) {
+                long uid = n.path("user_id").asLong(0);
+                if (uid == 0) return senderIdJson;
+
+                String cached = userNameCache.get(uid);
+                if (cached != null) return cached;
+
+                ObjectNode req = MAPPER.createObjectNode();
+                req.put("@type", "getUser");
+                req.put("user_id", uid);
+
+                ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.MAIN);
+                if ("user".equals(resp.path("@type").asText())) {
+                    String first = resp.path("first_name").asText("");
+                    String last  = resp.path("last_name").asText("");
+                    String uname = resp.path("username").asText("");
+                    String name  = (first + " " + last).trim();
+                    if (name.isEmpty()) name = uname.isEmpty() ? String.valueOf(uid) : "@" + uname;
+
+                    userNameCache.put(uid, name);
+                    return name;
+                }
+            }
+
+            // Канал/чат как отправитель
+            if ("messageSenderChat".equals(type)) {
+                long cid = n.path("chat_id").asLong(0);
+                if (cid == 0) return senderIdJson;
+
+                String cached = chatTitleCache.get(cid);
+                if (cached != null) return cached;
+
+                ObjectNode req = MAPPER.createObjectNode();
+                req.put("@type", "getChat");
+                req.put("chat_id", cid);
+
+                ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.MAIN);
+                if ("chat".equals(resp.path("@type").asText())) {
+                    String title = resp.path("title").asText("");
+                    if (title == null || title.isBlank()) title = "chat_" + Math.abs(cid);
+                    chatTitleCache.put(cid, title);
+                    return title;
+                }
+            }
+        } catch (Exception ignore) { }
+
+        // Фолбэк — как было
+        return senderIdJson;
     }
 
     /** Внешний запрос на остановку */

@@ -254,15 +254,29 @@ public class DatabaseManager {
         final String idxSearchKeyword = "CREATE INDEX IF NOT EXISTS search_keyword_idx ON " + tSearchResults + "(keyword)";
         final String idxSearchDate = "CREATE INDEX IF NOT EXISTS search_date_idx ON " + tSearchResults + "(message_date)";
 
+        // УНИКАЛЬНОСТЬ: message_id + keyword
+        final String dedup = "DELETE FROM " + tSearchResults +
+                " WHERE id NOT IN (SELECT MIN(id) FROM " + tSearchResults + " GROUP BY message_id, keyword)";
+        final String uniqIdx = "CREATE UNIQUE INDEX IF NOT EXISTS search_msg_kw_unique ON " + tSearchResults + "(message_id, keyword)";
+
         try (Connection c = openSearch(chatId); Statement s = c.createStatement()) {
             s.execute(createSearchResults);
             s.execute(idxSearchKeyword);
             s.execute(idxSearchDate);
-            log.info("БД 'SEARCH {}' схема готова (только search_results)", getChatNameForDatabase(chatId));
+
+            // Разовая дедупликация (если вдруг уже были повторы)
+            try { s.execute(dedup); } catch (SQLException ignore) {}
+
+            // Гарантируем уникальность на будущее
+            s.execute(uniqIdx);
+
+            log.info("БД 'SEARCH {}' схема готова (search_results + unique(message_id, keyword))",
+                    getChatNameForDatabase(chatId));
         } catch (SQLException e) {
             log.error("БД: ошибка подготовки схемы SEARCH для '{}': {}", getChatNameForDatabase(chatId), e.getMessage(), e);
         }
     }
+
 
     /**
      * Добавляет столбец, если его нет (для миграций)
@@ -517,7 +531,7 @@ public class DatabaseManager {
      */
     public void saveSearchResultSearchDb(long chatId, long messageId, LocalDateTime messageDate,
                                          String keyword, String messageText, String senderId, String senderName) {
-        final String sql = "INSERT INTO " + qIdent("search_results") +
+        final String sql = "INSERT OR IGNORE INTO " + qIdent("search_results") +
                 "(message_id, message_date, keyword, message_text, sender_id, sender_name, found_date) " +
                 "VALUES(?,?,?,?,?,?,?)";
         try (Connection c = openSearch(chatId); PreparedStatement st = c.prepareStatement(sql)) {
@@ -786,6 +800,4 @@ public class DatabaseManager {
             log.error("БД(SEARCH): ошибка очистки для чата {}: {}", chatId, e.getMessage(), e);
         }
     }
-
-
 }

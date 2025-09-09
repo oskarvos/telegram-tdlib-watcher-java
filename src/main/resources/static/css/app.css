@@ -316,3 +316,64 @@ button {
     font-size: 14px;
     opacity: .8;
 }
+
+.results-table-wrap {
+    width: 100%;
+    overflow:auto;
+    border: 1px solid #eee;
+    border-radius: 8px;
+    background: #fff;
+}
+
+.results-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.results-table thead th {
+    position: sticky;
+    top: 0;
+    background: #f3f6fb;
+    text-align: left;
+    font-weight: 700;
+    border-bottom: 1px solid #e5e9f2;
+    padding: 10px 12px;
+    user-select: none;
+}
+
+.results-table th.sortable { cursor: pointer; }
+.results-table th.sortable:hover { background: #e9eff9; }
+.results-table th.active .sort-indicator { opacity: .9; }
+
+.results-table td {
+    border-bottom: 1px solid #f0f0f0;
+    padding: 10px 12px;
+    vertical-align: top;
+}
+
+.results-table td.msg {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.results-table td.mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.sort-indicator {
+    margin-left: .35em;
+    font-size: 12px;
+    opacity: .6;
+}
+
+/* Узкая колонка с нумерацией */
+.results-table th.ncol,
+.results-table td.ncol {
+    width: 56px;
+    text-align: right;
+    color: #8892a6;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
