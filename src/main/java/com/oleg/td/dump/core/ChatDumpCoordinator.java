@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.oleg.td.dump.api.DumpRequest;
 import com.oleg.td.integrations.tdlibs.TdJsonClient;
 import com.oleg.td.integrations.telegram.ChatResolver;
-import com.oleg.td.persistence.DatabaseManager;
+import com.oleg.td.dump.persistence.DumpDbManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -23,7 +23,7 @@ public class ChatDumpCoordinator {
 
     private final TdJsonClient client;
     private final ChatResolver resolver;
-    private final DatabaseManager db;
+    private final DumpDbManager db;
     private final MediaDownloader downloader;
 
     private volatile boolean stopRequested = false;
@@ -54,7 +54,7 @@ public class ChatDumpCoordinator {
 
     public ChatDumpCoordinator(TdJsonClient client,
                                ChatResolver resolver,
-                               DatabaseManager databaseManager,
+                               DumpDbManager databaseManager,
                                MediaDownloader downloader) {
         this.client = client;
         this.resolver = resolver;

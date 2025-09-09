@@ -4,7 +4,7 @@ import com.oleg.td.dump.api.DumpProgress;
 import com.oleg.td.dump.api.DumpRequest;
 import com.oleg.td.integrations.tdlibs.AuthFlow;
 import com.oleg.td.integrations.telegram.ChatResolver;
-import com.oleg.td.persistence.DatabaseManager;
+import com.oleg.td.dump.persistence.DumpDbManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -24,9 +24,9 @@ public class DumpService {
     private final AuthFlow authFlow;
     private final ChatDumpCoordinator coordinator;
     private final ChatResolver resolver;
-    private final DatabaseManager db;
+    private final DumpDbManager db;
 
-    public DumpService(AuthFlow authFlow, ChatDumpCoordinator coordinator, ChatResolver resolver, DatabaseManager db) {
+    public DumpService(AuthFlow authFlow, ChatDumpCoordinator coordinator, ChatResolver resolver, DumpDbManager db) {
         this.authFlow = authFlow;
         this.coordinator = coordinator;
         this.resolver = resolver;

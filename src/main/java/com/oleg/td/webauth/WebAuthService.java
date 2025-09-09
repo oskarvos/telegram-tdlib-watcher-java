@@ -1,8 +1,13 @@
+// =============================
+// WebAuthService (updated)
+// =============================
 package com.oleg.td.webauth;
+
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.oleg.td.app.Config;
+import com.oleg.td.integrations.tdlibs.AuthFlow;
 import com.oleg.td.integrations.tdlibs.TdJsonClient;
 import com.oleg.td.webauth.dto.AuthStatusResponse;
 import com.oleg.td.webauth.dto.StartAuthRequest;
@@ -20,23 +25,31 @@ public class WebAuthService {
 
     private final TdJsonClient client;
     private final Config config;
+    private final AuthFlow authFlow; // fallback source of truth
 
-    public WebAuthService(TdJsonClient client, Config config) {
+    public WebAuthService(TdJsonClient client, Config config, AuthFlow authFlow) {
         this.client = client;
         this.config = config;
+        this.authFlow = authFlow;
     }
 
     public AuthStatusResponse start(StartAuthRequest req) {
         try {
-            // 1) сохраняем введённые значения в существующий Config
+// If already authorized (e.g., via AuthFlow on app startup) — short-circuit
+            if (isFullyAuthorized()) {
+                return AuthStatusResponse.ok("READY");
+            }
+
+// 1) persist values into Config
             config.getTdlib().setApiId(req.getApiId());
             config.getTdlib().setApiHash(req.getApiHash());
             config.getAuth().setPhone(req.getPhone());
             config.setUseTestDc(Boolean.TRUE.equals(req.getUseTestDc()));
 
-            // 2) setTdlibParameters
-            String dbBase = config.getTdlib().getDatabaseDirectory(); // напр. "tdlib"
-            String filesBase = config.getTdlib().getFilesDirectory(); // напр. "tdlib/files"
+
+// 2) setTdlibParameters
+            String dbBase = config.getTdlib().getDatabaseDirectory();
+            String filesBase = config.getTdlib().getFilesDirectory();
             String suffix = String.format("%d_%s", req.getApiId(), digitsOnly(req.getPhone()));
 
             String dbDir = Paths.get(dbBase, suffix).toString();
@@ -59,11 +72,11 @@ public class WebAuthService {
             params.put("application_version", config.getTdlib().getApplicationVersion());
             params.put("enable_storage_optimizer", true);
             params.put("ignore_file_names", true);
-            params.put("database_encryption_key", ""); // без шифрования
+            params.put("database_encryption_key", "");
 
             client.requestWithFloodWaitSyncLimited(params, 30, TdJsonClient.Channel.MAIN);
 
-            // 3) setAuthenticationPhoneNumber (отправит код)
+// 3) request code
             ObjectNode phone = M.createObjectNode();
             phone.put("@type", "setAuthenticationPhoneNumber");
             phone.put("phone_number", req.getPhone());
@@ -91,7 +104,6 @@ public class WebAuthService {
                 client.requestWithFloodWaitSyncLimited(chk, 30, TdJsonClient.Channel.MAIN);
             }
 
-            // Если TDLib попросил пароль 2FA — отправим его
             var st = status();
             if ("WAIT_PASSWORD".equals(st.getState()) && req.getPassword() != null && !req.getPassword().isBlank()) {
                 ObjectNode pwd = M.createObjectNode();
@@ -99,6 +111,7 @@ public class WebAuthService {
                 pwd.put("password", req.getPassword());
                 client.requestWithFloodWaitSyncLimited(pwd, 30, TdJsonClient.Channel.MAIN);
             }
+
 
             return status();
         } catch (Exception e) {
@@ -108,6 +121,7 @@ public class WebAuthService {
     }
 
     public AuthStatusResponse status() {
+// Try TDLib first
         try {
             ObjectNode get = M.createObjectNode();
             get.put("@type", "getAuthorizationState");
@@ -118,18 +132,30 @@ public class WebAuthService {
                 case "authorizationStateReady":
                     return AuthStatusResponse.ok("READY");
                 case "authorizationStateWaitCode":
-                    return AuthStatusResponse.ok("WAIT_CODE");
+// If another flow is already authorized, surface READY to UI
+                    return isFullyAuthorized() ? AuthStatusResponse.ok("READY") : AuthStatusResponse.ok("WAIT_CODE");
                 case "authorizationStateWaitPassword":
-                    return AuthStatusResponse.ok("WAIT_PASSWORD");
+                    return isFullyAuthorized() ? AuthStatusResponse.ok("READY") : AuthStatusResponse.ok("WAIT_PASSWORD");
                 case "authorizationStateWaitPhoneNumber":
-                    return AuthStatusResponse.ok("WAIT_PHONE");
+                    return isFullyAuthorized() ? AuthStatusResponse.ok("READY") : AuthStatusResponse.ok("WAIT_PHONE");
                 case "authorizationStateWaitTdlibParameters":
-                    return AuthStatusResponse.ok("WAIT_PARAMS");
+                    return isFullyAuthorized() ? AuthStatusResponse.ok("READY") : AuthStatusResponse.ok("WAIT_PARAMS");
                 default:
-                    return AuthStatusResponse.ok(t);
+                    return isFullyAuthorized() ? AuthStatusResponse.ok("READY") : AuthStatusResponse.ok(t);
             }
         } catch (Exception e) {
+// If TDLib client isn't ready yet, but AuthFlow says we're authorized — report READY
+            if (isFullyAuthorized()) return AuthStatusResponse.ok("READY");
             return AuthStatusResponse.error("state error: " + e.getMessage());
+        }
+    }
+
+    private boolean isFullyAuthorized() {
+// Why: AuthFlow may use its own TDLib instance and be already logged in.
+        try {
+            return authFlow.isAuthorized();
+        } catch (Exception ignored) {
+            return false;
         }
     }
 

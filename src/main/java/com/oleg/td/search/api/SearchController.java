@@ -1,10 +1,11 @@
 package com.oleg.td.search.api;
 
 import com.oleg.td.dump.core.ChatDumpCoordinator;
+import com.oleg.td.dump.persistence.DumpDbManager;
 import com.oleg.td.integrations.telegram.ChatResolver;
-import com.oleg.td.persistence.DatabaseManager;
 import com.oleg.td.search.core.SearchService;
 import com.oleg.td.search.model.SearchResult;
+import com.oleg.td.search.persistence.SearchDbManager;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -15,16 +16,19 @@ public class SearchController {
     private final SearchService searchService;
     private final ChatDumpCoordinator chatDumpCoordinator;
     private final ChatResolver chatResolver;
-    private final DatabaseManager databaseManager; // <--- добавить
+    private final SearchDbManager searchDbManager; // Заменить DatabaseManager
+    private final DumpDbManager dumpDbManager; // Добавить для полной очистки
 
     public SearchController(SearchService searchService,
                             ChatDumpCoordinator chatDumpCoordinator,
                             ChatResolver chatResolver,
-                            DatabaseManager databaseManager) { // <--- добавить
+                            SearchDbManager searchDbManager,
+                            DumpDbManager dumpDbManager) {
         this.searchService = searchService;
         this.chatDumpCoordinator = chatDumpCoordinator;
         this.chatResolver = chatResolver;
-        this.databaseManager = databaseManager; // <--- добавить
+        this.searchDbManager = searchDbManager;
+        this.dumpDbManager = dumpDbManager;
     }
 
     @PostMapping("/start")
@@ -52,13 +56,14 @@ public class SearchController {
 
     @DeleteMapping("/database")
     public void deleteDatabase() {
-        databaseManager.clearAllSearchDatabases(); // только SEARCH-базы
+        searchDbManager.clearAllSearchDatabases(); // очистка всех SEARCH-БД
+        dumpDbManager.resetAllSearchCheckpoints(); // сброс всех чекпоинтов
     }
 
     @GetMapping("/results")
     public java.util.List<SearchResult> getResults(@RequestParam("chat") String chatRef) {
         long chatId = chatResolver.resolveFlexible(chatRef);
-        databaseManager.prepareSearchSchema(chatId); // <-- чтобы точно была таблица
-        return databaseManager.getSearchResultsFromSearchDb(chatId);
+        searchDbManager.prepareSearchSchema(chatId); // Заменить вызов
+        return searchDbManager.getSearchResults(chatId); // Заменить вызов
     }
 }
