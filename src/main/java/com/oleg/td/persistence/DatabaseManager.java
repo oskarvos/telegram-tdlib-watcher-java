@@ -526,25 +526,38 @@ public class DatabaseManager {
 
     /* ===================== Операции с результатами поиска (SEARCH) ===================== */
 
-    /**
-     * Вставка результата поиска в SEARCH-БД
-     */
-    public void saveSearchResultSearchDb(long chatId, long messageId, LocalDateTime messageDate,
-                                         String keyword, String messageText, String senderId, String senderName) {
+    // было: public void saveSearchResultSearchDb(...)
+    public boolean saveSearchResultSearchDb(long chatId, long messageId, LocalDateTime messageDate,
+                                            String keyword, String messageText, String senderId, String senderName) {
         final String sql = "INSERT OR IGNORE INTO " + qIdent("search_results") +
                 "(message_id, message_date, keyword, message_text, sender_id, sender_name, found_date) " +
                 "VALUES(?,?,?,?,?,?,?)";
-        try (Connection c = openSearch(chatId); PreparedStatement st = c.prepareStatement(sql)) {
-            st.setLong(1, messageId);
-            st.setString(2, messageDate.toString());
-            st.setString(3, keyword);
-            st.setString(4, messageText);
-            st.setString(5, senderId);
-            st.setString(6, senderName);
-            st.setString(7, LocalDateTime.now().toString());
-            st.executeUpdate();
+        try (Connection c = openSearch(chatId)) {
+            // Новое: не дублируем одно и то же сообщение вне зависимости от ключа
+            try (PreparedStatement chk = c.prepareStatement(
+                    "SELECT 1 FROM " + qIdent("search_results") + " WHERE message_id = ? LIMIT 1")) {
+                chk.setLong(1, messageId);
+                try (ResultSet rs = chk.executeQuery()) {
+                    if (rs.next()) {
+                        return false; // уже есть — не добавляем вторую строку с другим keyword
+                    }
+                }
+            }
+
+            try (PreparedStatement st = c.prepareStatement(sql)) {
+                st.setLong(1, messageId);
+                st.setString(2, messageDate.toString());
+                st.setString(3, keyword);
+                st.setString(4, messageText);
+                st.setString(5, senderId);
+                st.setString(6, senderName);
+                st.setString(7, LocalDateTime.now().toString());
+                int affected = st.executeUpdate();
+                return affected > 0;
+            }
         } catch (SQLException e) {
             log.error("БД(SEARCH): ошибка сохранения результата поиска: {}", e.getMessage(), e);
+            return false;
         }
     }
 

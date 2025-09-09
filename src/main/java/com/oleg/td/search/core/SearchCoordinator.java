@@ -162,7 +162,7 @@ public class SearchCoordinator {
 
         String aggregatedText = sb.toString();
         if (containsKeyword(aggregatedText, request.getKeyword(), request.isCaseSensitive(), request.isUseRegex())) {
-            db.saveSearchResultSearchDb(
+            boolean inserted = db.saveSearchResultSearchDb(
                     chatId,
                     messageId,
                     messageDate,
@@ -171,8 +171,13 @@ public class SearchCoordinator {
                     senderId,
                     senderName
             );
-            log.info("Найдено совпадение в чате '{}', сообщение {}: {}", chatTitle, messageId, aggregatedText);
-            if (foundCallback != null) foundCallback.run();
+
+            if (inserted) {
+                log.info("Найдено НОВОЕ совпадение в чате '{}', сообщение {}: {}", chatTitle, messageId, aggregatedText);
+                if (foundCallback != null) foundCallback.run();   // увеличиваем только для новых
+            } else {
+                log.debug("Совпадение уже было (дубликат) в чате '{}', сообщение {}", chatTitle, messageId);
+            }
         }
     }
 
