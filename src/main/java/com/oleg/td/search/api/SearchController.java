@@ -2,7 +2,7 @@ package com.oleg.td.search.api;
 
 import com.oleg.td.dump.core.ChatDumpCoordinator;
 import com.oleg.td.integrations.telegram.ChatResolver;
-import com.oleg.td.persistence.DatabaseManager;
+import com.oleg.td.search.persistence.SearchDbManager;
 import com.oleg.td.search.core.SearchService;
 import com.oleg.td.search.model.SearchResult;
 import org.springframework.http.HttpStatus;
@@ -15,16 +15,16 @@ public class SearchController {
     private final SearchService searchService;
     private final ChatDumpCoordinator chatDumpCoordinator;
     private final ChatResolver chatResolver;
-    private final DatabaseManager databaseManager; // <--- добавить
+    private final SearchDbManager databaseManager; // <--- добавить
 
     public SearchController(SearchService searchService,
                             ChatDumpCoordinator chatDumpCoordinator,
                             ChatResolver chatResolver,
-                            DatabaseManager databaseManager) { // <--- добавить
+                            SearchDbManager databaseManager) {
         this.searchService = searchService;
         this.chatDumpCoordinator = chatDumpCoordinator;
         this.chatResolver = chatResolver;
-        this.databaseManager = databaseManager; // <--- добавить
+        this.databaseManager = databaseManager;
     }
 
     @PostMapping("/start")
@@ -52,13 +52,15 @@ public class SearchController {
 
     @DeleteMapping("/database")
     public void deleteDatabase() {
-        databaseManager.clearAllSearchDatabases(); // только SEARCH-базы
+        databaseManager.clearSearchChatDatabases(); // только SEARCH-базы
     }
 
     @GetMapping("/results")
-    public java.util.List<SearchResult> getResults(@RequestParam("chat") String chatRef) {
+    public java.util.List<SearchResult> getResults(@RequestParam("chat") String chatRef,
+                                                   @RequestParam(value = "limit", defaultValue = "1000") int limit,
+                                                   @RequestParam(value = "offset", defaultValue = "0") int offset) {
         long chatId = chatResolver.resolveFlexible(chatRef);
-        databaseManager.prepareSearchSchema(chatId); // <-- чтобы точно была таблица
-        return databaseManager.getSearchResultsFromSearchDb(chatId);
+        databaseManager.prepareSearchSchema(chatId); // ensure table exists
+        return databaseManager.getSearchResults(chatId, limit, offset);
     }
 }

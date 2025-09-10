@@ -1,6 +1,6 @@
 package com.oleg.td.search.core;
 
-import com.oleg.td.persistence.DatabaseManager;
+import com.oleg.td.search.persistence.SearchDbManager;
 import com.oleg.td.search.api.SearchProgress;
 import com.oleg.td.search.api.SearchRequest;
 import org.slf4j.Logger;
@@ -19,9 +19,9 @@ public class SearchService {
     private final AtomicInteger foundMessages = new AtomicInteger(0);
 
     private final SearchCoordinator coordinator;
-    private final DatabaseManager db;
+    private final SearchDbManager db;
 
-    public SearchService(SearchCoordinator coordinator, DatabaseManager db) {
+    public SearchService(SearchCoordinator coordinator, SearchDbManager db) {
         this.coordinator = coordinator;
         this.db = db;
     }
@@ -67,30 +67,14 @@ public class SearchService {
 
     public void deleteSearchDatabase(long chatId) {
         coordinator.stop();
-        db.clearSearchDatabase(chatId);   // очистить SEARCH-БД конкретного чата
-        db.resetSearchCheckpoint(chatId); // сбросить чекпоинт в его DUMP-БД
+        db.clearSearchDatabase(chatId);
+        db.resetSearchCheckpoint(chatId);
         log.info("SEARCH-БД и чекпоинт поиска очищены для chatId={}", chatId);
     }
 
     public void deleteSearchDatabase() {
-        log.info("Очистка всех SEARCH-БД и сброс чекпоинтов поиска во всех DUMP-БД");
-        coordinator.stop(); // на всякий случай, чтобы не было гонок
+        coordinator.stop();
         db.clearSearchChatDatabases();
-        try {
-            // Полная очистка SEARCH и сброс search_last_message_id
-            // (метод уже делает оба шага)
-            //noinspection ConstantConditions
-            com.oleg.td.persistence.DatabaseManager.class.getDeclaredMethod("clearSearchChatDatabases");
-            // если метод есть, просто вызовем его:
-            // (у вас уже внедрён DatabaseManager в SearchCoordinator -> получите через отражение/или прокиньте зависимость)
-        } catch (Exception ignore) {
-        }
-
-        // Если SearchService не имеет прямого доступа к db, проще — добавьте зависимость:
-        // private final DatabaseManager db;
-        // и в конструкторе присвойте. Тогда здесь:
-        // db.clearSearchChatDatabases();
-        log.warn("Если лог выше не отработал — добавьте в SearchService зависимость DatabaseManager и вызовите db.clearSearchChatDatabases();");
+        log.info("Очищены все SEARCH-БД и сброшены чекпоинты поиска");
     }
-
 }

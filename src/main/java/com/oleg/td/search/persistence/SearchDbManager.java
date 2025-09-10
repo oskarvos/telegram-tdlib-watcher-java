@@ -62,7 +62,7 @@ public class SearchDbManager {
         return DriverManager.getConnection("jdbc:sqlite:" + searchDbPath(chatId));
     }
 
-    // --- DUMP metadata (чекпоинт поиска хранится в DUMP)
+    // --- DUMP metadata (хранит чекпоинт поиска)
     public void ensureDumpMetadata(long chatId){
         try (Connection c = openDump(chatId); Statement s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS " + q("metadata") + " (key TEXT PRIMARY KEY, value TEXT)");
@@ -102,7 +102,7 @@ public class SearchDbManager {
         } catch (SQLException e){ log.error("reset search checkpoint err: {}", e.getMessage(), e); }
     }
 
-    // --- SEARCH schema (единственная пользовательская таблица)
+    // --- SEARCH schema
     public void prepareSearchSchema(long chatId){
         final String t = q("search_results");
         final String create = "CREATE TABLE IF NOT EXISTS " + t + " (" +
@@ -113,7 +113,8 @@ public class SearchDbManager {
                 "message_text TEXT," +
                 "sender_id TEXT," +
                 "sender_name TEXT," +
-                "found_date TEXT" +
+                "found_date TEXT," +
+                "UNIQUE(message_id, keyword) ON CONFLICT IGNORE" +
                 ")";
         final String idx1 = "CREATE INDEX IF NOT EXISTS search_keyword_idx ON " + t + "(keyword)";
         final String idx2 = "CREATE INDEX IF NOT EXISTS search_date_idx ON " + t + "(message_date)";
@@ -124,9 +125,10 @@ public class SearchDbManager {
         }
     }
 
-    public void saveSearchHit(long chatId, long messageId, LocalDateTime messageDate,
-                              String keyword, String messageText, String senderId, String senderName){
-        final String sql = "INSERT INTO " + q("search_results") +
+    /** Возвращает true, если вставлен НОВЫЙ результат (а не проигнорирован дубликат). */
+    public boolean saveSearchResult(long chatId, long messageId, LocalDateTime messageDate,
+                                    String keyword, String messageText, String senderId, String senderName){
+        final String sql = "INSERT OR IGNORE INTO " + q("search_results") +
                 "(message_id,message_date,keyword,message_text,sender_id,sender_name,found_date) " +
                 "VALUES(?,?,?,?,?,?,?)";
         try (Connection c = openSearch(chatId); PreparedStatement ps = c.prepareStatement(sql)){
@@ -137,15 +139,26 @@ public class SearchDbManager {
             ps.setString(5, senderId);
             ps.setString(6, senderName);
             ps.setString(7, LocalDateTime.now().toString());
-            ps.executeUpdate();
+            int affected = ps.executeUpdate();
+            return affected > 0;
         } catch (SQLException e){
-            log.error("SEARCH save hit err: {}", e.getMessage(), e);
+            log.error("SEARCH save result err: {}", e.getMessage(), e);
+            return false;
         }
     }
 
-    // — «Удаление» в поиске: логическая очистка всех SEARCH-*.db + сброс чекпоинтов в DUMP
+    // Очистить SEARCH-БД конкретного чата (DROP TABLE + VACUUM)
+    public void clearSearchDatabase(long chatId){
+        try (Connection c = openSearch(chatId)) {
+            dropAllUserTables(c);
+            try (Statement s = c.createStatement()){ s.execute("VACUUM"); }
+        } catch (SQLException e){
+            log.error("clear SEARCH for chat {} err: {}", chatId, e.getMessage(), e);
+        }
+    }
+
+    // Очистить все SEARCH-*.db и сбросить чекпоинты в DUMP
     public void clearSearchChatDatabases(){
-        // 1) очистка SEARCH db (DROP TABLE + VACUUM)
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "SEARCH *.db")) {
             for (Path p : ds){
                 try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p)) {
@@ -157,7 +170,6 @@ public class SearchDbManager {
             }
         } catch (Exception e){ log.error("list SEARCH*.db err: {}", e.getMessage(), e); }
 
-        // 2) сброс чекпоинтов поиска в каждом DUMP
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "DUMP *.db")) {
             for (Path p : ds){
                 try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p)) {
@@ -174,7 +186,7 @@ public class SearchDbManager {
         } catch (Exception e){ log.error("list DUMP*.db err: {}", e.getMessage(), e); }
     }
 
-    // --- helpers
+    // --- helpers -------------
     private void ensureTable(Connection c, String name) throws SQLException {
         try (Statement s = c.createStatement()){
             s.execute("CREATE TABLE IF NOT EXISTS " + q(name) + " (key TEXT PRIMARY KEY, value TEXT)");

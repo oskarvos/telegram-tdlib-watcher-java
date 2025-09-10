@@ -13,7 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.oleg.td.integrations.telegram.ChatResolver;
-import com.oleg.td.persistence.DatabaseManager;
+import com.oleg.td.search.persistence.SearchDbManager;
 import com.oleg.td.integrations.tdlibs.TdJsonClient;
 import com.oleg.td.search.api.SearchRequest;
 import org.slf4j.Logger;
@@ -37,11 +37,11 @@ public class SearchCoordinator {
 
     private final TdJsonClient client;
     private final ChatResolver resolver;
-    private final DatabaseManager db;
+    private final SearchDbManager db;
 
     private volatile boolean stopRequested = false;
 
-    public SearchCoordinator(TdJsonClient client, ChatResolver resolver, DatabaseManager db) {
+    public SearchCoordinator(TdJsonClient client, ChatResolver resolver, SearchDbManager db) {
         this.client = client;
         this.resolver = resolver;
         this.db = db;
@@ -162,14 +162,10 @@ public class SearchCoordinator {
 
         String aggregatedText = sb.toString();
         if (containsKeyword(aggregatedText, request.getKeyword(), request.isCaseSensitive(), request.isUseRegex())) {
-            boolean inserted = db.saveSearchResultSearchDb(
-                    chatId,
-                    messageId,
-                    messageDate,
-                    request.getKeyword(),
-                    aggregatedText,
-                    senderId,
-                    senderName
+            boolean inserted = db.saveSearchResult(
+                    chatId, messageId, messageDate,
+                    request.getKeyword(), aggregatedText,
+                    senderId, senderName
             );
 
             if (inserted) {
