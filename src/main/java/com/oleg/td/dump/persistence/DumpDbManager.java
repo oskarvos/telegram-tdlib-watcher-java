@@ -7,37 +7,30 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.sql.*;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
 @Component
 public class DumpDbManager {
     private static final Logger log = LoggerFactory.getLogger(DumpDbManager.class);
 
-    private final Path dbDir = Paths.get("tdlib", "db");
+    private final Path dbDir    = Paths.get("tdlib", "db");
+    private final Path filesDir = Paths.get("tdlib", "files");
+
     private final ChatResolver chatResolver;
 
     public DumpDbManager(ChatResolver chatResolver) {
         this.chatResolver = chatResolver;
-        ensureBaseDir();
+        try { Files.createDirectories(dbDir); } catch (Exception ignored) {}
+        try { Files.createDirectories(filesDir); } catch (Exception ignored) {}
     }
 
-    /* ===== helpers ===== */
+    // --- helpers
     private static final Pattern INVALID = Pattern.compile("[\\\\/:*?\"<>|]");
     private static String q(String ident){ return "\"" + ident.replace("\"","\"\"") + "\""; }
-
-    private void ensureBaseDir() {
-        try {
-            Files.createDirectories(dbDir);
-            log.info("DUMP DB dir: {}", dbDir.toAbsolutePath());
-        } catch (Exception e) {
-            log.error("Cannot create dump DB dir {}: {}", dbDir.toAbsolutePath(), e.getMessage(), e);
-        }
-    }
 
     private String chatName(long chatId){
         try {
@@ -62,14 +55,11 @@ public class DumpDbManager {
     }
 
     private Connection openDump(long chatId) throws SQLException {
-        Path p = dumpDbPath(chatId);
-        try { Files.createDirectories(p.getParent()); }
-        catch (Exception e) { log.error("Cannot create parent dir for {}: {}", p.toAbsolutePath(), e.getMessage(), e); }
-        String url = "jdbc:sqlite:" + p.toAbsolutePath();
-        return DriverManager.getConnection(url);
+        try { Files.createDirectories(dbDir); } catch (Exception ignore) {}
+        return DriverManager.getConnection("jdbc:sqlite:" + dumpDbPath(chatId));
     }
 
-    /* ===== METADATA ===== */
+    // ---------- METADATA ----------
     public void ensureDumpMetadata(long chatId){
         try (Connection c = openDump(chatId); Statement s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS " + q("metadata") + " (key TEXT PRIMARY KEY, value TEXT)");
@@ -100,9 +90,10 @@ public class DumpDbManager {
         } catch (SQLException e){ log.error("DUMP set meta '{}' err: {}", key, e.getMessage(), e); }
     }
 
-    /* ===== SCHEMA ===== */
+    // ---------- SCHEMA ----------
     public void prepareSchema(long chatId){
         try (Connection c = openDump(chatId); Statement s = c.createStatement()){
+            // messages
             s.execute("CREATE TABLE IF NOT EXISTS messages (" +
                     "id INTEGER PRIMARY KEY AUTOINCREMENT," +
                     "message_id INTEGER," +
@@ -112,6 +103,7 @@ public class DumpDbManager {
                     "text TEXT)");
             s.execute("CREATE INDEX IF NOT EXISTS idx_messages_mid ON messages(message_id)");
 
+            // photos
             s.execute("CREATE TABLE IF NOT EXISTS photos (" +
                     "id INTEGER PRIMARY KEY AUTOINCREMENT," +
                     "message_id INTEGER," +
@@ -123,6 +115,7 @@ public class DumpDbManager {
                     "file_path TEXT)");
             s.execute("CREATE INDEX IF NOT EXISTS idx_photos_mid ON photos(message_id)");
 
+            // videos
             s.execute("CREATE TABLE IF NOT EXISTS videos (" +
                     "id INTEGER PRIMARY KEY AUTOINCREMENT," +
                     "message_id INTEGER," +
@@ -135,6 +128,7 @@ public class DumpDbManager {
                     "file_path TEXT)");
             s.execute("CREATE INDEX IF NOT EXISTS idx_videos_mid ON videos(message_id)");
 
+            // audio
             s.execute("CREATE TABLE IF NOT EXISTS audio (" +
                     "id INTEGER PRIMARY KEY AUTOINCREMENT," +
                     "message_id INTEGER," +
@@ -145,6 +139,7 @@ public class DumpDbManager {
                     "file_path TEXT)");
             s.execute("CREATE INDEX IF NOT EXISTS idx_audio_mid ON audio(message_id)");
 
+            // documents
             s.execute("CREATE TABLE IF NOT EXISTS documents (" +
                     "id INTEGER PRIMARY KEY AUTOINCREMENT," +
                     "message_id INTEGER," +
@@ -155,6 +150,7 @@ public class DumpDbManager {
                     "file_path TEXT)");
             s.execute("CREATE INDEX IF NOT EXISTS idx_documents_mid ON documents(message_id)");
 
+            // links
             s.execute("CREATE TABLE IF NOT EXISTS links (" +
                     "id INTEGER PRIMARY KEY AUTOINCREMENT," +
                     "message_id INTEGER," +
@@ -162,20 +158,50 @@ public class DumpDbManager {
                     "context TEXT)");
             s.execute("CREATE INDEX IF NOT EXISTS idx_links_mid ON links(message_id)");
 
+            // metadata
             ensureDumpMetadata(chatId);
-            log.info("DUMP schema ready at {}", dumpDbPath(chatId).toAbsolutePath());
+
+            // ---- ДЕДУП перед созданием UNIQUE-индексов (чтобы индексы создались без ошибок) ----
+            dedupTable(c, "messages",  "message_id");
+            dedupTable(c, "photos",    "message_id");
+            dedupTable(c, "videos",    "message_id");
+            dedupTable(c, "audio",     "message_id");
+            dedupTable(c, "documents", "message_id");
+            dedupTable(c, "links",     "message_id, url");
+
+            // ---- УНИКАЛЬНЫЕ индексы — защита от дублей ----
+            s.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_messages_mid  ON messages(message_id)");
+            s.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_photos_mid    ON photos(message_id)");
+            s.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_videos_mid    ON videos(message_id)");
+            s.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_audio_mid     ON audio(message_id)");
+            s.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_documents_mid ON documents(message_id)");
+            s.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_links_mid_url ON links(message_id, url)");
         } catch (SQLException e){
             log.error("DUMP {}: schema error: {}", chatName(chatId), e.getMessage(), e);
         }
     }
 
-    /* ===== LAST SAVED ===== */
+    /** Удаляет дубликаты, оставляя запись с минимальным rowid в каждой группе ключей. */
+    private void dedupTable(Connection c, String table, String keyExpr) {
+        String sql = "DELETE FROM " + q(table) + " " +
+                "WHERE rowid NOT IN (SELECT MIN(rowid) FROM " + q(table) + " GROUP BY " + keyExpr + ")";
+        try (Statement s = c.createStatement()) {
+            int removed = s.executeUpdate(sql);
+            if (removed > 0) log.info("Dedupe {}: удалено {} дублей по ключу ({})", table, removed, keyExpr);
+        } catch (SQLException e) {
+            // не критично — просто залогируем
+            log.warn("Dedupe {} failed: {}", table, e.getMessage());
+        }
+    }
+
+    // ---------- LAST SAVED ----------
     private long maxOf(Connection c, String table) throws SQLException {
         try (Statement s = c.createStatement();
              ResultSet rs = s.executeQuery("SELECT COALESCE(MAX(message_id), 0) FROM " + q(table))) {
             return rs.next() ? rs.getLong(1) : 0L;
         }
     }
+
     public long getLastSavedMessageId(long chatId){
         try (Connection c = openDump(chatId)) { return maxOf(c, "messages"); }
         catch (SQLException e){ log.warn("last messages err: {}", e.getMessage()); return 0L; }
@@ -201,10 +227,10 @@ public class DumpDbManager {
         catch (SQLException e){ log.warn("last links err: {}", e.getMessage()); return 0L; }
     }
 
-    /* ===== SAVE ===== */
+    // ---------- SAVE (теперь все INSERT OR IGNORE) ----------
     public void saveMessage(long chatId, long messageId, long date,
                             String senderId, Long replyTo, String text){
-        final String sql = "INSERT INTO messages(message_id,date,sender_id,reply_to,text) VALUES(?,?,?,?,?)";
+        final String sql = "INSERT OR IGNORE INTO messages(message_id,date,sender_id,reply_to,text) VALUES(?,?,?,?,?)";
         try (Connection c = openDump(chatId); PreparedStatement ps = c.prepareStatement(sql)){
             ps.setLong(1, messageId);
             ps.setLong(2, date);
@@ -217,7 +243,7 @@ public class DumpDbManager {
 
     public void savePhoto(long chatId, long messageId, Integer fileId, String remoteId,
                           Integer w, Integer h, String caption, String filePath){
-        final String sql = "INSERT INTO photos(message_id,file_id,remote_id,width,height,caption,file_path) VALUES(?,?,?,?,?,?,?)";
+        final String sql = "INSERT OR IGNORE INTO photos(message_id,file_id,remote_id,width,height,caption,file_path) VALUES(?,?,?,?,?,?,?)";
         try (Connection c = openDump(chatId); PreparedStatement ps = c.prepareStatement(sql)){
             ps.setLong(1, messageId);
             if (fileId == null) ps.setNull(2, Types.INTEGER); else ps.setInt(2, fileId);
@@ -232,7 +258,7 @@ public class DumpDbManager {
 
     public void saveVideo(long chatId, long messageId, Integer fileId, String remoteId,
                           Integer duration, Integer w, Integer h, String caption, String filePath){
-        final String sql = "INSERT INTO videos(message_id,file_id,remote_id,duration,width,height,caption,file_path) VALUES(?,?,?,?,?,?,?,?)";
+        final String sql = "INSERT OR IGNORE INTO videos(message_id,file_id,remote_id,duration,width,height,caption,file_path) VALUES(?,?,?,?,?,?,?,?)";
         try (Connection c = openDump(chatId); PreparedStatement ps = c.prepareStatement(sql)){
             ps.setLong(1, messageId);
             if (fileId == null) ps.setNull(2, Types.INTEGER); else ps.setInt(2, fileId);
@@ -248,7 +274,7 @@ public class DumpDbManager {
 
     public void saveAudio(long chatId, long messageId, Integer fileId, String remoteId,
                           Integer duration, String mime, String filePath){
-        final String sql = "INSERT INTO audio(message_id,file_id,remote_id,duration,mime,file_path) VALUES(?,?,?,?,?,?)";
+        final String sql = "INSERT OR IGNORE INTO audio(message_id,file_id,remote_id,duration,mime,file_path) VALUES(?,?,?,?,?,?)";
         try (Connection c = openDump(chatId); PreparedStatement ps = c.prepareStatement(sql)){
             ps.setLong(1, messageId);
             if (fileId == null) ps.setNull(2, Types.INTEGER); else ps.setInt(2, fileId);
@@ -262,7 +288,7 @@ public class DumpDbManager {
 
     public void saveDocument(long chatId, long messageId, Integer fileId, String remoteId,
                              String fileName, String mimeType, String filePath){
-        final String sql = "INSERT INTO documents(message_id,file_id,remote_id,file_name,mime_type,file_path) VALUES(?,?,?,?,?,?)";
+        final String sql = "INSERT OR IGNORE INTO documents(message_id,file_id,remote_id,file_name,mime_type,file_path) VALUES(?,?,?,?,?,?)";
         try (Connection c = openDump(chatId); PreparedStatement ps = c.prepareStatement(sql)){
             ps.setLong(1, messageId);
             if (fileId == null) ps.setNull(2, Types.INTEGER); else ps.setInt(2, fileId);
@@ -275,7 +301,7 @@ public class DumpDbManager {
     }
 
     public void saveLink(long chatId, long messageId, String url, String context){
-        final String sql = "INSERT INTO links(message_id,url,context) VALUES(?,?,?)";
+        final String sql = "INSERT OR IGNORE INTO links(message_id,url,context) VALUES(?,?,?)";
         try (Connection c = openDump(chatId); PreparedStatement ps = c.prepareStatement(sql)){
             ps.setLong(1, messageId);
             ps.setString(2, url);
@@ -284,63 +310,79 @@ public class DumpDbManager {
         } catch (SQLException e){ log.error("saveLink err: {}", e.getMessage(), e); }
     }
 
-    /* ==================== ОЧИСТКА DUMP-БАЗ И ФАЙЛОВ ==================== */
+    /* ========================= ОЧИСТКА ============================== */
 
-    // удалить все пользовательские таблицы в БД
+    /** Сбрасывает все DUMP-БД и чистит содержимое tdlib/files/* (оставляя каталоги). */
+    public void clearDumpDatabasesAndDeleteFiles() {
+        // 1) Очистка всех DUMP *.db
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "DUMP *.db")) {
+            for (Path p : ds) {
+                try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p)) {
+                    dropAllUserTables(c);
+                    try (Statement s = c.createStatement()) { s.execute("VACUUM"); }
+                    log.info("DUMP DB очищена: {}", p.getFileName());
+                } catch (SQLException e) {
+                    log.error("Очистка DUMP {} err: {}", p.getFileName(), e.getMessage(), e);
+                }
+            }
+        } catch (IOException e) {
+            log.error("Сканирование каталога DUMP БД err: {}", e.getMessage(), e);
+        }
+
+        // 2) Удаление содержимого в tdlib/files/* (саму 'files' не трогаем)
+        try { Files.createDirectories(filesDir); } catch (Exception ignore) {}
+        if (!Files.isDirectory(filesDir)) {
+            log.warn("Каталог tdlib/files не найден, пропускаю очистку файлов");
+            return;
+        }
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(filesDir)) {
+            for (Path sub : ds) {
+                if (Files.isDirectory(sub)) {
+                    deleteDirectoryContents(sub);
+                    log.info("Очищено содержимое {}", sub);
+                } else {
+                    try { Files.deleteIfExists(sub); }
+                    catch (Exception ex) { log.warn("Не удалось удалить файл {}: {}", sub, ex.getMessage()); }
+                }
+            }
+        } catch (IOException e) {
+            log.error("Очистка tdlib/files/* err: {}", e.getMessage(), e);
+        }
+    }
+
     private void dropAllUserTables(Connection c) throws SQLException {
         List<String> tables = new ArrayList<>();
-        try (PreparedStatement ps = c.prepareStatement("SELECT name FROM sqlite_master WHERE type='table'");
-             ResultSet rs = ps.executeQuery()){
-            while (rs.next()){
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT name FROM sqlite_master WHERE type='table'");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
                 String n = rs.getString(1);
                 if (!"sqlite_sequence".equalsIgnoreCase(n)) tables.add(n);
             }
         }
-        try (Statement s = c.createStatement()){
-            for (String t : tables) s.execute("DROP TABLE IF EXISTS " + q(t));
-        }
-    }
-
-    // очистить все DUMP *.db
-    private void clearAllDumpDatabases() {
-        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "DUMP *.db")) {
-            for (Path p : ds){
-                try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p.toAbsolutePath())) {
-                    dropAllUserTables(c);
-                    try (Statement s = c.createStatement()){ s.execute("VACUUM"); }
-                    log.info("Cleared DUMP DB: {}", p.getFileName());
-                } catch (SQLException e){
-                    log.error("Clear DUMP {} err: {}", p.getFileName(), e.getMessage(), e);
-                }
+        try (Statement s = c.createStatement()) {
+            for (String t : tables) {
+                s.execute("DROP TABLE IF EXISTS " + q(t));
             }
-        } catch (IOException e){
-            log.error("List DUMP db err: {}", e.getMessage(), e);
         }
     }
 
-    // удалить рекурсивно содержимое указанной папки
-    private void deleteFolderRecursively(Path root) {
-        if (root == null) return;
-        if (!Files.exists(root)) {
-            log.info("Files dir not found, skip: {}", root.toAbsolutePath());
-            return;
-        }
-        try (Stream<Path> walk = Files.walk(root)) {
-            walk.sorted(Comparator.reverseOrder()).forEach(p -> {
-                try { Files.deleteIfExists(p); }
-                catch (IOException e){ log.warn("Delete {} err: {}", p, e.getMessage()); }
-            });
-            log.info("Deleted folder: {}", root.toAbsolutePath());
-        } catch (IOException e) {
-            log.error("Walk {} err: {}", root.toAbsolutePath(), e.getMessage(), e);
-        }
-    }
-
-    // публичный метод для контроллера
-    public void clearDumpDatabasesAndDeleteFiles() {
-        clearAllDumpDatabases();
-        // Удаляем обе возможные локации «files»
-        deleteFolderRecursively(Paths.get("files"));
-        deleteFolderRecursively(Paths.get("tdlib", "files"));
+    /** Удаляет рекурсивно всё содержимое каталога, но не сам каталог. */
+    private void deleteDirectoryContents(Path dir) throws IOException {
+        if (!Files.exists(dir)) return;
+        Files.walkFileTree(dir, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Files.deleteIfExists(file);
+                return FileVisitResult.CONTINUE;
+            }
+            @Override
+            public FileVisitResult postVisitDirectory(Path d, IOException exc) throws IOException {
+                if (!dir.equals(d)) {        // сам корневой dir не удаляем
+                    Files.deleteIfExists(d);  // удаляем только вложенные
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 }
