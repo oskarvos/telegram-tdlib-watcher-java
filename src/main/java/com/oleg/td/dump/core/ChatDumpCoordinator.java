@@ -188,7 +188,7 @@ public class ChatDumpCoordinator {
                 }
 
                 try {
-                    Thread.sleep(100);
+                    Thread.sleep(20);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
