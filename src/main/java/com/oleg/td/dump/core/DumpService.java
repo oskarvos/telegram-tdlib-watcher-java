@@ -45,14 +45,13 @@ public class DumpService {
         this.resolver = resolver;
         this.db = db;
     }
-
+    // в DumpService.java
     public synchronized void startDump(DumpRequest request) {
         if (running.get()) {
             log.warn("Дамп уже выполняется");
             return;
         }
         running.set(true);
-
         processed.set(0);
         savedMessages.set(0);
         savedPhotos.set(0);
@@ -62,42 +61,45 @@ public class DumpService {
         savedLinks.set(0);
         docsByExt.clear();
 
-        try {
-            if (!authFlow.isAuthorized()) {
-                log.error("Авторизация не выполнена — дамп прерван");
-                return;
-            }
-
-            for (String ref : request.getChats()) {
-                try {
-                    long chatId = resolver.resolveFlexible(ref);
-                    db.prepareSchema(chatId);
-                } catch (Exception ex) {
-                    log.error("Не удалось подготовить схему для '{}': {}", ref, ex.getMessage(), ex);
+        new Thread(() -> {
+            try {
+                if (!authFlow.isAuthorized()) {
+                    log.error("Авторизация не выполнена — дамп прерван");
+                    return;
                 }
-            }
-
-            log.info("Запуск дампа чатов...");
-            coordinator.dumpChats(request, new DumpListener() {
-                @Override public void onProgress() { processed.incrementAndGet(); }
-                @Override public void onSavedMessage() { savedMessages.incrementAndGet(); }
-                @Override public void onSavedPhoto()   { savedPhotos.incrementAndGet(); }
-                @Override public void onSavedVideo()   { savedVideos.incrementAndGet(); }
-                @Override public void onSavedAudio()   { savedAudio.incrementAndGet(); }
-                @Override public void onSavedDocument(String ext) {
-                    savedDocs.incrementAndGet();
-                    String key = (ext == null || ext.isBlank()) ? "unknown" : ext.toLowerCase();
-                    docsByExt.computeIfAbsent(key, k -> new AtomicInteger(0)).incrementAndGet();
+                for (String ref : request.getChats()) {
+                    try {
+                        long chatId = resolver.resolveFlexible(ref);
+                        db.prepareSchema(chatId);
+                    } catch (Exception ex) {
+                        log.error("Не удалось подготовить схему для '{}': {}", ref, ex.getMessage(), ex);
+                    }
                 }
-                @Override public void onSavedLinks(int count) { savedLinks.addAndGet(Math.max(0, count)); }
-            });
-            log.info("Дамп завершён");
-        } catch (Exception e) {
-            log.error("Ошибка при выполнении дампа: {}", e.getMessage(), e);
-        } finally {
-            running.set(false);
-        }
+                log.info("Запуск дампа чатов...");
+                coordinator.dumpChats(request, new DumpListener() {
+                    @Override public void onProgress() { processed.incrementAndGet(); }
+                    @Override public void onSavedMessage() { savedMessages.incrementAndGet(); }
+                    @Override public void onSavedPhoto()   { savedPhotos.incrementAndGet(); }
+                    @Override public void onSavedVideo()   { savedVideos.incrementAndGet(); }
+                    @Override public void onSavedAudio()   { savedAudio.incrementAndGet(); }
+                    @Override public void onSavedDocument(String ext) {
+                        savedDocs.incrementAndGet();
+                        docsByExt.computeIfAbsent(
+                                (ext == null || ext.isBlank()) ? "unknown" : ext.toLowerCase(),
+                                k -> new java.util.concurrent.atomic.AtomicInteger(0)
+                        ).incrementAndGet();
+                    }
+                    @Override public void onSavedLinks(int count) { savedLinks.addAndGet(Math.max(0, count)); }
+                });
+                log.info("Дамп завершён");
+            } catch (Exception e) {
+                log.error("Ошибка при выполнении дампа: {}", e.getMessage(), e);
+            } finally {
+                running.set(false);
+            }
+        }, "dump-thread").start();
     }
+
 
     public void stopDump() {
         coordinator.stop();

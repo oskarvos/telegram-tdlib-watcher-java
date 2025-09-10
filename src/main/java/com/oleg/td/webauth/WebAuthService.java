@@ -28,10 +28,20 @@ public class WebAuthService {
 
     public AuthStatusResponse start(StartAuthRequest req) {
         try {
-            // 1) сохраняем введённые значения в существующий Config
+            if (req.getApiId() == null || req.getApiId() <= 0) {
+                return AuthStatusResponse.error("api_id не задан");
+            }
+            if (req.getApiHash() == null || req.getApiHash().isBlank()) {
+                return AuthStatusResponse.error("api_hash не задан");
+            }
+            if (req.getPhone() == null || req.getPhone().isBlank()) {
+                return AuthStatusResponse.error("phone не задан");
+            }
+
+            // 1) Сохраняем в конфиг
             config.getTdlib().setApiId(req.getApiId());
-            config.getTdlib().setApiHash(req.getApiHash());
-            config.getAuth().setPhone(req.getPhone());
+            config.getTdlib().setApiHash(req.getApiHash().trim());
+            config.getAuth().setPhone(req.getPhone().trim());
             config.setUseTestDc(Boolean.TRUE.equals(req.getUseTestDc()));
 
             // 2) setTdlibParameters
@@ -42,6 +52,10 @@ public class WebAuthService {
             String dbDir = Paths.get(dbBase, suffix).toString();
             String filesDir = Paths.get(filesBase, suffix).toString();
 
+            String osName = System.getProperty("os.name", "OS");
+            String osVersion = System.getProperty("os.version", "");
+            String systemVersion = osName + " " + osVersion;
+
             ObjectNode params = M.createObjectNode();
             params.put("@type", "setTdlibParameters");
             params.put("use_test_dc", config.getUseTestDc());
@@ -51,85 +65,112 @@ public class WebAuthService {
             params.put("use_chat_info_database", true);
             params.put("use_message_database", true);
             params.put("use_secret_chats", false);
-            params.put("api_id", req.getApiId());
-            params.put("api_hash", req.getApiHash());
+            params.put("api_id", config.getTdlib().getApiId());
+            params.put("api_hash", config.getTdlib().getApiHash());
             params.put("system_language_code", config.getTdlib().getSystemLanguageCode());
             params.put("device_model", config.getTdlib().getDeviceModel());
-            params.put("system_version", config.getTdlib().getSystemVersion() == null ? "" : config.getTdlib().getSystemVersion());
+            params.put("system_version", systemVersion);
             params.put("application_version", config.getTdlib().getApplicationVersion());
             params.put("enable_storage_optimizer", true);
             params.put("ignore_file_names", true);
-            params.put("database_encryption_key", ""); // без шифрования
+            // Если шифрование БД требуется, можно дополнительно вызвать checkDatabaseEncryptionKey.
+            // TDLib допускает передачу ключа отдельной командой; здесь оставим без него.
 
-            client.requestWithFloodWaitSyncLimited(params, 30, TdJsonClient.Channel.MAIN);
+            ObjectNode pResp = client.requestWithFloodWaitSyncLimited(params, 60, TdJsonClient.Channel.AUTH);
+            if ("error".equals(pResp.path("@type").asText())) {
+                return AuthStatusResponse.error("TDLib отказал в setTdlibParameters: " + pResp.path("message").asText());
+            }
 
-            // 3) setAuthenticationPhoneNumber (отправит код)
-            ObjectNode phone = M.createObjectNode();
-            phone.put("@type", "setAuthenticationPhoneNumber");
-            phone.put("phone_number", req.getPhone());
-            ObjectNode settings = phone.putObject("settings");
+            // 3) setAuthenticationPhoneNumber
+            ObjectNode reqPhone = M.createObjectNode();
+            reqPhone.put("@type", "setAuthenticationPhoneNumber");
+            reqPhone.put("phone_number", config.getAuth().getPhone());
+            ObjectNode settings = reqPhone.putObject("settings");
             settings.put("@type", "phoneNumberAuthenticationSettings");
             settings.put("allow_flash_call", false);
-            settings.put("is_current_phone_number", false);
-            settings.put("allow_missed_call", false);
+            settings.put("is_current_phone_number", true);
+            settings.put("allow_sms_retriever_api", false);
 
-            client.requestWithFloodWaitSyncLimited(phone, 30, TdJsonClient.Channel.MAIN);
+            ObjectNode phResp = client.requestWithFloodWaitSyncLimited(reqPhone, 60, TdJsonClient.Channel.AUTH);
+            if ("error".equals(phResp.path("@type").asText())) {
+                return AuthStatusResponse.error("Ошибка при отправке номера: " + phResp.path("message").asText());
+            }
 
-            return status();
+            // 4) Вернём текущее состояние
+            return mapAuthState();
         } catch (Exception e) {
-            log.error("WebAuth start error: {}", e.getMessage(), e);
-            return AuthStatusResponse.error("Ошибка старта авторизации: " + e.getMessage());
+            log.error("webauth.start error", e);
+            return AuthStatusResponse.error("Исключение: " + e.getMessage());
         }
     }
 
     public AuthStatusResponse verify(VerifyCodeRequest req) {
         try {
-            if (req.getCode() != null && !req.getCode().isBlank()) {
-                ObjectNode chk = M.createObjectNode();
-                chk.put("@type", "checkAuthenticationCode");
-                chk.put("code", req.getCode().trim());
-                client.requestWithFloodWaitSyncLimited(chk, 30, TdJsonClient.Channel.MAIN);
+            if (req.getPassword() != null && !req.getPassword().isBlank()) {
+                ObjectNode pass = M.createObjectNode();
+                pass.put("@type", "checkAuthenticationPassword");
+                pass.put("password", req.getPassword().trim());
+                ObjectNode resp = client.requestWithFloodWaitSyncLimited(pass, 60, TdJsonClient.Channel.AUTH);
+                if ("error".equals(resp.path("@type").asText())) {
+                    return AuthStatusResponse.error("Неверный пароль 2FA: " + resp.path("message").asText());
+                }
+                return mapAuthState();
             }
 
-            // Если TDLib попросил пароль 2FA — отправим его
-            var st = status();
-            if ("WAIT_PASSWORD".equals(st.getState()) && req.getPassword() != null && !req.getPassword().isBlank()) {
-                ObjectNode pwd = M.createObjectNode();
-                pwd.put("@type", "checkAuthenticationPassword");
-                pwd.put("password", req.getPassword());
-                client.requestWithFloodWaitSyncLimited(pwd, 30, TdJsonClient.Channel.MAIN);
+            if (req.getCode() == null || req.getCode().isBlank()) {
+                return AuthStatusResponse.error("Не задан ни код, ни пароль");
             }
 
-            return status();
+            ObjectNode code = M.createObjectNode();
+            code.put("@type", "checkAuthenticationCode");
+            code.put("code", req.getCode().trim());
+            ObjectNode resp = client.requestWithFloodWaitSyncLimited(code, 60, TdJsonClient.Channel.AUTH);
+            if ("error".equals(resp.path("@type").asText())) {
+                return AuthStatusResponse.error("Ошибка кода: " + resp.path("message").asText());
+            }
+            return mapAuthState();
         } catch (Exception e) {
-            log.error("WebAuth verify error: {}", e.getMessage(), e);
-            return AuthStatusResponse.error("Ошибка подтверждения: " + e.getMessage());
+            log.error("webauth.verify error", e);
+            return AuthStatusResponse.error("Исключение: " + e.getMessage());
         }
     }
 
     public AuthStatusResponse status() {
         try {
-            ObjectNode get = M.createObjectNode();
-            get.put("@type", "getAuthorizationState");
-            var resp = client.requestWithFloodWaitSyncLimited(get, 10, TdJsonClient.Channel.MAIN);
-            String t = resp.path("@type").asText();
-
-            switch (t) {
-                case "authorizationStateReady":
-                    return AuthStatusResponse.ok("READY");
-                case "authorizationStateWaitCode":
-                    return AuthStatusResponse.ok("WAIT_CODE");
-                case "authorizationStateWaitPassword":
-                    return AuthStatusResponse.ok("WAIT_PASSWORD");
-                case "authorizationStateWaitPhoneNumber":
-                    return AuthStatusResponse.ok("WAIT_PHONE");
-                case "authorizationStateWaitTdlibParameters":
-                    return AuthStatusResponse.ok("WAIT_PARAMS");
-                default:
-                    return AuthStatusResponse.ok(t);
-            }
+            return mapAuthState();
         } catch (Exception e) {
-            return AuthStatusResponse.error("state error: " + e.getMessage());
+            log.error("webauth.status error", e);
+            return AuthStatusResponse.error("Исключение: " + e.getMessage());
+        }
+    }
+
+    // --- helpers ----
+
+    private AuthStatusResponse mapAuthState() {
+        ObjectNode get = M.createObjectNode();
+        get.put("@type", "getAuthorizationState");
+        ObjectNode s = client.requestWithFloodWaitSyncLimited(get, 30, TdJsonClient.Channel.AUTH);
+        String t = s.path("authorization_state").path("@type").asText(
+                s.path("@type").asText() // иногда TDLib даёт ответ сразу как state
+        );
+
+        switch (t) {
+            case "authorizationStateReady":
+                return AuthStatusResponse.ok("READY");
+            case "authorizationStateWaitCode":
+                return AuthStatusResponse.ok("WAIT_CODE");
+            case "authorizationStateWaitPassword":
+                return AuthStatusResponse.ok("WAIT_PASSWORD");
+            case "authorizationStateWaitPhoneNumber":
+                return AuthStatusResponse.ok("WAIT_PHONE");
+            case "authorizationStateWaitTdlibParameters":
+                return AuthStatusResponse.ok("WAIT_TDLIB_PARAMETERS");
+            case "authorizationStateLoggingOut":
+                return AuthStatusResponse.ok("LOGGING_OUT");
+            case "authorizationStateClosed":
+                return AuthStatusResponse.ok("CLOSED");
+            default:
+                return AuthStatusResponse.ok(t == null || t.isBlank() ? "UNKNOWN" : t);
         }
     }
 

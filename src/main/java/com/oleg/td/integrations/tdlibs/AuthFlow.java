@@ -72,7 +72,7 @@ public class AuthFlow {
 
         String last = null;
         long startTime = System.currentTimeMillis();
-        long timeoutMs = 30_000L;
+        long timeoutMs = 180_000L;
 
         while (!authorized.get() && (System.currentTimeMillis() - startTime) < timeoutMs) {
             client.pumpOnce(1.5); // получает ровно одно обновление (если есть) в этом потоке
