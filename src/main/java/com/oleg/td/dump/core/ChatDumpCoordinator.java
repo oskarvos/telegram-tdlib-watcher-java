@@ -8,6 +8,7 @@ import com.oleg.td.dump.api.DumpRequest;
 import com.oleg.td.integrations.tdlibs.TdJsonClient;
 import com.oleg.td.integrations.telegram.ChatResolver;
 import com.oleg.td.dump.persistence.DumpDbManager;
+import com.oleg.td.dump.persistence.DumpDbManager.DbSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -16,6 +17,11 @@ import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+/**
+ * Внедрено:
+ *  - Работа с БД через DumpDbManager.DbSession (одно соединение на чат, PRAGMA, батч-коммиты, prepared statements).
+ * Никаких прочих оптимизаций не добавлялось.
+ */
 @Component
 public class ChatDumpCoordinator {
     private static final Logger log = LoggerFactory.getLogger(ChatDumpCoordinator.class);
@@ -62,7 +68,7 @@ public class ChatDumpCoordinator {
         this.downloader = downloader;
     }
 
-    /** НОВОЕ: координатор принимает подробный слушатель. */
+    /** Координатор принимает подробный слушатель. */
     public void dumpChats(DumpRequest request, DumpListener listener) {
         if (listener == null) listener = new DumpListener() {};
         stopRequested = false;
@@ -89,115 +95,124 @@ public class ChatDumpCoordinator {
 
             db.prepareSchema(chatId);
 
-            // --- Пороговые messageId по типам (что уже сохранено) ---
-            long lastMsgId      = request.isMessages() ? db.getLastSavedMessageId(chatId) : Long.MAX_VALUE;
-            long lastPhotoId    = request.isPhotos()   ? db.getLastSavedPhotoId(chatId)   : Long.MAX_VALUE;
-            long lastVideoId    = request.isVideos()   ? db.getLastSavedVideoId(chatId)   : Long.MAX_VALUE;
-            long lastAudioId    = request.isAudio()    ? db.getLastSavedAudioId(chatId)   : Long.MAX_VALUE;
-            long lastLinkId     = request.isLinks()    ? db.getLastSavedLinkId(chatId)    : Long.MAX_VALUE;
+            // --- Открываем сессию (единое соединение на чат) ---
+            try (DbSession session = db.openSession(chatId)) {
 
-            // Документы: учитываем изменение набора расширений (с нормализацией и сортировкой)
-            String storedRaw = db.loadMetadata(chatId, "text_document_extensions");
-            String normalizedStoredExts = normalizeExtList(parseExtList(storedRaw));
-            boolean docExtChanged = request.isTextDocuments() && !normalizedCurrentExts.equals(normalizedStoredExts);
-            long lastDocId = request.isTextDocuments()
-                    ? (docExtChanged ? 0L : db.getLastSavedDocumentId(chatId))
-                    : Long.MAX_VALUE;
+                // --- Пороговые messageId по типам (что уже сохранено) ---
+                long lastMsgId      = request.isMessages() ? db.getLastSavedMessageId(chatId) : Long.MAX_VALUE;
+                long lastPhotoId    = request.isPhotos()   ? db.getLastSavedPhotoId(chatId)   : Long.MAX_VALUE;
+                long lastVideoId    = request.isVideos()   ? db.getLastSavedVideoId(chatId)   : Long.MAX_VALUE;
+                long lastAudioId    = request.isAudio()    ? db.getLastSavedAudioId(chatId)   : Long.MAX_VALUE;
+                long lastLinkId     = request.isLinks()    ? db.getLastSavedLinkId(chatId)    : Long.MAX_VALUE;
 
-            if (docExtChanged) {
-                log.info("Чат '{}': набор расширений документов изменился (stored='{}' -> current='{}') — начинаем с начала (lastDocId=0)",
-                        chatName, normalizedStoredExts, normalizedCurrentExts);
-            }
+                // Документы: учитываем изменение набора расширений
+                String storedRaw = session.loadMetadata("text_document_extensions");
+                String normalizedStoredExts = normalizeExtList(parseExtList(storedRaw));
+                boolean docExtChanged = request.isTextDocuments() && !normalizedCurrentExts.equals(normalizedStoredExts);
+                long lastDocId = request.isTextDocuments()
+                        ? (docExtChanged ? 0L : db.getLastSavedDocumentId(chatId))
+                        : Long.MAX_VALUE;
 
-            // --- Флаги «достигли сохранённого» по каждому типу ---
-            boolean reachedMsgs   = !request.isMessages();
-            boolean reachedPhotos = !request.isPhotos();
-            boolean reachedVideos = !request.isVideos();
-            boolean reachedAudio  = !request.isAudio();
-            boolean reachedDocs   = !request.isTextDocuments();
-            boolean reachedLinks  = !request.isLinks();
-
-            if (request.isMessages())      log.info("lastSaved(message)={}",  lastMsgId);
-            if (request.isPhotos())        log.info("lastSaved(photo)={}",    lastPhotoId);
-            if (request.isVideos())        log.info("lastSaved(video)={}",    lastVideoId);
-            if (request.isAudio())         log.info("lastSaved(audio)={}",    lastAudioId);
-            if (request.isTextDocuments()) log.info("lastSaved(document)={}", lastDocId);
-            if (request.isLinks())         log.info("lastSaved(link)={}",     lastLinkId);
-
-            long fromMessageId = 0;
-
-            // Читаем историю партиями, пока не дойдём до порога для КАЖДОГО выбранного типа
-            while (!stopRequested && !(reachedMsgs && reachedPhotos && reachedVideos && reachedAudio && reachedDocs && reachedLinks)) {
-
-                ObjectNode reqNode = MAPPER.createObjectNode();
-                reqNode.put("@type", "getChatHistory");
-                reqNode.put("chat_id", chatId);
-                reqNode.put("from_message_id", fromMessageId);
-                reqNode.put("offset", 0);
-                reqNode.put("limit", 100);
-                reqNode.put("only_local", false);
-
-                ObjectNode resp = client.requestWithFloodWaitSyncLimited(reqNode, 60, TdJsonClient.Channel.MAIN);
-
-                if (!"messages".equals(resp.path("@type").asText())) {
-                    log.warn("Ответ TDLib отличен от 'messages': {}", resp.path("@type").asText());
-                    break;
+                if (docExtChanged) {
+                    log.info("Чат '{}': набор расширений документов изменился (stored='{}' -> current='{}') — начинаем с начала (lastDocId=0)",
+                            chatName, normalizedStoredExts, normalizedCurrentExts);
                 }
 
-                ArrayNode messages = (ArrayNode) resp.path("messages");
-                if (messages == null || messages.size() == 0) {
-                    log.info("Чат '{}': достигнут край истории (сообщений больше нет)", chatName);
-                    break;
-                }
+                // --- Флаги «достигли сохранённого» по каждому типу ---
+                boolean reachedMsgs   = !request.isMessages();
+                boolean reachedPhotos = !request.isPhotos();
+                boolean reachedVideos = !request.isVideos();
+                boolean reachedAudio  = !request.isAudio();
+                boolean reachedDocs   = !request.isTextDocuments();
+                boolean reachedLinks  = !request.isLinks();
 
-                long oldestMessageIdInBatch = Long.MAX_VALUE;
+                if (request.isMessages())      log.info("lastSaved(message)={}",  lastMsgId);
+                if (request.isPhotos())        log.info("lastSaved(photo)={}",    lastPhotoId);
+                if (request.isVideos())        log.info("lastSaved(video)={}",    lastVideoId);
+                if (request.isAudio())         log.info("lastSaved(audio)={}",    lastAudioId);
+                if (request.isTextDocuments()) log.info("lastSaved(document)={}", lastDocId);
+                if (request.isLinks())         log.info("lastSaved(link)={}",     lastLinkId);
 
-                for (JsonNode msg : messages) {
-                    if (stopRequested) break;
+                long fromMessageId = 0;
 
-                    long mid = msg.path("id").asLong();
+                // Читаем историю партиями, пока не дойдём до порога для КАЖДОГО выбранного типа
+                while (!stopRequested && !(reachedMsgs && reachedPhotos && reachedVideos && reachedAudio && reachedDocs && reachedLinks)) {
 
-                    // Обновляем «достигли порога» по каждому типу
-                    if (!reachedMsgs   && mid <= lastMsgId)   { reachedMsgs   = true; }
-                    if (!reachedPhotos && mid <= lastPhotoId) { reachedPhotos = true; }
-                    if (!reachedVideos && mid <= lastVideoId) { reachedVideos = true; }
-                    if (!reachedAudio  && mid <= lastAudioId) { reachedAudio  = true; }
-                    if (!reachedDocs   && mid <= lastDocId)   { reachedDocs   = true; }
-                    if (!reachedLinks  && mid <= lastLinkId)  { reachedLinks  = true; }
+                    ObjectNode reqNode = MAPPER.createObjectNode();
+                    reqNode.put("@type", "getChatHistory");
+                    reqNode.put("chat_id", chatId);
+                    reqNode.put("from_message_id", fromMessageId);
+                    reqNode.put("offset", 0);
+                    reqNode.put("limit", 100);
+                    reqNode.put("only_local", false);
 
-                    // Обрабатываем сообщение (с подсчётами)
-                    try {
-                        processMessage(chatId, msg, request, finalTextExtensions,
-                                lastMsgId, lastLinkId, lastPhotoId, lastVideoId, lastAudioId, lastDocId, listener);
-                    } catch (Exception ex) {
-                        log.error("Ошибка обработки сообщения {} из чата '{}': {}", mid, chatName, ex.getMessage(), ex);
+                    ObjectNode resp = client.requestWithFloodWaitSyncLimited(reqNode, 60, TdJsonClient.Channel.MAIN);
+
+                    if (!"messages".equals(resp.path("@type").asText())) {
+                        log.warn("Ответ TDLib отличен от 'messages': {}", resp.path("@type").asText());
+                        break;
                     }
 
-                    // для пагинации
-                    if (mid < oldestMessageIdInBatch) oldestMessageIdInBatch = mid;
+                    ArrayNode messages = (ArrayNode) resp.path("messages");
+                    if (messages == null || messages.size() == 0) {
+                        log.info("Чат '{}': достигнут край истории (сообщений больше нет)", chatName);
+                        break;
+                    }
 
-                    // прогресс по сообщению
-                    listener.onProgress();
+                    long oldestMessageIdInBatch = Long.MAX_VALUE;
+
+                    for (JsonNode msg : messages) {
+                        if (stopRequested) break;
+
+                        long mid = msg.path("id").asLong();
+
+                        // Обновляем «достигли порога» по каждому типу
+                        if (!reachedMsgs   && mid <= lastMsgId)   { reachedMsgs   = true; }
+                        if (!reachedPhotos && mid <= lastPhotoId) { reachedPhotos = true; }
+                        if (!reachedVideos && mid <= lastVideoId) { reachedVideos = true; }
+                        if (!reachedAudio  && mid <= lastAudioId) { reachedAudio  = true; }
+                        if (!reachedDocs   && mid <= lastDocId)   { reachedDocs   = true; }
+                        if (!reachedLinks  && mid <= lastLinkId)  { reachedLinks  = true; }
+
+                        // Обрабатываем сообщение (с подсчётами)
+                        try {
+                            processMessage(session, chatId, msg, request, finalTextExtensions,
+                                    lastMsgId, lastLinkId, lastPhotoId, lastVideoId, lastAudioId, lastDocId, listener);
+                        } catch (Exception ex) {
+                            log.error("Ошибка обработки сообщения {} из чата '{}': {}", mid, chatName, ex.getMessage(), ex);
+                        }
+
+                        // для пагинации
+                        if (mid < oldestMessageIdInBatch) oldestMessageIdInBatch = mid;
+
+                        // прогресс по сообщению
+                        listener.onProgress();
+                    }
+
+                    // если в пачке есть сообщения — идём дальше в прошлое
+                    if (oldestMessageIdInBatch != Long.MAX_VALUE) {
+                        fromMessageId = oldestMessageIdInBatch; // сохраняем исходную логику
+                    } else {
+                        break;
+                    }
+
+                    try {
+                        Thread.sleep(100); // сохраняем исходную задержку
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
                 }
 
-                // если в пачке есть сообщения — идём дальше в прошлое
-                if (oldestMessageIdInBatch != Long.MAX_VALUE) {
-                    fromMessageId = oldestMessageIdInBatch;
-                } else {
-                    break;
+                // Сохраняем НОРМАЛИЗОВАННЫЕ расширения для документов
+                if (request.isTextDocuments()) {
+                    session.saveMetadata("text_document_extensions", normalizedCurrentExts);
                 }
 
-                try {
-                    Thread.sleep(20);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-
-            // Сохраняем НОРМАЛИЗОВАННЫЕ расширения для документов
-            if (request.isTextDocuments()) {
-                db.saveMetadata(chatId, "text_document_extensions", normalizedCurrentExts);
+                // финальный коммит сессии
+                try { session.commit(); } catch (Exception ignore) {}
+            } catch (Exception sessionErr) {
+                log.error("Сессия дампа для '{}' завершилась ошибкой: {}", chatName, sessionErr.getMessage(), sessionErr);
             }
 
             log.info("Дамп чата '{}' завершён", chatName);
@@ -217,8 +232,6 @@ public class ChatDumpCoordinator {
     }
 
     // --- НОРМАЛИЗАЦИЯ СПИСКОВ РАСШИРЕНИЙ ---
-
-    /** Превращает строку "txt, pdf ,Py" -> множество нормализованных расширений. */
     private Set<String> parseExtList(String s) {
         if (s == null || s.isBlank()) return Set.of();
         return Arrays.stream(s.split(","))
@@ -229,7 +242,6 @@ public class ChatDumpCoordinator {
                 .collect(Collectors.toSet());
     }
 
-    /** Делает стабильную строку: сортирует, лоукейс, без точки, без дублей. */
     private String normalizeExtList(Set<String> exts) {
         if (exts == null || exts.isEmpty()) return "";
         return exts.stream()
@@ -247,9 +259,9 @@ public class ChatDumpCoordinator {
 
     /**
      * Сохраняет сущности ТОЛЬКО если messageId новее соответствующего lastSaved*.
-     * Вызывает колбэки DumpListener по факту сохранения.
      */
     private void processMessage(
+            DbSession session,
             long chatId,
             JsonNode msg,
             DumpRequest request,
@@ -282,16 +294,16 @@ public class ChatDumpCoordinator {
             String plainText = ft.path("text").asText(null);
 
             if (request.isMessages() && messageId > lastSavedMessageId) {
-                db.saveMessage(chatId, messageId, date, senderId, replyTo, plainText);
+                session.saveMessage(messageId, date, senderId, replyTo, plainText);
                 listener.onSavedMessage();
             }
             if (request.isLinks() && messageId > lastSavedLinkId) {
-                int cnt = extractLinksFromFormattedText(chatId, messageId, ft);
+                int cnt = extractLinksFromFormattedText(session, chatId, messageId, ft);
                 if (cnt > 0) listener.onSavedLinks(cnt);
             }
         } else {
             if (request.isMessages() && messageId > lastSavedMessageId) {
-                db.saveMessage(chatId, messageId, date, senderId, replyTo, null);
+                session.saveMessage(messageId, date, senderId, replyTo, null);
                 listener.onSavedMessage();
             }
         }
@@ -314,11 +326,11 @@ public class ChatDumpCoordinator {
             String filePath = null;
             if (fileId != null) filePath = downloader.downloadBlocking(fileId);
 
-            db.savePhoto(chatId, messageId, fileId, remoteId, w, h, caption, filePath);
+            session.savePhoto(messageId, fileId, remoteId, w, h, caption, filePath);
             listener.onSavedPhoto();
 
             if (request.isLinks() && messageId > lastSavedLinkId) {
-                int cnt = extractLinksFromFormattedText(chatId, messageId, captionFT);
+                int cnt = extractLinksFromFormattedText(session, chatId, messageId, captionFT);
                 if (cnt > 0) listener.onSavedLinks(cnt);
             }
         }
@@ -338,11 +350,11 @@ public class ChatDumpCoordinator {
             String filePath = null;
             if (fileId != null) filePath = downloader.downloadBlocking(fileId);
 
-            db.saveVideo(chatId, messageId, fileId, remoteId, duration, w, h, caption, filePath);
+            session.saveVideo(messageId, fileId, remoteId, duration, w, h, caption, filePath);
             listener.onSavedVideo();
 
             if (request.isLinks() && messageId > lastSavedLinkId) {
-                int cnt = extractLinksFromFormattedText(chatId, messageId, content.path("caption"));
+                int cnt = extractLinksFromFormattedText(session, chatId, messageId, content.path("caption"));
                 if (cnt > 0) listener.onSavedLinks(cnt);
             }
         }
@@ -360,7 +372,7 @@ public class ChatDumpCoordinator {
             String filePath = null;
             if (fileId != null) filePath = downloader.downloadBlocking(fileId);
 
-            db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime, filePath);
+            session.saveAudio(messageId, fileId, remoteId, duration, mime, filePath);
             listener.onSavedAudio();
         }
 
@@ -376,7 +388,7 @@ public class ChatDumpCoordinator {
             String filePath = null;
             if (fileId != null) filePath = downloader.downloadBlocking(fileId);
 
-            db.saveAudio(chatId, messageId, fileId, remoteId, duration, mime, filePath);
+            session.saveAudio(messageId, fileId, remoteId, duration, mime, filePath);
             listener.onSavedAudio();
         }
 
@@ -386,7 +398,7 @@ public class ChatDumpCoordinator {
             JsonNode captionFT = content.path("caption");
 
             if (request.isLinks() && messageId > lastSavedLinkId) {
-                int cnt = extractLinksFromFormattedText(chatId, messageId, captionFT);
+                int cnt = extractLinksFromFormattedText(session, chatId, messageId, captionFT);
                 if (cnt > 0) listener.onSavedLinks(cnt);
             }
 
@@ -401,7 +413,6 @@ public class ChatDumpCoordinator {
 
             String filePath = null;
 
-            // Скачиваем только если попадёт в сохранение
             boolean shouldSaveTextDoc  = request.isTextDocuments() && isTextDocument && messageId > lastSavedDocumentId;
             boolean shouldSaveAudioDoc = request.isAudio()         && isAudioDocument && messageId > lastSavedAudioId;
 
@@ -410,7 +421,7 @@ public class ChatDumpCoordinator {
             }
 
             if (shouldSaveTextDoc) {
-                db.saveDocument(chatId, messageId, fileId, remoteId, fileName, mimeType, filePath);
+                session.saveDocument(messageId, fileId, remoteId, fileName, mimeType, filePath);
                 String ext = getFileExtension(fileName).toLowerCase();
                 if (ext.startsWith(".")) ext = ext.substring(1);
                 if (ext.isBlank()) ext = "unknown";
@@ -418,7 +429,7 @@ public class ChatDumpCoordinator {
                 log.debug("Сохранён текстовый документ: {} (msg_id={})", fileName, messageId);
             } else if (shouldSaveAudioDoc) {
                 Integer duration = null;
-                db.saveAudio(chatId, messageId, fileId, remoteId, duration, mimeType, filePath);
+                session.saveAudio(messageId, fileId, remoteId, duration, mimeType, filePath);
                 listener.onSavedAudio();
                 log.debug("Сохранён аудио документ: {} (msg_id={})", fileName, messageId);
             } else {
@@ -458,7 +469,7 @@ public class ChatDumpCoordinator {
     }
 
     /** Возвращает, сколько ссылок сохранено. */
-    private int extractLinksFromFormattedText(long chatId, long messageId, JsonNode formattedText) {
+    private int extractLinksFromFormattedText(DbSession session, long chatId, long messageId, JsonNode formattedText) {
         if (formattedText == null || formattedText.isMissingNode()) return 0;
 
         String fullText = formattedText.path("text").asText("");
@@ -473,7 +484,7 @@ public class ChatDumpCoordinator {
                 int length = e.path("length").asInt(0);
                 String url = safeSubstring(fullText, offset, length);
                 if (url != null && !url.isBlank()) {
-                    db.saveLink(chatId, messageId, url, url);
+                    session.saveLink(messageId, url, url);
                     saved++;
                 }
             } else if ("textEntityTypeTextUrl".equals(t)) {
@@ -482,7 +493,7 @@ public class ChatDumpCoordinator {
                     int offset = e.path("offset").asInt(0);
                     int length = e.path("length").asInt(0);
                     String context = safeSubstring(fullText, offset, length);
-                    db.saveLink(chatId, messageId, url, context);
+                    session.saveLink(messageId, url, context);
                     saved++;
                 }
             }

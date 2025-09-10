@@ -9,10 +9,16 @@ import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.sql.*;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.regex.Pattern;
 
+/**
+ * Внедрено:
+ *  - DbSession: одно соединение на чат, PRAGMA, автокоммит выключен, батч-коммиты.
+ *  - PreparedStatement-ы переиспользуются на протяжении всего дампа чата.
+ *
+ * Остальной функционал (prepareSchema, dedup, старые методы maxOf/lastSaved* и т.д.) сохранён.
+ */
 @Component
 public class DumpDbManager {
     private static final Logger log = LoggerFactory.getLogger(DumpDbManager.class);
@@ -59,7 +65,201 @@ public class DumpDbManager {
         return DriverManager.getConnection("jdbc:sqlite:" + dumpDbPath(chatId));
     }
 
-    // ---------- METADATA ----------
+    // ---------- DbSession ----------
+    public DbSession openSession(long chatId) throws SQLException {
+        Connection c = openDump(chatId);
+        // PRAGMAs — только в рамках данного задания
+        try (Statement s = c.createStatement()) {
+            s.execute("PRAGMA journal_mode=WAL");
+            s.execute("PRAGMA synchronous=NORMAL");
+            s.execute("PRAGMA temp_store=MEMORY");
+            s.execute("PRAGMA busy_timeout=5000");
+        }
+        c.setAutoCommit(false);
+        return new DbSession(chatId, c);
+    }
+
+    public final class DbSession implements AutoCloseable {
+        private static final int BATCH_LIMIT = 1000;
+
+        private final long chatId;
+        private final Connection c;
+
+        // Prepared statements
+        private final PreparedStatement insMsg;
+        private final PreparedStatement insPhoto;
+        private final PreparedStatement insVideo;
+        private final PreparedStatement insAudio;
+        private final PreparedStatement insDoc;
+        private final PreparedStatement insLink;
+
+        private final PreparedStatement selMeta;
+        private final PreparedStatement upsertMeta;
+
+        private int pendingOps = 0;
+
+        private DbSession(long chatId, Connection c) throws SQLException {
+            this.chatId = chatId;
+            this.c = c;
+
+            // Подготовка выражений
+            insMsg   = c.prepareStatement("INSERT OR IGNORE INTO messages(message_id,date,sender_id,reply_to,text) VALUES(?,?,?,?,?)");
+            insPhoto = c.prepareStatement("INSERT OR IGNORE INTO photos(message_id,file_id,remote_id,width,height,caption,file_path) VALUES(?,?,?,?,?,?,?)");
+            insVideo = c.prepareStatement("INSERT OR IGNORE INTO videos(message_id,file_id,remote_id,duration,width,height,caption,file_path) VALUES(?,?,?,?,?,?,?,?)");
+            insAudio = c.prepareStatement("INSERT OR IGNORE INTO audio(message_id,file_id,remote_id,duration,mime,file_path) VALUES(?,?,?,?,?,?)");
+            insDoc   = c.prepareStatement("INSERT OR IGNORE INTO documents(message_id,file_id,remote_id,file_name,mime_type,file_path) VALUES(?,?,?,?,?,?)");
+            insLink  = c.prepareStatement("INSERT OR IGNORE INTO links(message_id,url,context) VALUES(?,?,?)");
+
+            selMeta    = c.prepareStatement("SELECT value FROM " + q("metadata") + " WHERE key=?");
+            upsertMeta = c.prepareStatement("INSERT OR REPLACE INTO " + q("metadata") + " (key,value) VALUES(?,?)");
+        }
+
+        private void bumpAndMaybeCommit() throws SQLException {
+            if (++pendingOps >= BATCH_LIMIT) {
+                c.commit();
+                pendingOps = 0;
+            }
+        }
+
+        public void commit() throws SQLException {
+            if (pendingOps > 0) {
+                c.commit();
+                pendingOps = 0;
+            } else {
+                c.commit();
+            }
+        }
+
+        // ---- Метаданные ----
+        public String loadMetadata(String key) {
+            try {
+                selMeta.clearParameters();
+                selMeta.setString(1, key);
+                try (ResultSet rs = selMeta.executeQuery()) {
+                    if (rs.next()) return rs.getString(1);
+                }
+            } catch (SQLException e) {
+                log.warn("DUMP get meta '{}' err: {}", key, e.getMessage());
+            }
+            return null;
+        }
+
+        public void saveMetadata(String key, String value) {
+            try {
+                upsertMeta.clearParameters();
+                upsertMeta.setString(1, key);
+                upsertMeta.setString(2, value);
+                upsertMeta.executeUpdate();
+                bumpAndMaybeCommit();
+            } catch (SQLException e) {
+                log.error("DUMP set meta '{}' err: {}", key, e.getMessage(), e);
+            }
+        }
+
+        // ---- SAVE (через prepared) ----
+        public void saveMessage(long messageId, long date, String senderId, Long replyTo, String text){
+            try {
+                insMsg.clearParameters();
+                insMsg.setLong(1, messageId);
+                insMsg.setLong(2, date);
+                insMsg.setString(3, senderId);
+                if (replyTo == null) insMsg.setNull(4, Types.BIGINT); else insMsg.setLong(4, replyTo);
+                insMsg.setString(5, text);
+                insMsg.executeUpdate();
+                bumpAndMaybeCommit();
+            } catch (SQLException e){ log.error("saveMessage err: {}", e.getMessage(), e); }
+        }
+
+        public void savePhoto(long messageId, Integer fileId, String remoteId,
+                              Integer w, Integer h, String caption, String filePath){
+            try {
+                insPhoto.clearParameters();
+                insPhoto.setLong(1, messageId);
+                if (fileId == null) insPhoto.setNull(2, Types.INTEGER); else insPhoto.setInt(2, fileId);
+                insPhoto.setString(3, remoteId);
+                if (w == null) insPhoto.setNull(4, Types.INTEGER); else insPhoto.setInt(4, w);
+                if (h == null) insPhoto.setNull(5, Types.INTEGER); else insPhoto.setInt(5, h);
+                insPhoto.setString(6, caption);
+                insPhoto.setString(7, filePath);
+                insPhoto.executeUpdate();
+                bumpAndMaybeCommit();
+            } catch (SQLException e){ log.error("savePhoto err: {}", e.getMessage(), e); }
+        }
+
+        public void saveVideo(long messageId, Integer fileId, String remoteId,
+                              Integer duration, Integer w, Integer h, String caption, String filePath){
+            try {
+                insVideo.clearParameters();
+                insVideo.setLong(1, messageId);
+                if (fileId == null) insVideo.setNull(2, Types.INTEGER); else insVideo.setInt(2, fileId);
+                insVideo.setString(3, remoteId);
+                if (duration == null) insVideo.setNull(4, Types.INTEGER); else insVideo.setInt(4, duration);
+                if (w == null) insVideo.setNull(5, Types.INTEGER); else insVideo.setInt(5, w);
+                if (h == null) insVideo.setNull(6, Types.INTEGER); else insVideo.setInt(6, h);
+                insVideo.setString(7, caption);
+                insVideo.setString(8, filePath);
+                insVideo.executeUpdate();
+                bumpAndMaybeCommit();
+            } catch (SQLException e){ log.error("saveVideo err: {}", e.getMessage(), e); }
+        }
+
+        public void saveAudio(long messageId, Integer fileId, String remoteId,
+                              Integer duration, String mime, String filePath){
+            try {
+                insAudio.clearParameters();
+                insAudio.setLong(1, messageId);
+                if (fileId == null) insAudio.setNull(2, Types.INTEGER); else insAudio.setInt(2, fileId);
+                insAudio.setString(3, remoteId);
+                if (duration == null) insAudio.setNull(4, Types.INTEGER); else insAudio.setInt(4, duration);
+                insAudio.setString(5, mime);
+                insAudio.setString(6, filePath);
+                insAudio.executeUpdate();
+                bumpAndMaybeCommit();
+            } catch (SQLException e){ log.error("saveAudio err: {}", e.getMessage(), e); }
+        }
+
+        public void saveDocument(long messageId, Integer fileId, String remoteId,
+                                 String fileName, String mimeType, String filePath){
+            try {
+                insDoc.clearParameters();
+                insDoc.setLong(1, messageId);
+                if (fileId == null) insDoc.setNull(2, Types.INTEGER); else insDoc.setInt(2, fileId);
+                insDoc.setString(3, remoteId);
+                insDoc.setString(4, fileName);
+                insDoc.setString(5, mimeType);
+                insDoc.setString(6, filePath);
+                insDoc.executeUpdate();
+                bumpAndMaybeCommit();
+            } catch (SQLException e){ log.error("saveDocument err: {}", e.getMessage(), e); }
+        }
+
+        public void saveLink(long messageId, String url, String context){
+            try {
+                insLink.clearParameters();
+                insLink.setLong(1, messageId);
+                insLink.setString(2, url);
+                insLink.setString(3, context);
+                insLink.executeUpdate();
+                bumpAndMaybeCommit();
+            } catch (SQLException e){ log.error("saveLink err: {}", e.getMessage(), e); }
+        }
+
+        @Override
+        public void close() {
+            try { commit(); } catch (Exception ignore) {}
+            try { insMsg.close(); }   catch (Exception ignore) {}
+            try { insPhoto.close(); } catch (Exception ignore) {}
+            try { insVideo.close(); } catch (Exception ignore) {}
+            try { insAudio.close(); } catch (Exception ignore) {}
+            try { insDoc.close(); }   catch (Exception ignore) {}
+            try { insLink.close(); }  catch (Exception ignore) {}
+            try { selMeta.close(); }  catch (Exception ignore) {}
+            try { upsertMeta.close(); } catch (Exception ignore) {}
+            try { c.close(); }        catch (Exception ignore) {}
+        }
+    }
+
+    // ---------- METADATA (старые методы; оставлены для совместимости/вызовов вне сессии) ----------
     public void ensureDumpMetadata(long chatId){
         try (Connection c = openDump(chatId); Statement s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS " + q("metadata") + " (key TEXT PRIMARY KEY, value TEXT)");
@@ -161,7 +361,7 @@ public class DumpDbManager {
             // metadata
             ensureDumpMetadata(chatId);
 
-            // ---- ДЕДУП перед созданием UNIQUE-индексов (чтобы индексы создались без ошибок) ----
+            // ---- ДЕДУП перед созданием UNIQUE-индексов ----
             dedupTable(c, "messages",  "message_id");
             dedupTable(c, "photos",    "message_id");
             dedupTable(c, "videos",    "message_id");
@@ -169,7 +369,7 @@ public class DumpDbManager {
             dedupTable(c, "documents", "message_id");
             dedupTable(c, "links",     "message_id, url");
 
-            // ---- УНИКАЛЬНЫЕ индексы — защита от дублей ----
+            // ---- УНИКАЛЬНЫЕ индексы ----
             s.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_messages_mid  ON messages(message_id)");
             s.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_photos_mid    ON photos(message_id)");
             s.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_videos_mid    ON videos(message_id)");
@@ -189,7 +389,6 @@ public class DumpDbManager {
             int removed = s.executeUpdate(sql);
             if (removed > 0) log.info("Dedupe {}: удалено {} дублей по ключу ({})", table, removed, keyExpr);
         } catch (SQLException e) {
-            // не критично — просто залогируем
             log.warn("Dedupe {} failed: {}", table, e.getMessage());
         }
     }
@@ -227,7 +426,7 @@ public class DumpDbManager {
         catch (SQLException e){ log.warn("last links err: {}", e.getMessage()); return 0L; }
     }
 
-    // ---------- SAVE (теперь все INSERT OR IGNORE) ----------
+    // ---------- SAVE (старые одноразовые методы оставлены как было) ----------
     public void saveMessage(long chatId, long messageId, long date,
                             String senderId, Long replyTo, String text){
         final String sql = "INSERT OR IGNORE INTO messages(message_id,date,sender_id,reply_to,text) VALUES(?,?,?,?,?)";
@@ -378,8 +577,8 @@ public class DumpDbManager {
             }
             @Override
             public FileVisitResult postVisitDirectory(Path d, IOException exc) throws IOException {
-                if (!dir.equals(d)) {        // сам корневой dir не удаляем
-                    Files.deleteIfExists(d);  // удаляем только вложенные
+                if (!dir.equals(d)) {
+                    Files.deleteIfExists(d);
                 }
                 return FileVisitResult.CONTINUE;
             }
