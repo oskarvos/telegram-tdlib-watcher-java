@@ -1,4 +1,4 @@
-// Точка входа приложения
+// main.js
 import { DumpModule } from './modules/DumpModule.js';
 import { SearchModule } from './modules/SearchModule.js';
 import { MonitorModule } from './modules/MonitorModule.js';

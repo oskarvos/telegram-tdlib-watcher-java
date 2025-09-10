@@ -1,4 +1,4 @@
-// Логика страницы авторизации с возможностью запоминания введённых данных
+// auth.js
 class Api {
     async request(url, opt = {}) {
         const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opt });

@@ -1,4 +1,4 @@
-// Простейшие тост-уведомления (правый нижний угол).
+// Notifier.js
 export class Notifier {
     constructor(root = document.getElementById('toasts')) { this.root = root; }
     info(msg)  { this.#push(msg, ''); }
