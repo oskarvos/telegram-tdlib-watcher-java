@@ -18,6 +18,7 @@ import java.util.regex.Pattern;
 public class TdJsonClient {
     private static final Logger log = LoggerFactory.getLogger(TdJsonClient.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private final Object recvLock = new Object();
 
     public enum Channel {AUTH, MAIN}
 
@@ -89,7 +90,10 @@ public class TdJsonClient {
      * Single-threaded pump: receive once and dispatch updates (without @extra).
      */
     public void pumpOnce(double timeoutSeconds) {
-        String raw = tdLib.td_json_client_receive(client, timeoutSeconds);
+        String raw;
+        synchronized (recvLock) {
+            raw = tdLib.td_json_client_receive(client, timeoutSeconds);
+        }
         if (raw == null || raw.isBlank()) return;
         try {
             ObjectNode node = (ObjectNode) MAPPER.readTree(raw);
@@ -112,7 +116,10 @@ public class TdJsonClient {
             send(req, channel);
             long start = System.currentTimeMillis();
             while (true) {
-                String raw = tdLib.td_json_client_receive(client, 2.0);
+                String raw;
+                synchronized (recvLock) {
+                    raw = tdLib.td_json_client_receive(client, 2.0);
+                }
                 if (raw == null || raw.isBlank()) {
                     if (System.currentTimeMillis() - start > 120_000L) {
                         ObjectNode timeout = MAPPER.createObjectNode();
