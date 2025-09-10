@@ -19,7 +19,7 @@ public class DumpService {
     private static final Logger log = LoggerFactory.getLogger(DumpService.class);
 
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private int progress = 0;
+    private int processed = 0;
 
     private final AuthFlow authFlow;
     private final ChatDumpCoordinator coordinator;
@@ -44,7 +44,7 @@ public class DumpService {
             return;
         }
         running.set(true);
-        progress = 0;
+        processed = 0;
 
         try {
             // Проверяем, что авторизация уже выполнена
@@ -85,13 +85,13 @@ public class DumpService {
      * Текущий прогресс.
      */
     public DumpProgress getProgress() {
-        return new DumpProgress(progress, running.get());
+        return new DumpProgress(processed, running.get());
     }
 
     /**
      * Инкремент — вызывается координатором на каждое обработанное сообщение.
      */
     private synchronized void incrementProgress() {
-        progress++;
+        processed++;
     }
 }

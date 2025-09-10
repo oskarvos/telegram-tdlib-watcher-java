@@ -1,20 +1,20 @@
 package com.oleg.td.dump.api;
 
 public class DumpProgress {
-    private int percent;
+    private int processed;
     private boolean running;
 
-    public DumpProgress(int percent, boolean running) {
-        this.percent = percent;
+    public DumpProgress(int processed, boolean running) {
+        this.processed = processed;
         this.running = running;
     }
 
-    public int getPercent() {
-        return percent;
+    public int getProcessed() {
+        return processed;
     }
 
-    public void setPercent(int percent) {
-        this.percent = percent;
+    public void setProcessed(int processed) {
+        this.processed = processed;
     }
 
     public boolean isRunning() {
