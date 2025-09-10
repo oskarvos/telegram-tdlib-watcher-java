@@ -57,9 +57,15 @@ public class MonitorDbManager {
     private Connection openDump(long chatId) throws SQLException {
         return DriverManager.getConnection("jdbc:sqlite:" + dumpDbPath(chatId));
     }
+
     private Connection openMonitor(long chatId) throws SQLException {
-        return DriverManager.getConnection("jdbc:sqlite:" + monitorDbPath(chatId));
+        Path p = monitorDbPath(chatId);
+        try { Files.createDirectories(p.getParent()); } catch (Exception e) {
+            log.error("Cannot create parent dir for {}: {}", p.toAbsolutePath(), e.getMessage(), e);
+        }
+        return DriverManager.getConnection("jdbc:sqlite:" + p.toAbsolutePath());
     }
+
 
     // --- DUMP metadata
     public void ensureDumpMetadata(long chatId){

@@ -9,17 +9,30 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Сервис-обёртка: старт/стоп дампа и прогресс.
+ * Сервис-обёртка: старт/стоп дампа и прогресс + счётчики сохранённых сущностей.
  */
 @Service
 public class DumpService {
     private static final Logger log = LoggerFactory.getLogger(DumpService.class);
 
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private int processed = 0;
+
+    private final AtomicInteger processed     = new AtomicInteger(0);
+    private final AtomicInteger savedMessages = new AtomicInteger(0);
+    private final AtomicInteger savedPhotos   = new AtomicInteger(0);
+    private final AtomicInteger savedVideos   = new AtomicInteger(0);
+    private final AtomicInteger savedAudio    = new AtomicInteger(0);
+    private final AtomicInteger savedDocs     = new AtomicInteger(0);
+    private final AtomicInteger savedLinks    = new AtomicInteger(0);
+
+    private final ConcurrentHashMap<String, AtomicInteger> docsByExt = new ConcurrentHashMap<>();
 
     private final AuthFlow authFlow;
     private final ChatDumpCoordinator coordinator;
@@ -33,27 +46,28 @@ public class DumpService {
         this.db = db;
     }
 
-    /**
-     * Старт дампа:
-     * 1) Для каждого чата создаём схему в БД
-     * 2) Запускаем координатор
-     */
     public synchronized void startDump(DumpRequest request) {
         if (running.get()) {
             log.warn("Дамп уже выполняется");
             return;
         }
         running.set(true);
-        processed = 0;
+
+        processed.set(0);
+        savedMessages.set(0);
+        savedPhotos.set(0);
+        savedVideos.set(0);
+        savedAudio.set(0);
+        savedDocs.set(0);
+        savedLinks.set(0);
+        docsByExt.clear();
 
         try {
-            // Проверяем, что авторизация уже выполнена
             if (!authFlow.isAuthorized()) {
                 log.error("Авторизация не выполнена — дамп прерван");
                 return;
             }
 
-            // Создать схемы сразу при старте
             for (String ref : request.getChats()) {
                 try {
                     long chatId = resolver.resolveFlexible(ref);
@@ -64,7 +78,19 @@ public class DumpService {
             }
 
             log.info("Запуск дампа чатов...");
-            coordinator.dumpChats(request, this::incrementProgress);
+            coordinator.dumpChats(request, new DumpListener() {
+                @Override public void onProgress() { processed.incrementAndGet(); }
+                @Override public void onSavedMessage() { savedMessages.incrementAndGet(); }
+                @Override public void onSavedPhoto()   { savedPhotos.incrementAndGet(); }
+                @Override public void onSavedVideo()   { savedVideos.incrementAndGet(); }
+                @Override public void onSavedAudio()   { savedAudio.incrementAndGet(); }
+                @Override public void onSavedDocument(String ext) {
+                    savedDocs.incrementAndGet();
+                    String key = (ext == null || ext.isBlank()) ? "unknown" : ext.toLowerCase();
+                    docsByExt.computeIfAbsent(key, k -> new AtomicInteger(0)).incrementAndGet();
+                }
+                @Override public void onSavedLinks(int count) { savedLinks.addAndGet(Math.max(0, count)); }
+            });
             log.info("Дамп завершён");
         } catch (Exception e) {
             log.error("Ошибка при выполнении дампа: {}", e.getMessage(), e);
@@ -73,25 +99,26 @@ public class DumpService {
         }
     }
 
-    /**
-     * Остановить дамп.
-     */
     public void stopDump() {
         coordinator.stop();
         log.info("Получен сигнал остановки дампа");
     }
 
-    /**
-     * Текущий прогресс.
-     */
     public DumpProgress getProgress() {
-        return new DumpProgress(processed, running.get());
-    }
+        DumpProgress dp = new DumpProgress(processed.get(), running.get());
+        dp.setSavedMessages(savedMessages.get());
+        dp.setSavedPhotos(savedPhotos.get());
+        dp.setSavedVideos(savedVideos.get());
+        dp.setSavedAudio(savedAudio.get());
+        dp.setSavedDocuments(savedDocs.get());
+        dp.setSavedLinks(savedLinks.get());
 
-    /**
-     * Инкремент — вызывается координатором на каждое обработанное сообщение.
-     */
-    private synchronized void incrementProgress() {
-        processed++;
+        Map<String, Integer> byExt = new HashMap<>();
+        for (Map.Entry<String, AtomicInteger> e : docsByExt.entrySet()) {
+            byExt.put(e.getKey(), e.getValue().get());
+        }
+        dp.setDocumentsByExtension(byExt);
+
+        return dp;
     }
 }

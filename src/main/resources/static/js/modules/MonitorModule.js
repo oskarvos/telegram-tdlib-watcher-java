@@ -1,13 +1,11 @@
-import { ApiClient } from '../apiClient.js';
-import { Notifier } from '../components/Notifier.js';
-
+import {ApiClient} from '../apiClient.js';
+import {Notifier} from '../components/Notifier.js';
 
 export class MonitorModule extends ApiClient {
     constructor() {
         super('/api/monitor');
         this.notify = new Notifier();
         this.pollInterval = null;
-
 
         this.dom = {
             container: document.getElementById('monitorContainer'),
@@ -17,27 +15,23 @@ export class MonitorModule extends ApiClient {
             regex: document.getElementById('monitorRegexMode'),
             interval: document.getElementById('monitorInterval'),
 
-
             btnStart: document.getElementById('startMonitorBtn'),
             btnStop: document.getElementById('stopMonitorBtn'),
             btnDelDb: document.getElementById('deleteMonitorDbBtn'),
-
 
             processed: document.getElementById('monitorProcessedValue'),
             found: document.getElementById('monitorFoundValue'),
             bar: document.getElementById('monitorProgress-bar'),
             status: document.getElementById('monitorStatus'),
 
-
             resultsChat: document.getElementById('monitorResultsChat'),
             btnLoadRes: document.getElementById('loadMonitorResultsBtn'),
             resultsBox: document.getElementById('monitorResults')
         };
 
-
-        this.dom.btnStart .addEventListener('click', () => this.start());
-        this.dom.btnStop .addEventListener('click', () => this.stop());
-        this.dom.btnDelDb .addEventListener('click', () => this.clearDb());
+        this.dom.btnStart.addEventListener('click', () => this.start());
+        this.dom.btnStop.addEventListener('click', () => this.stop());
+        this.dom.btnDelDb.addEventListener('click', () => this.clearDb());
         this.dom.btnLoadRes.addEventListener('click', () => this.loadResults());
 
 
@@ -49,13 +43,16 @@ export class MonitorModule extends ApiClient {
         this.restoreState();
     }
 
+    get storageKey() {
+        return 'td.monitor.state';
+    }
 
-    get storageKey() { return 'td.monitor.state'; }
-    saveState(){
+    saveState() {
         const s = this.#collect();
         localStorage.setItem(this.storageKey, JSON.stringify(s));
     }
-    restoreState(){
+
+    restoreState() {
         try {
             const raw = localStorage.getItem(this.storageKey);
             if (!raw) return;
@@ -65,11 +62,11 @@ export class MonitorModule extends ApiClient {
             this.dom.case.checked = !!s.caseSensitive;
             this.dom.regex.checked = !!s.useRegex;
             this.dom.interval.value = s.pollInterval || '1m';
-        } catch {}
+        } catch {
+        }
     }
 
-
-    #collect(){
+    #collect() {
         const chats = (this.dom.chats.value || '').split(/\r?\n|,|;/g).map(s => s.trim()).filter(Boolean);
         return {
             chats,
@@ -80,18 +77,15 @@ export class MonitorModule extends ApiClient {
         };
     }
 
-
-    async start(){
+    async start() {
         const req = this.#collect();
         if (!req.chats.length) return this.setStatus('Ошибка: не указаны чаты', '#ffecec', '#e74c3c');
         if (!req.keyword) return this.setStatus('Ошибка: не указано ключевое слово', '#ffecec', '#e74c3c');
 
-
         this.saveState();
         this.dom.bar.classList.remove('green');
         this.setStatus('Старт мониторинга...', '#edf7ff', '#2c3e50');
-        this.setProgress(0,0,false);
-
+        this.setProgress(0, 0, false);
 
         try {
             await this.post('/start', req);
@@ -103,7 +97,8 @@ export class MonitorModule extends ApiClient {
             this.notify.error(e.message);
         }
     }
-    async stop(){
+
+    async stop() {
         this.setStatus('Останавливаем мониторинг...', '#fff4e6', '#e67e22');
         try {
             await this.post('/stop', {});
@@ -114,8 +109,7 @@ export class MonitorModule extends ApiClient {
         }
     }
 
-
-    async clearDb(){
+    async clearDb() {
         try {
             await this.del('/database');
             this.notify.ok('MONITOR-БД очищена, чекпоинты сброшены');
@@ -126,8 +120,7 @@ export class MonitorModule extends ApiClient {
         }
     }
 
-
-    async loadResults(){
+    async loadResults() {
         const chat = (this.dom.resultsChat.value || '').trim();
         if (!chat) return;
         try {
@@ -138,12 +131,20 @@ export class MonitorModule extends ApiClient {
         }
     }
 
+    #beginPolling() {
+        this.#endPolling();
+        this.#tick();
+        this.pollInterval = setInterval(() => this.#tick(), 1000);
+    }
 
-    #beginPolling(){ this.#endPolling(); this.#tick(); this.pollInterval = setInterval(() => this.#tick(), 1000); }
-    #endPolling(){ if (this.pollInterval) { clearInterval(this.pollInterval); this.pollInterval = null; } }
+    #endPolling() {
+        if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+        }
+    }
 
-
-    async #tick(){
+    async #tick() {
         try {
             const p = await this.get('/progress');
             const processed = p?.processedMessages || 0;
@@ -161,32 +162,76 @@ export class MonitorModule extends ApiClient {
         }
     }
 
-
-    setProgress(processed, found, complete=false){
+    setProgress(processed, found, complete = false) {
         this.dom.processed.textContent = processed;
         this.dom.found.textContent = found;
         this.dom.bar.classList.toggle('green', !!complete);
     }
-    setStatus(text, bg, color){
+
+    setStatus(text, bg, color) {
         this.dom.status.textContent = text;
         this.dom.status.style.backgroundColor = bg;
         this.dom.status.style.color = color;
     }
 
-
-    renderResults(list){
+    renderResults(list) {
         const box = this.dom.resultsBox;
-        if (!Array.isArray(list) || !list.length){
+
+        if (!Array.isArray(list) || !list.length) {
             box.innerHTML = '<div style="padding:10px;color:#666;">Пусто</div>';
             return;
         }
-        const escapeHtml = s => String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m]));
-        box.innerHTML = list.map(r => `
-<div class="result-item">
-<div style="font-weight:700;margin-bottom:6px;">${escapeHtml(r.chatTitle || '')} • msg ${r.messageId}</div>
-<div style="white-space:pre-wrap;">${escapeHtml(r.messageText || '')}</div>
-<div class="search-stats"><div>${escapeHtml(r.keyword || '')}</div><div>${escapeHtml(r.messageDate || '')}</div></div>
-</div>
-`).join('');
+
+        const escapeHtml = s => String(s ?? '')
+            .replace(/[&<>"']/g, m => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;'}[m]));
+
+        const fmtParts = iso => {
+            // поддержка ISO-строки и локальных форматов
+            try {
+                const d = new Date(iso);
+                if (!isNaN(d)) {
+                    const pad = n => String(n).padStart(2, '0');
+                    const dd = pad(d.getDate()), mm = pad(d.getMonth() + 1), yyyy = d.getFullYear();
+                    const hh = pad(d.getHours()), mi = pad(d.getMinutes()), ss = pad(d.getSeconds());
+                    return {date: `${dd}.${mm}.${yyyy}`, time: `${hh}:${mi}:${ss}`};
+                }
+            } catch {
+            }
+            // если пришёл уже отформатированный текст — аккуратно вернём
+            return {date: escapeHtml(iso || ''), time: ''};
+        };
+
+        const rows = list.map((r, i) => {
+            const p = fmtParts(r.messageDate);
+            const sender = escapeHtml(r.senderName || r.senderId || '');
+            // аккуратно обрежем очень длинные тексты, чтобы таблица не “расползалась”
+            const msg = escapeHtml(String(r.messageText || '')).slice(0, 2000);
+            return `
+<tr>
+  <td class="num">${i + 1}</td>
+  <td class="chat">${escapeHtml(r.chatTitle || '')}</td>
+  <td class="date">${p.date}</td>
+  <td class="time">${p.time}</td>
+  <td class="from">${sender}</td>
+  <td class="text">${msg}</td>
+</tr>`;
+        }).join('');
+
+        box.innerHTML = `
+<div class="table-wrapper">
+  <table class="results-table">
+    <thead>
+      <tr>
+        <th style="width:56px;">№</th>
+        <th>Чат</th>
+        <th style="width:130px;">Дата &#9662;</th>
+        <th style="width:110px;">Время &#9662;</th>
+        <th style="width:180px;">Отправитель</th>
+        <th>Сообщение</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+</div>`;
     }
 }

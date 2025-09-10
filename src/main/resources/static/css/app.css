@@ -377,3 +377,24 @@ button {
     font-variant-numeric: tabular-nums;
 }
 
+/* ===================== ДОБАВЛЕННЫЕ ПРАВИЛА ===================== */
+/* Выравнивание чекбоксов по вертикали на всей странице */
+.checkbox-item{
+    display:flex;
+    align-items:center;   /* вертикально по центру */
+    gap:8px;
+}
+.checkbox-item input[type="checkbox"]{ margin:0; }
+.checkbox-item label{ line-height:1.2; }
+
+/* Сводка дампа — слева и столбиком */
+#dumpContainer #status{
+    text-align:left;        /* по левому краю */
+    padding:10px 12px;
+}
+#dumpContainer .dump-summary{
+    display:flex;
+    flex-direction:column;  /* вертикальный список */
+    gap:6px;
+    align-items:flex-start; /* чтобы не центрировалось */
+}

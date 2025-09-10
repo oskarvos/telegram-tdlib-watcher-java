@@ -1,4 +1,3 @@
-// DumpModule.js — ФИКС персистенции и DOM
 import {ApiClient} from '../apiClient.js';
 import {Notifier} from '../components/Notifier.js';
 
@@ -7,6 +6,7 @@ export class DumpModule extends ApiClient {
         super('/api/dump');
         this.notify = new Notifier();
         this.pollInterval = null;
+        this.lastRequest = null; // важно: чтобы знать, какие чекбоксы выбраны при рендере сводки
 
         this.dom = {
             container: document.getElementById('dumpContainer'),
@@ -23,6 +23,7 @@ export class DumpModule extends ApiClient {
 
             btnStart: document.getElementById('startBtn'),
             btnStop: document.getElementById('stopBtn'),
+            btnDelDb: document.getElementById('deleteDumpDbBtn'),
 
             bar: document.getElementById('progress-bar'),
             label: document.getElementById('progress-value'),
@@ -34,9 +35,9 @@ export class DumpModule extends ApiClient {
             this.saveState();
         });
         this.dom.btnStart.addEventListener('click', () => this.start());
-        this.dom.btnStop.addEventListener('click', () => this.stop());
+        this.dom.btnStop .addEventListener('click', () => this.stop());
+        if (this.dom.btnDelDb) this.dom.btnDelDb.addEventListener('click', () => this.clearDbAndFiles());
 
-        // Сохранение состояния формы
         [this.dom.chats, this.dom.extInput]
             .forEach(el => el.addEventListener('input', () => this.saveState()));
         [this.dom.photos, this.dom.videos, this.dom.links, this.dom.messages, this.dom.audio, this.dom.chkTextDocs]
@@ -46,9 +47,7 @@ export class DumpModule extends ApiClient {
         this.toggleTextDocumentExtensions();
     }
 
-    get storageKey() {
-        return 'td.dump.state.v2';
-    }
+    get storageKey() { return 'td.dump.state.v2'; }
 
     saveState() {
         const s = {
@@ -78,8 +77,7 @@ export class DumpModule extends ApiClient {
             this.dom.audio.checked = !!s.audio;
             this.dom.chkTextDocs.checked = !!s.textDocuments;
             this.dom.extInput.value = s.textDocumentExtensions || '';
-        } catch { /* ignore */
-        }
+        } catch {}
     }
 
     toggleTextDocumentExtensions() {
@@ -108,6 +106,8 @@ export class DumpModule extends ApiClient {
         if (!req.photos && !req.videos && !req.links && !req.messages && !req.textDocuments && !req.audio)
             return this.setStatus('Ошибка: не выбран ни один тип контента', '#ffecec', '#e74c3c');
 
+        this.lastRequest = req;
+
         this.saveState();
         this.dom.bar.classList.remove('green');
         this.setStatus('Запуск дампа...', '#edf7ff', '#2c3e50');
@@ -135,6 +135,19 @@ export class DumpModule extends ApiClient {
         }
     }
 
+    async clearDbAndFiles() {
+        this.setStatus('Удаляем DUMP-БД и файлы...', '#fff4e6', '#e67e22');
+        try {
+            await this.del('/database');
+            this.setStatus('DUMP-БД очищены, файлы удалены', '#e7f6ec', '#27ae60');
+            this.notify.ok('DUMP-БД очищены, файлы удалены');
+            this.setProgress(0, true);
+        } catch (e) {
+            this.setStatus('Ошибка удаления: ' + e.message, '#ffecec', '#e74c3c');
+            this.notify.error(e.message);
+        }
+    }
+
     #beginPolling() {
         this.#endPolling();
         this.#pollOnce();
@@ -152,13 +165,15 @@ export class DumpModule extends ApiClient {
         try {
             const p = await this.get('/progress');
             const processed = Math.max(0, p?.processed || 0);
-            this.setProgress(processed, !p?.running);
-            if (p?.running) {
-                this.setStatus(`Обработано сообщений: ${processed}`, '#edf7ff', '#2c3e50');
+            const running = !!p?.running;
 
+            this.setProgress(processed, !running);
+            if (running) {
+                this.setStatus(`Обработано сообщений: ${processed}`, '#edf7ff', '#2c3e50');
             } else {
-                this.setProgress(processed, true);
-                this.setStatus('Успешно завершено', '#e7f6ec', '#27ae60');
+                // рендерим сводку
+                this.renderSummary(p);
+                this.dom.bar.classList.add('green');
                 this.#endPolling();
             }
         } catch (e) {
@@ -167,8 +182,40 @@ export class DumpModule extends ApiClient {
         }
     }
 
+    renderSummary(p) {
+        const req = this.lastRequest || {};
+        const rows = [];
+
+        // Всегда показываем обработанные
+        rows.push(`<div>Обработано сообщений: <b>${p?.processed ?? 0}</b></div>`);
+
+        // Показываем ТОЛЬКО выбранные типы
+        if (req.messages) rows.push(`<div>Сообщения: <b>${p?.savedMessages ?? 0}</b></div>`);
+        if (req.photos)   rows.push(`<div>Фото: <b>${p?.savedPhotos ?? 0}</b></div>`);
+        if (req.videos)   rows.push(`<div>Видео: <b>${p?.savedVideos ?? 0}</b></div>`);
+        if (req.audio)    rows.push(`<div>Аудио: <b>${p?.savedAudio ?? 0}</b></div>`);
+        if (req.links)    rows.push(`<div>Ссылки: <b>${p?.savedLinks ?? 0}</b></div>`);
+
+        if (req.textDocuments) {
+            const totalDocs = p?.savedDocuments ?? 0;
+            rows.push(`<div>Текстовые документы: <b>${totalDocs}</b></div>`);
+
+            const byExt = p?.documentsByExtension || {};
+            const entries = Object.entries(byExt)
+                .sort((a, b) => a[0].localeCompare(b[0]));
+            if (entries.length) {
+                for (const [ext, cnt] of entries) {
+                    rows.push(`<div style="padding-left:12px;">— <span class="mono">.${ext}</span>: <b>${cnt}</b></div>`);
+                }
+            }
+        }
+
+        // оформляем по левому краю и столбиком (см. CSS)
+        const html = `<div class="dump-summary">${rows.join('')}</div>`;
+        this.setStatusHtml(html, '#e7f6ec', '#27ae60');
+    }
+
     setProgress(processed, complete = false) {
-        // Полоса прогресса теперь не процентная — оставим её пустой, но подсветим «завершено».
         this.dom.bar.style.width = complete ? '100%' : '0%';
         this.dom.label.textContent = String(processed);
         this.dom.bar.classList.toggle('green', !!complete);
@@ -176,6 +223,12 @@ export class DumpModule extends ApiClient {
 
     setStatus(text, bg, color) {
         this.dom.status.textContent = text;
+        this.dom.status.style.backgroundColor = bg;
+        this.dom.status.style.color = color;
+    }
+
+    setStatusHtml(html, bg, color) {
+        this.dom.status.innerHTML = html;
         this.dom.status.style.backgroundColor = bg;
         this.dom.status.style.color = color;
     }
