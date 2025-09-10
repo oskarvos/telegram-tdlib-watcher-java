@@ -64,9 +64,12 @@ public class TdJsonClient {
 
         ObjectNode setLogStream = MAPPER.createObjectNode();
         setLogStream.put("@type", "setLogStream");
-        ObjectNode empty = MAPPER.createObjectNode();
-        empty.put("@type", "logStreamEmpty");
-        setLogStream.set("log_stream", empty);
+        ObjectNode file = MAPPER.createObjectNode();
+        file.put("@type", "logStreamFile");
+        file.put("path", "tdlib/tdlib.log");
+        file.put("max_file_size", 64 * 1024 * 1024);
+        file.put("redirect_stderr", false);
+        setLogStream.set("log_stream", file);
         send(setLogStream);
     }
 
@@ -108,7 +111,7 @@ public class TdJsonClient {
      * Waits for reply to req (by @extra). Routes other updates synchronously.
      */
     public ObjectNode requestWithFloodWaitSyncLimited(ObjectNode req, int limitSeconds, Channel channel) {
-        int remaining = Math.min(Math.max(limitSeconds, 0), 60);
+        int remaining = Math.min(Math.max(limitSeconds, 0), 500);
         String extra = "req-" + extraId.incrementAndGet();
         req.put("@extra", extra);
 

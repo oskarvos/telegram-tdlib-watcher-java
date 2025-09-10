@@ -72,7 +72,7 @@ public class SearchCoordinator {
             long fromMessageId = 0;          // старт с самых новых
             boolean reachedEnd = false;
             int totalMessagesProcessed = 0;
-            final int MAX_MESSAGES = 100_000; // предохранитель на крайний случай
+            final int MAX_MESSAGES = 300_000; // предохранитель на крайний случай
 
             while (!stopRequested && !reachedEnd && totalMessagesProcessed < MAX_MESSAGES) {
                 ObjectNode req = MAPPER.createObjectNode();
