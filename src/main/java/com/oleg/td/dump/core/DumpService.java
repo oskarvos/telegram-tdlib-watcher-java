@@ -2,9 +2,9 @@ package com.oleg.td.dump.core;
 
 import com.oleg.td.dump.api.DumpProgress;
 import com.oleg.td.dump.api.DumpRequest;
+import com.oleg.td.dump.persistence.DumpDbManager;
 import com.oleg.td.integrations.tdlibs.AuthFlow;
 import com.oleg.td.integrations.telegram.ChatResolver;
-import com.oleg.td.dump.persistence.DumpDbManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -24,13 +24,13 @@ public class DumpService {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
 
-    private final AtomicInteger processed     = new AtomicInteger(0);
+    private final AtomicInteger processed = new AtomicInteger(0);
     private final AtomicInteger savedMessages = new AtomicInteger(0);
-    private final AtomicInteger savedPhotos   = new AtomicInteger(0);
-    private final AtomicInteger savedVideos   = new AtomicInteger(0);
-    private final AtomicInteger savedAudio    = new AtomicInteger(0);
-    private final AtomicInteger savedDocs     = new AtomicInteger(0);
-    private final AtomicInteger savedLinks    = new AtomicInteger(0);
+    private final AtomicInteger savedPhotos = new AtomicInteger(0);
+    private final AtomicInteger savedVideos = new AtomicInteger(0);
+    private final AtomicInteger savedAudio = new AtomicInteger(0);
+    private final AtomicInteger savedDocs = new AtomicInteger(0);
+    private final AtomicInteger savedLinks = new AtomicInteger(0);
 
     private final ConcurrentHashMap<String, AtomicInteger> docsByExt = new ConcurrentHashMap<>();
 
@@ -45,6 +45,7 @@ public class DumpService {
         this.resolver = resolver;
         this.db = db;
     }
+
     // в DumpService.java
     public synchronized void startDump(DumpRequest request) {
         if (running.get()) {
@@ -77,19 +78,44 @@ public class DumpService {
                 }
                 log.info("Запуск дампа чатов...");
                 coordinator.dumpChats(request, new DumpListener() {
-                    @Override public void onProgress() { processed.incrementAndGet(); }
-                    @Override public void onSavedMessage() { savedMessages.incrementAndGet(); }
-                    @Override public void onSavedPhoto()   { savedPhotos.incrementAndGet(); }
-                    @Override public void onSavedVideo()   { savedVideos.incrementAndGet(); }
-                    @Override public void onSavedAudio()   { savedAudio.incrementAndGet(); }
-                    @Override public void onSavedDocument(String ext) {
+                    @Override
+                    public void onProgress() {
+                        processed.incrementAndGet();
+                    }
+
+                    @Override
+                    public void onSavedMessage() {
+                        savedMessages.incrementAndGet();
+                    }
+
+                    @Override
+                    public void onSavedPhoto() {
+                        savedPhotos.incrementAndGet();
+                    }
+
+                    @Override
+                    public void onSavedVideo() {
+                        savedVideos.incrementAndGet();
+                    }
+
+                    @Override
+                    public void onSavedAudio() {
+                        savedAudio.incrementAndGet();
+                    }
+
+                    @Override
+                    public void onSavedDocument(String ext) {
                         savedDocs.incrementAndGet();
                         docsByExt.computeIfAbsent(
                                 (ext == null || ext.isBlank()) ? "unknown" : ext.toLowerCase(),
                                 k -> new java.util.concurrent.atomic.AtomicInteger(0)
                         ).incrementAndGet();
                     }
-                    @Override public void onSavedLinks(int count) { savedLinks.addAndGet(Math.max(0, count)); }
+
+                    @Override
+                    public void onSavedLinks(int count) {
+                        savedLinks.addAndGet(Math.max(0, count));
+                    }
                 });
                 log.info("Дамп завершён");
             } catch (Exception e) {

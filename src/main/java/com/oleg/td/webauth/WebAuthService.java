@@ -2,8 +2,8 @@ package com.oleg.td.webauth;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.oleg.td.app.config.TdlibProperties;
 import com.oleg.td.app.config.AppProperties;
+import com.oleg.td.app.config.TdlibProperties;
 import com.oleg.td.auth.service.AuthRuntimeStore;
 import com.oleg.td.integrations.tdlibs.TdJsonClient;
 import com.oleg.td.webauth.dto.AuthStatusResponse;

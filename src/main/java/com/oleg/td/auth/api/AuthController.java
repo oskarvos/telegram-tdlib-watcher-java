@@ -20,7 +20,7 @@ public class AuthController {
     private static final Logger log = LoggerFactory.getLogger(AuthController.class);
 
     private final AuthFlow authFlow;
-      private final TdlibProperties td;
+    private final TdlibProperties td;
     private final AuthRuntimeStore authStore;
 
     public AuthController(AuthFlow authFlow, TdlibProperties td, AuthRuntimeStore authStore) {
@@ -74,7 +74,9 @@ public class AuthController {
     }
 
     // // Вспомогательный метод: проверка строки на непустоту.
-    private static boolean notBlank(String s) { return s != null && !s.isBlank(); }
+    private static boolean notBlank(String s) {
+        return s != null && !s.isBlank();
+    }
 
     // // Вспомогательный метод: маскирование номера телефона.
     private static String mask(String p) {

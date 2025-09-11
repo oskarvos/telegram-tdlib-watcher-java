@@ -35,7 +35,7 @@ export class DumpModule extends ApiClient {
             this.saveState();
         });
         this.dom.btnStart.addEventListener('click', () => this.start());
-        this.dom.btnStop .addEventListener('click', () => this.stop());
+        this.dom.btnStop.addEventListener('click', () => this.stop());
         if (this.dom.btnDelDb) this.dom.btnDelDb.addEventListener('click', () => this.clearDbAndFiles());
 
         [this.dom.chats, this.dom.extInput]
@@ -47,7 +47,9 @@ export class DumpModule extends ApiClient {
         this.toggleTextDocumentExtensions();
     }
 
-    get storageKey() { return 'td.dump.state.v2'; }
+    get storageKey() {
+        return 'td.dump.state.v2';
+    }
 
     saveState() {
         const s = {
@@ -77,7 +79,8 @@ export class DumpModule extends ApiClient {
             this.dom.audio.checked = !!s.audio;
             this.dom.chkTextDocs.checked = !!s.textDocuments;
             this.dom.extInput.value = s.textDocumentExtensions || '';
-        } catch {}
+        } catch {
+        }
     }
 
     toggleTextDocumentExtensions() {
@@ -191,10 +194,10 @@ export class DumpModule extends ApiClient {
 
         // Показываем ТОЛЬКО выбранные типы
         if (req.messages) rows.push(`<div>Сообщения: <b>${p?.savedMessages ?? 0}</b></div>`);
-        if (req.photos)   rows.push(`<div>Фото: <b>${p?.savedPhotos ?? 0}</b></div>`);
-        if (req.videos)   rows.push(`<div>Видео: <b>${p?.savedVideos ?? 0}</b></div>`);
-        if (req.audio)    rows.push(`<div>Аудио: <b>${p?.savedAudio ?? 0}</b></div>`);
-        if (req.links)    rows.push(`<div>Ссылки: <b>${p?.savedLinks ?? 0}</b></div>`);
+        if (req.photos) rows.push(`<div>Фото: <b>${p?.savedPhotos ?? 0}</b></div>`);
+        if (req.videos) rows.push(`<div>Видео: <b>${p?.savedVideos ?? 0}</b></div>`);
+        if (req.audio) rows.push(`<div>Аудио: <b>${p?.savedAudio ?? 0}</b></div>`);
+        if (req.links) rows.push(`<div>Ссылки: <b>${p?.savedLinks ?? 0}</b></div>`);
 
         if (req.textDocuments) {
             const totalDocs = p?.savedDocuments ?? 0;

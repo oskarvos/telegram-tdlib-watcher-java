@@ -1,12 +1,12 @@
 // main.js
-import { DumpModule } from './modules/DumpModule.js';
-import { SearchModule } from './modules/SearchModule.js';
-import { MonitorModule } from './modules/MonitorModule.js';
+import {DumpModule} from './modules/DumpModule.js';
+import {SearchModule} from './modules/SearchModule.js';
+import {MonitorModule} from './modules/MonitorModule.js';
 
 
 async function ensureAuthorizedOrRedirect() {
     try {
-        const r = await fetch('/api/webauth/status', { headers: { 'Content-Type': 'application/json' } });
+        const r = await fetch('/api/webauth/status', {headers: {'Content-Type': 'application/json'}});
         const st = await r.json();
         if (!(st?.ok && st.state === 'READY')) {
 // почему redirect: при обновлении /app без авторизации сразу уводим на мастер
@@ -38,9 +38,9 @@ class App {
         this.monitorContainer = document.getElementById('monitorContainer');
 
 
-        this.btnDump .addEventListener('click', () => this.show(this.btnDump, this.dumpContainer));
-        this.btnSearch .addEventListener('click', () => this.show(this.btnSearch, this.searchContainer));
-        this.btnMonitor.addEventListener('click', () => this.show(this.btnMonitor,this.monitorContainer));
+        this.btnDump.addEventListener('click', () => this.show(this.btnDump, this.dumpContainer));
+        this.btnSearch.addEventListener('click', () => this.show(this.btnSearch, this.searchContainer));
+        this.btnMonitor.addEventListener('click', () => this.show(this.btnMonitor, this.monitorContainer));
 
 
 // По умолчанию — «Дамп»
@@ -87,4 +87,4 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 
-export { normalizeChat, splitChats };
+export {normalizeChat, splitChats};

@@ -1,16 +1,23 @@
 // auth.js
 class Api {
     async request(url, opt = {}) {
-        const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opt });
+        const r = await fetch(url, {headers: {'Content-Type': 'application/json'}, ...opt});
         const ct = r.headers.get('content-type') || '';
         const parse = async () => ct.includes('application/json') ? r.json() : r.text();
         const data = await parse().catch(() => null);
         if (!r.ok) throw new Error(typeof data === 'string' ? data : (data?.message || r.statusText));
         return data;
     }
-    get(url) { return this.request(url, { method: 'GET' }); }
-    post(url, body) { return this.request(url, { method: 'POST', body: JSON.stringify(body || {}) }); }
+
+    get(url) {
+        return this.request(url, {method: 'GET'});
+    }
+
+    post(url, body) {
+        return this.request(url, {method: 'POST', body: JSON.stringify(body || {})});
+    }
 }
+
 const api = new Api();
 
 
@@ -55,7 +62,7 @@ const LS = {
             useTestDc: localStorage.getItem(k.useTestDc) === '1',
         };
     },
-    write({ remember, apiId, apiHash, phone, useTestDc }) {
+    write({remember, apiId, apiHash, phone, useTestDc}) {
         const k = this.k;
         localStorage.setItem(k.remember, remember ? '1' : '0');
         if (remember) {
@@ -86,6 +93,7 @@ function hydrateFromStorage() {
 
 
 let pollTimer = null;
+
 function pollStatus() {
     clearInterval(pollTimer);
     pollTimer = setInterval(async () => {
@@ -101,11 +109,14 @@ function pollStatus() {
             } else if (st.state === 'READY') {
                 s2.status.textContent = 'Готово! Переход...';
                 clearInterval(pollTimer);
-                setTimeout(() => { window.location.href = '/app'; }, 300);
+                setTimeout(() => {
+                    window.location.href = '/app';
+                }, 300);
             } else {
                 s2.status.textContent = 'Статус: ' + st.state;
             }
-        } catch { }
+        } catch {
+        }
     }, 1000);
 }
 
@@ -135,7 +146,7 @@ s1.btn.addEventListener('click', async () => {
     s1.btn.disabled = true;
     s1.status.textContent = 'Отправляем код...';
     try {
-        const res = await api.post('/api/webauth/start', { apiId, apiHash, phone, useTestDc });
+        const res = await api.post('/api/webauth/start', {apiId, apiHash, phone, useTestDc});
         if (!res.ok) throw new Error(res.message || 'Ошибка');
         s1.root.classList.add('hidden');
         s2.root.classList.remove('hidden');
@@ -165,9 +176,12 @@ s2.btn.addEventListener('click', async () => {
     s2.btn.disabled = true;
     s2.status.textContent = 'Подтверждаем...';
     try {
-        const res = await api.post('/api/webauth/verify', { code, password });
+        const res = await api.post('/api/webauth/verify', {code, password});
         if (!res.ok) throw new Error(res.message || 'Ошибка');
-        if (res.state === 'READY') { window.location.href = '/app'; return; }
+        if (res.state === 'READY') {
+            window.location.href = '/app';
+            return;
+        }
         if (res.state === 'WAIT_PASSWORD') s2.pwdWrap.classList.remove('hidden');
         s2.status.textContent = 'Статус: ' + res.state;
     } catch (e) {
@@ -185,5 +199,6 @@ s2.btn.addEventListener('click', async () => {
         hydrateFromStorage();
         const st = await api.get('/api/webauth/status');
         if (st.ok && st.state === 'READY') window.location.href = '/app';
-    } catch { }
+    } catch {
+    }
 })();

@@ -1,10 +1,12 @@
-// Базовый HTTP-клиент для REST вызовов бэка.
+// apiClient
 export class ApiClient {
-    constructor(baseUrl = '') { this.baseUrl = baseUrl; }
+    constructor(baseUrl = '') {
+        this.baseUrl = baseUrl;
+    }
 
     async request(endpoint, options = {}) {
         const res = await fetch(`${this.baseUrl}${endpoint}`, {
-            headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+            headers: {'Content-Type': 'application/json', ...(options.headers || {})},
             ...options
         });
         const ct = res.headers.get('content-type') || '';
@@ -18,7 +20,15 @@ export class ApiClient {
         return data;
     }
 
-    get(endpoint)     { return this.request(endpoint, { method: 'GET'  }); }
-    post(endpoint, d) { return this.request(endpoint, { method: 'POST', body: JSON.stringify(d || {}) }); }
-    del(endpoint)     { return this.request(endpoint, { method: 'DELETE' }); }
+    get(endpoint) {
+        return this.request(endpoint, {method: 'GET'});
+    }
+
+    post(endpoint, d) {
+        return this.request(endpoint, {method: 'POST', body: JSON.stringify(d || {})});
+    }
+
+    del(endpoint) {
+        return this.request(endpoint, {method: 'DELETE'});
+    }
 }

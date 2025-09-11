@@ -1,9 +1,9 @@
 package com.oleg.td.app;
 
-import com.oleg.td.integrations.tdlibs.AuthFlow;
-import com.oleg.td.app.config.TdlibProperties;
 import com.oleg.td.app.config.AppProperties;
+import com.oleg.td.app.config.TdlibProperties;
 import com.oleg.td.auth.service.AuthRuntimeStore;
+import com.oleg.td.integrations.tdlibs.AuthFlow;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;

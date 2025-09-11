@@ -6,15 +6,35 @@ public class StartAuthRequest {
     private String phone;
     private Boolean useTestDc; // опционально
 
-    public Integer getApiId() { return apiId; }
-    public void setApiId(Integer apiId) { this.apiId = apiId; }
+    public Integer getApiId() {
+        return apiId;
+    }
 
-    public String getApiHash() { return apiHash; }
-    public void setApiHash(String apiHash) { this.apiHash = apiHash; }
+    public void setApiId(Integer apiId) {
+        this.apiId = apiId;
+    }
 
-    public String getPhone() { return phone; }
-    public void setPhone(String phone) { this.phone = phone; }
+    public String getApiHash() {
+        return apiHash;
+    }
 
-    public Boolean getUseTestDc() { return useTestDc; }
-    public void setUseTestDc(Boolean useTestDc) { this.useTestDc = useTestDc; }
+    public void setApiHash(String apiHash) {
+        this.apiHash = apiHash;
+    }
+
+    public String getPhone() {
+        return phone;
+    }
+
+    public void setPhone(String phone) {
+        this.phone = phone;
+    }
+
+    public Boolean getUseTestDc() {
+        return useTestDc;
+    }
+
+    public void setUseTestDc(Boolean useTestDc) {
+        this.useTestDc = useTestDc;
+    }
 }

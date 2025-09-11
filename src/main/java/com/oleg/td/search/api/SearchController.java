@@ -2,14 +2,14 @@ package com.oleg.td.search.api;
 
 import com.oleg.td.dump.core.ChatDumpCoordinator;
 import com.oleg.td.integrations.telegram.ChatResolver;
-import com.oleg.td.search.persistence.SearchDbManager;
 import com.oleg.td.search.core.SearchService;
 import com.oleg.td.search.model.SearchResult;
+import com.oleg.td.search.persistence.SearchDbManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.Map;

@@ -1,8 +1,8 @@
 package com.oleg.td.integrations.tdlibs;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.oleg.td.app.config.TdlibProperties;
 import com.oleg.td.app.config.AppProperties;
+import com.oleg.td.app.config.TdlibProperties;
 import com.oleg.td.auth.service.AuthRuntimeStore;
 import com.oleg.td.common.Utils;
 import org.slf4j.Logger;

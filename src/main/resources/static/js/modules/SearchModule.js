@@ -13,7 +13,7 @@ export class SearchModule extends ApiClient {
 
         // Данные таблицы и состояние сортировки
         this.resultsData = [];
-        this.sort = { key: 'messageDate', dir: 'desc' }; // по умолчанию — новые сверху
+        this.sort = {key: 'messageDate', dir: 'desc'}; // по умолчанию — новые сверху
 
         // Ссылки на DOM
         this.dom = {
@@ -58,12 +58,18 @@ export class SearchModule extends ApiClient {
         }
 
         // Слушатели
-        this.dom.btnStart?.addEventListener('click', (e) => { e.preventDefault(); this.start(); });
+        this.dom.btnStart?.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.start();
+        });
         this.dom.btnStop?.addEventListener('click', () => this.stop());
         this.dom.btnDelDb?.addEventListener('click', () => this.clearDb());
         this.dom.btnLoadRes?.addEventListener('click', () => this.loadResults());
 
-        this.dom.keyword?.addEventListener('input', () => { this.#updateKwLen(); this.saveState(); });
+        this.dom.keyword?.addEventListener('input', () => {
+            this.#updateKwLen();
+            this.saveState();
+        });
         this.dom.chats?.addEventListener('input', () => this.saveState());
         this.dom.case?.addEventListener('change', () => this.saveState());
         this.dom.regex?.addEventListener('change', () => this.saveState());
@@ -78,7 +84,10 @@ export class SearchModule extends ApiClient {
                 this.dom.regex.disabled = on;
             }
         };
-        this.dom.lengthMode?.addEventListener('change', () => { syncLengthUi(); this.saveState(); });
+        this.dom.lengthMode?.addEventListener('change', () => {
+            syncLengthUi();
+            this.saveState();
+        });
         this.dom.lengthValue?.addEventListener('input', () => this.saveState());
         syncLengthUi();
 
@@ -111,8 +120,11 @@ export class SearchModule extends ApiClient {
 
     async start() {
         let req;
-        try { req = this.#collect(); }
-        catch (e) { return this.setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c'); }
+        try {
+            req = this.#collect();
+        } catch (e) {
+            return this.setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c');
+        }
 
         if (!req.chats.length) {
             return this.setStatus('Ошибка: не указаны чаты', '#ffecec', '#e74c3c');
@@ -278,7 +290,7 @@ export class SearchModule extends ApiClient {
         // Нормализуем поля
         this.resultsData = list.map((r) => {
             const iso = (r.messageDate ?? '').toString();
-            const { date, time, key } = this.#splitDateTime(iso);
+            const {date, time, key} = this.#splitDateTime(iso);
             return {
                 chatTitle: r.chatTitle ?? '',
                 messageDate: iso,     // исходная ISO-строка LocalDateTime
@@ -308,7 +320,7 @@ export class SearchModule extends ApiClient {
         arr.sort((a, b) => {
             const va = val(a), vb = val(b);
             if (va < vb) return -1 * dir;
-            if (va > vb) return  1 * dir;
+            if (va > vb) return 1 * dir;
             return 0;
         });
         return arr;
@@ -319,9 +331,9 @@ export class SearchModule extends ApiClient {
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
         const arrow = this.sort.dir === 'asc' ? '▲' : '▼';
-        const th = (label, key, extraCls='') =>
-            `<th data-key="${key}" class="sortable${this.sort.key===key?' active':''} ${extraCls}">
-                ${label}${this.sort.key===key?` <span class="sort-indicator">${arrow}</span>`:''}
+        const th = (label, key, extraCls = '') =>
+            `<th data-key="${key}" class="sortable${this.sort.key === key ? ' active' : ''} ${extraCls}">
+                ${label}${this.sort.key === key ? ` <span class="sort-indicator">${arrow}</span>` : ''}
              </th>`;
 
         const head = `
@@ -359,14 +371,14 @@ export class SearchModule extends ApiClient {
     #splitDateTime(iso) {
         // ожидаем LocalDateTime.toString(): 'YYYY-MM-DDTHH:mm:SS[.nnn]'
         if (!iso || typeof iso !== 'string' || !iso.includes('T')) {
-            return { date: '', time: '', key: '' };
+            return {date: '', time: '', key: ''};
         }
-        const [d, tRaw=''] = iso.split('T');
+        const [d, tRaw = ''] = iso.split('T');
         const [y, m, d2] = (d || '').split('-');
         const time = (tRaw || '').slice(0, 8);
         const date = (y && m && d2) ? `${d2}.${m}.${y}` : iso;
-        const key = `${y||''}${m||''}${d2||''}${time.replace(/:/g,'')}`; // yyyymmddHHMMSS
-        return { date, time, key };
+        const key = `${y || ''}${m || ''}${d2 || ''}${time.replace(/:/g, '')}`; // yyyymmddHHMMSS
+        return {date, time, key};
     }
 
     saveState() {
@@ -380,7 +392,8 @@ export class SearchModule extends ApiClient {
                 lengthValue: Number(this.dom.lengthValue?.value) || 0
             };
             localStorage.setItem(this.storageKey, JSON.stringify(s));
-        } catch {}
+        } catch {
+        }
     }
 
     restoreState() {
@@ -394,7 +407,8 @@ export class SearchModule extends ApiClient {
             if (this.dom.regex) this.dom.regex.checked = !!s.useRegex;
             if (this.dom.lengthMode) this.dom.lengthMode.checked = !!s.lengthMode;
             if (this.dom.lengthValue) this.dom.lengthValue.value = String(s.lengthValue || 0);
-        } catch {}
+        } catch {
+        }
     }
 
     #updateKwLen() {

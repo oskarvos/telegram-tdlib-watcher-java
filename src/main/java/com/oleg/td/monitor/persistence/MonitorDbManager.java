@@ -6,7 +6,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.file.*;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -22,35 +25,43 @@ public class MonitorDbManager {
 
     public MonitorDbManager(ChatResolver chatResolver) {
         this.chatResolver = chatResolver;
-        try { Files.createDirectories(dbDir); } catch (Exception ignored) {}
+        try {
+            Files.createDirectories(dbDir);
+        } catch (Exception ignored) {
+        }
     }
 
     // --- helpers
     private static final Pattern INVALID = Pattern.compile("[\\\\/:*?\"<>|]");
-    private static String q(String ident){ return "\"" + ident.replace("\"","\"\"") + "\""; }
 
-    private String chatName(long chatId){
+    private static String q(String ident) {
+        return "\"" + ident.replace("\"", "\"\"") + "\"";
+    }
+
+    private String chatName(long chatId) {
         try {
             String t = chatResolver.getChatTitle(chatId);
             if (t != null && !t.trim().isEmpty()) return t.trim();
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
         return "chat_" + Math.abs(chatId);
     }
 
-    private String safe(String name, long chatId){
+    private String safe(String name, long chatId) {
         if (name == null || name.isBlank()) return "unknown_chat";
         String s = INVALID.matcher(name).replaceAll("_").trim();
-        while (s.endsWith(".")) s = s.substring(0, s.length()-1).trim();
+        while (s.endsWith(".")) s = s.substring(0, s.length() - 1).trim();
         if (s.isEmpty()) s = "chat_" + Math.abs(chatId);
         if (s.length() > 100) s = s.substring(0, 100);
         return s;
     }
 
-    private Path dumpDbPath(long chatId){
+    private Path dumpDbPath(long chatId) {
         String fn = safe("DUMP " + chatName(chatId), chatId) + ".db";
         return dbDir.resolve(fn);
     }
-    private Path monitorDbPath(long chatId){
+
+    private Path monitorDbPath(long chatId) {
         String fn = safe("MONITOR " + chatName(chatId), chatId) + ".db";
         return dbDir.resolve(fn);
     }
@@ -61,53 +72,61 @@ public class MonitorDbManager {
 
     private Connection openMonitor(long chatId) throws SQLException {
         Path p = monitorDbPath(chatId);
-        try { Files.createDirectories(p.getParent()); } catch (Exception e) {
+        try {
+            Files.createDirectories(p.getParent());
+        } catch (Exception e) {
             log.error("Cannot create parent dir for {}: {}", p.toAbsolutePath(), e.getMessage(), e);
         }
         return DriverManager.getConnection("jdbc:sqlite:" + p.toAbsolutePath());
     }
 
-    public void ensureMonitorMetadata(long chatId){
+    public void ensureMonitorMetadata(long chatId) {
         try (Connection c = openMonitor(chatId); Statement s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS " + q("metadata") + " (key TEXT PRIMARY KEY, value TEXT)");
-        } catch (SQLException e){
+        } catch (SQLException e) {
             log.error("MONITOR {}: cannot ensure metadata: {}", chatName(chatId), e.getMessage(), e);
         }
     }
 
-    public String loadMonitorCheckpoint(long chatId){
+    public String loadMonitorCheckpoint(long chatId) {
         final String sql = "SELECT value FROM " + q("metadata") + " WHERE key=?";
         try (Connection c = openMonitor(chatId);
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, "monitor_last_message_id");
-            try (ResultSet rs = ps.executeQuery()){
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) return rs.getString(1);
             }
-        } catch (SQLException e){ log.warn("load checkpoint err: {}", e.getMessage()); }
+        } catch (SQLException e) {
+            log.warn("load checkpoint err: {}", e.getMessage());
+        }
         return null;
     }
 
-    public void saveMonitorCheckpoint(long chatId, long messageId){
+    public void saveMonitorCheckpoint(long chatId, long messageId) {
         final String sql = "INSERT OR REPLACE INTO " + q("metadata") + " (key,value) VALUES(?,?)";
         try (Connection c = openMonitor(chatId);
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, "monitor_last_message_id");
             ps.setString(2, Long.toString(messageId));
             ps.executeUpdate();
-        } catch (SQLException e){ log.error("save checkpoint err: {}", e.getMessage(), e); }
+        } catch (SQLException e) {
+            log.error("save checkpoint err: {}", e.getMessage(), e);
+        }
     }
 
-    public void resetMonitorCheckpoint(long chatId){
+    public void resetMonitorCheckpoint(long chatId) {
         final String sql = "DELETE FROM " + q("metadata") + " WHERE key=?";
         try (Connection c = openMonitor(chatId);
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, "monitor_last_message_id");
             ps.executeUpdate();
-        } catch (SQLException e){ log.error("reset checkpoint err: {}", e.getMessage(), e); }
+        } catch (SQLException e) {
+            log.error("reset checkpoint err: {}", e.getMessage(), e);
+        }
     }
 
     // --- MONITOR schema
-    public void prepareMonitorSchema(long chatId){
+    public void prepareMonitorSchema(long chatId) {
         final String t = q("monitor_results");
         final String create = "CREATE TABLE IF NOT EXISTS " + t + " (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT," +
@@ -121,19 +140,21 @@ public class MonitorDbManager {
                 ")";
         final String idx1 = "CREATE INDEX IF NOT EXISTS monitor_keyword_idx ON " + t + "(keyword)";
         final String idx2 = "CREATE INDEX IF NOT EXISTS monitor_date_idx ON " + t + "(message_date)";
-        try (Connection c = openMonitor(chatId); Statement s = c.createStatement()){
-            s.execute(create); s.execute(idx1); s.execute(idx2);
-        } catch (SQLException e){
+        try (Connection c = openMonitor(chatId); Statement s = c.createStatement()) {
+            s.execute(create);
+            s.execute(idx1);
+            s.execute(idx2);
+        } catch (SQLException e) {
             log.error("MONITOR {}: schema error: {}", chatName(chatId), e.getMessage(), e);
         }
     }
 
     public void saveMonitorHit(long chatId, long messageId, LocalDateTime messageDate,
-                               String keyword, String messageText, String senderId, String senderName){
+                               String keyword, String messageText, String senderId, String senderName) {
         final String sql = "INSERT INTO " + q("monitor_results") +
                 "(message_id,message_date,keyword,message_text,sender_id,sender_name,found_date) " +
                 "VALUES(?,?,?,?,?,?,?)";
-        try (Connection c = openMonitor(chatId); PreparedStatement ps = c.prepareStatement(sql)){
+        try (Connection c = openMonitor(chatId); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setLong(1, messageId);
             ps.setString(2, messageDate.toString());
             ps.setString(3, keyword);
@@ -142,49 +163,64 @@ public class MonitorDbManager {
             ps.setString(6, senderName);
             ps.setString(7, LocalDateTime.now().toString());
             ps.executeUpdate();
-        } catch (SQLException e){
+        } catch (SQLException e) {
             log.error("MONITOR save hit err: {}", e.getMessage(), e);
         }
     }
 
     // --- clear all MONITOR *.db + reset checkpoints in all DUMP *.db
-    public void clearMonitorChatDatabases(){
-        try { Files.createDirectories(dbDir); } catch (Exception ignore) {}
+    public void clearMonitorChatDatabases() {
+        try {
+            Files.createDirectories(dbDir);
+        } catch (Exception ignore) {
+        }
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "MONITOR *.db")) {
-            for (Path p : ds){
+            for (Path p : ds) {
                 deleteDbWithSidecars(p);              // удаляем файл + -wal/-shm
                 log.info("Удалён файл MONITOR БД: {}", p.getFileName());
             }
-        } catch (Exception e){ log.error("list MONITOR*.db err: {}", e.getMessage(), e); }
+        } catch (Exception e) {
+            log.error("list MONITOR*.db err: {}", e.getMessage(), e);
+        }
     }
 
     private void deleteDbWithSidecars(Path dbFile) {
-        try { Files.deleteIfExists(dbFile); } catch (IOException ignore) {}
-        try { Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-wal")); } catch (IOException ignore) {}
-        try { Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-shm")); } catch (IOException ignore) {}
+        try {
+            Files.deleteIfExists(dbFile);
+        } catch (IOException ignore) {
+        }
+        try {
+            Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-wal"));
+        } catch (IOException ignore) {
+        }
+        try {
+            Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-shm"));
+        } catch (IOException ignore) {
+        }
     }
 
     // --- helpers
     private void ensureTable(Connection c, String name) throws SQLException {
-        try (Statement s = c.createStatement()){
+        try (Statement s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS " + q(name) + " (key TEXT PRIMARY KEY, value TEXT)");
         }
     }
+
     private void dropAllUserTables(Connection c) throws SQLException {
         List<String> tables = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement("SELECT name FROM sqlite_master WHERE type='table'");
-             ResultSet rs = ps.executeQuery()){
-            while (rs.next()){
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
                 String n = rs.getString(1);
                 if (!"sqlite_sequence".equalsIgnoreCase(n)) tables.add(n);
             }
         }
-        try (Statement s = c.createStatement()){
+        try (Statement s = c.createStatement()) {
             for (String t : tables) s.execute("DROP TABLE IF EXISTS " + q(t));
         }
     }
 
-    public java.util.List<com.oleg.td.monitor.model.MonitorHit> getMonitorResults(long chatId, int limit, int offset){
+    public java.util.List<com.oleg.td.monitor.model.MonitorHit> getMonitorResults(long chatId, int limit, int offset) {
         final String sql = "SELECT rowid AS id, message_id, message_date, keyword, message_text, " +
                 "sender_id, sender_name, found_date FROM " + q("monitor_results") +
                 " ORDER BY found_date DESC LIMIT ? OFFSET ?";
@@ -208,7 +244,7 @@ public class MonitorDbManager {
                     list.add(h);
                 }
             }
-        } catch (SQLException e){
+        } catch (SQLException e) {
             log.error("MONITOR get results err: {}", e.getMessage(), e);
         }
         return list;

@@ -14,11 +14,17 @@ public class AuthRuntimeStore {
     private final AtomicReference<AuthState> ref = new AtomicReference<>(new AuthState());
 
     // // Получить текущее состояние.
-    public AuthState get() { return ref.get(); }
+    public AuthState get() {
+        return ref.get();
+    }
 
     // // Полностью заменить состояние.
-    public void set(AuthState state) { ref.set(state); }
+    public void set(AuthState state) {
+        ref.set(state);
+    }
 
     // // Сбросить.
-    public void clear() { ref.set(new AuthState()); }
+    public void clear() {
+        ref.set(new AuthState());
+    }
 }
