@@ -264,7 +264,6 @@ public class ChatMonitor {
             if ("messages".equals(resp.path("@type").asText()) && resp.path("messages").isArray()) {
                 JsonNode messagesArray = resp.path("messages");
 
-
                 if (messagesArray.size() == 0) {
                     hasMoreMessages = false;
                     continue;
