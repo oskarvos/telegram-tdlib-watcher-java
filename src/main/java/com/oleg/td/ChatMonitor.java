@@ -311,6 +311,7 @@ public class ChatMonitor {
         ObjectNode req = Utils.obj("getUser");
         req.put("user_id", userId);
 
+
         ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 30, TdJsonClient.Channel.MAIN);
         if ("user".equals(resp.path("@type").asText())) {
             String firstName = resp.path("first_name").asText("");
