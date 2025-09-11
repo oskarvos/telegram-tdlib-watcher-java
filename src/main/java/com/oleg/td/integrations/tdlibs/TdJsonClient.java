@@ -111,7 +111,7 @@ public class TdJsonClient {
      * Waits for reply to req (by @extra). Routes other updates synchronously.
      */
     public ObjectNode requestWithFloodWaitSyncLimited(ObjectNode req, int limitSeconds, Channel channel) {
-        int remaining = Math.min(Math.max(limitSeconds, 0), 500);
+        int remaining = Math.max(limitSeconds, 0);
         String extra = "req-" + extraId.incrementAndGet();
         req.put("@extra", extra);
 

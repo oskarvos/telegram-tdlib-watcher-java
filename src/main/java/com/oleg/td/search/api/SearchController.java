@@ -8,10 +8,17 @@ import com.oleg.td.search.model.SearchResult;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.HashMap;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/search")
 public class SearchController {
+    private static final Logger log = LoggerFactory.getLogger(SearchController.class);
+
     private final SearchService searchService;
     private final ChatDumpCoordinator chatDumpCoordinator; // как было
     private final ChatResolver chatResolver;
@@ -27,17 +34,29 @@ public class SearchController {
         this.databaseManager = databaseManager;
     }
 
+    // SearchController.java
     @PostMapping("/start")
-    public void start(@RequestBody SearchRequest request) {
-        final String kw = request.getKeyword() == null ? "" : request.getKeyword();
-        if (kw.length() > 256) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Ключевое слово слишком длинное"
-            );
+    public Map<String, Object> start(@RequestBody SearchRequest req) {
+        Map<String, Object> resp = new HashMap<>();
+        try {
+            if (req.getChats() == null || req.getChats().isEmpty()) {
+                throw new IllegalArgumentException("Не переданы чаты для поиска");
+            }
+            // (опц.) провалидируем чаты сразу — чтобы не падать в фоне:
+            for (String ref : req.getChats()) {
+                chatResolver.resolveFlexible(ref.trim()); // если невалидно — кинет ошибку здесь
+            }
+            // не ограничиваем длину keyword — UI может слать regex
+            searchService.startSearch(req);
+            resp.put("started", true);
+            resp.put("message", "Поиск запущен");
+            return resp;
+        } catch (Exception e) {
+            log.error("Search start error: {}", e.getMessage(), e);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
-        searchService.startSearch(request);
     }
+
 
     @PostMapping("/stop")
     public void stop() {
