@@ -1,4 +1,6 @@
-/* app.css */
+/* app.css — очищено от ID-правил статусов, всё на .statusbar */
+
+/* Базовые стили */
 * {
     box-sizing: border-box;
     margin: 0;
@@ -18,9 +20,7 @@ body {
 }
 
 /* Скрытие */
-.hidden {
-    display: none !important;
-}
+.hidden { display: none !important; }
 
 /* Карточка-обёртка */
 .container {
@@ -34,13 +34,9 @@ body {
     position: relative;
     overflow: hidden;
 }
-
 .container::before {
     content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
+    position: absolute; top: 0; left: 0; right: 0;
     height: 6px;
     background: linear-gradient(90deg, #6a11cb, #2575fc);
 }
@@ -55,9 +51,7 @@ h1 {
     border-bottom: 2px solid #f0f0f0;
 }
 
-.form-group {
-    margin-bottom: 20px;
-}
+.form-group { margin-bottom: 20px; }
 
 label {
     display: block;
@@ -67,7 +61,12 @@ label {
     font-size: 16px;
 }
 
-textarea, input[type="text"], input[type="tel"], input[type="password"], input[type="number"], select {
+textarea,
+input[type="text"],
+input[type="tel"],
+input[type="password"],
+input[type="number"],
+select {
     width: 100%;
     padding: 15px;
     border: 2px solid #ddd;
@@ -76,46 +75,34 @@ textarea, input[type="text"], input[type="tel"], input[type="password"], input[t
     font-size: 15px;
     transition: all .3s;
 }
-
 textarea:focus, input:focus, select:focus {
     outline: none;
     border-color: #6a11cb;
     box-shadow: 0 0 0 3px rgba(106, 17, 203, .2);
 }
 
+/* Группы чекбоксов */
 .checkbox-group {
     display: grid;
-    grid-template-columns:repeat(3, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 15px;
     margin: 25px 0;
 }
-
 .checkbox-item {
     display: flex;
-    align-items: center;
+    align-items: center;       /* вертикально по центру */
+    gap: 8px;
     padding: 10px;
     background: #f8f9fa;
     border-radius: 8px;
     transition: all .3s;
 }
-
 .checkbox-item:hover {
     background: #eef2f7;
     transform: translateY(-2px);
 }
-
-.checkbox-item input {
-    margin-right: 12px;
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
-}
-
-.checkbox-item label {
-    margin: 0;
-    cursor: pointer;
-    font-weight: 500;
-}
+.checkbox-item input { width: 18px; height: 18px; cursor: pointer; margin: 0; }
+.checkbox-item label { margin: 0; cursor: pointer; font-weight: 500; line-height: 1.2; }
 
 /* Кнопки */
 .buttons {
@@ -123,7 +110,6 @@ textarea:focus, input:focus, select:focus {
     gap: 20px;
     margin: 30px 0;
 }
-
 button {
     flex: 1;
     padding: 16px 25px;
@@ -138,78 +124,73 @@ button {
     justify-content: center;
     gap: 10px;
 }
-
-.btn-primary {
-    background: #6a11cb;
-    color: #fff;
-}
-
-.btn-primary:hover {
-    background: #5a0fb8;
-}
-
-.btn-danger {
-    background: #e74c3c;
-    color: #fff;
-}
-
-.btn-danger:hover {
-    background: #d62c1a;
-}
-
-.btn-success {
-    background: #27ae60;
-    color: #fff;
-}
-
-.btn-success:hover {
-    background: #219a52;
-}
+.btn-primary { background: #6a11cb; color: #fff; }
+.btn-primary:hover { background: #5a0fb8; }
+.btn-danger { background: #e74c3c; color: #fff; }
+.btn-danger:hover { background: #d62c1a; }
+.btn-success { background: #27ae60; color: #fff; }
+.btn-success:hover { background: #219a52; }
 
 /* Расширения для текстовых документов */
-.text-document-extensions {
-    margin-top: 15px;
-}
+.text-document-extensions { margin-top: 15px; }
 
 /* Прогресс-блоки */
-.progress-container {
-    margin-top: 20px;
-}
-
+.progress-container { margin-top: 20px; }
 .progress-label {
     display: flex;
     justify-content: space-between;
     margin-bottom: 8px;
     font-weight: 600;
 }
-
 #progress, #searchProgress, #monitorProgress {
     height: 20px;
     background: #f0f0f0;
     border-radius: 10px;
     overflow: hidden;
 }
-
 #progress-bar, #searchProgress-bar, #monitorProgress-bar {
     height: 100%;
     width: 0%;
     background: linear-gradient(90deg, #6a11cb, #2575fc);
     transition: width .3s;
 }
+#progress-bar.green, #searchProgress-bar.green, #monitorProgress-bar.green { background: #27ae60; }
 
-#progress-bar.green, #searchProgress-bar.green, #monitorProgress-bar.green {
-    background: #27ae60;
+/* ВМЕСТО ID-правил для статусов используем единый .statusbar */
+:root{
+    --st-info-bg:#edf7ff;   --st-info-fg:#2c3e50;
+    --st-ok-bg:#e7f6ec;     --st-ok-fg:#1b7f45;
+    --st-warn-bg:#fff4e6;   --st-warn-fg:#a85613;
+    --st-err-bg:#ffecec;    --st-err-fg:#b3261e;
+
+    --st-border:1px solid rgba(0,0,0,.05);
+    --st-radius:10px;
+    --st-pad:10px 12px;
+    --st-gap:10px;
+    --st-icon:18px;
 }
-
-#status, #searchStatus, #monitorStatus {
-    margin-top: 10px;
-    padding: 10px;
-    border-radius: 8px;
-    text-align: center;
+.statusbar{
+    display:flex; align-items:center; gap:var(--st-gap);
+    padding:var(--st-pad); border-radius:var(--st-radius);
+    border:var(--st-border);
+    background: var(--st-info-bg);
+    color: var(--st-info-fg);
+    text-align: left;
     font-weight: 500;
-    background: #edf7ff;
-    color: #2c3e50;
 }
+.statusbar .st-icon{width:var(--st-icon);height:var(--st-icon);flex:0 0 var(--st-icon);}
+.statusbar .st-text{flex:1 1 auto;}
+.statusbar .st-actions{display:flex;gap:6px;}
+.statusbar .st-actions button{
+    padding:6px 10px; font-size:12px; border-radius:8px; border:0; cursor:pointer;
+    background:#ffffffaa;
+}
+
+/* состояния */
+.statusbar[data-state="info"]  { background:var(--st-info-bg);  color:var(--st-info-fg); }
+.statusbar[data-state="ok"]    { background:var(--st-ok-bg);    color:var(--st-ok-fg); }
+.statusbar[data-state="warn"]  { background:var(--st-warn-bg);  color:var(--st-warn-fg); }
+.statusbar[data-state="error"] { background:var(--st-err-bg);   color:var(--st-err-fg); }
 
 /* Навигация режимов */
 .mode-switcher {
@@ -217,20 +198,9 @@ button {
     gap: 10px;
     margin-bottom: 20px;
 }
-
-.mode-switcher button {
-    padding: 12px 20px;
-    background: #34495e;
-    color: #fff;
-}
-
-.mode-switcher button:hover {
-    background: #2c3e50;
-}
-
-.mode-switcher button.active {
-    background: #6a11cb;
-}
+.mode-switcher button { padding: 12px 20px; background: #34495e; color: #fff; }
+.mode-switcher button:hover { background: #2c3e50; }
+.mode-switcher button.active { background: #6a11cb; }
 
 /* Результаты */
 .results-container {
@@ -241,7 +211,6 @@ button {
     max-height: 400px;
     overflow-y: auto;
 }
-
 .result-item {
     padding: 15px;
     margin-bottom: 10px;
@@ -249,7 +218,6 @@ button {
     border-radius: 8px;
     border-left: 4px solid #6a11cb;
 }
-
 .search-stats {
     display: flex;
     justify-content: space-between;
@@ -270,7 +238,6 @@ button {
     gap: 8px;
     z-index: 1000;
 }
-
 .toast {
     background: #1f2633;
     color: #fff;
@@ -279,44 +246,10 @@ button {
     border-radius: 10px;
     box-shadow: 0 6px 20px rgba(0, 0, 0, .35);
 }
+.toast.error { border-color: #e74c3c; }
+.toast.ok { border-color: #27ae60; }
 
-.toast.error {
-    border-color: #e74c3c;
-}
-
-.toast.ok {
-    border-color: #27ae60;
-}
-
-/* Адаптив */
-@media (max-width: 768px) {
-    .checkbox-group {
-        grid-template-columns: repeat(2, 1fr);
-    }
-}
-
-@media (max-width: 600px) {
-    .checkbox-group {
-        grid-template-columns: 1fr;
-    }
-
-    .buttons {
-        flex-direction: column;
-    }
-
-    .container {
-        padding: 25px 20px;
-    }
-}
-
-.footer {
-    margin-top: 25px;
-    text-align: center;
-    color: #fff;
-    font-size: 14px;
-    opacity: .8;
-}
-
+/* Таблица результатов */
 .results-table-wrap {
     width: 100%;
     overflow:auto;
@@ -324,13 +257,11 @@ button {
     border-radius: 8px;
     background: #fff;
 }
-
 .results-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 14px;
 }
-
 .results-table thead th {
     position: sticky;
     top: 0;
@@ -340,78 +271,62 @@ button {
     border-bottom: 1px solid #e5e9f2;
     padding: 10px 12px;
     user-select: none;
+    z-index: 1; /* чтобы шапка над строками при прокрутке */
 }
-
 .results-table th.sortable { cursor: pointer; }
 .results-table th.sortable:hover { background: #e9eff9; }
 .results-table th.active .sort-indicator { opacity: .9; }
-
 .results-table td {
     border-bottom: 1px solid #f0f0f0;
     padding: 10px 12px;
     vertical-align: top;
 }
-
-.results-table td.msg {
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
+.results-table td.msg { white-space: pre-wrap; word-break: break-word; }
 .results-table td.mono {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 }
-
-.sort-indicator {
-    margin-left: .35em;
-    font-size: 12px;
-    opacity: .6;
-}
-
+.sort-indicator { margin-left: .35em; font-size: 12px; opacity: .6; }
 /* Узкая колонка с нумерацией */
-.results-table th.ncol,
-.results-table td.ncol {
-    width: 56px;
-    text-align: right;
-    color: #8892a6;
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
+.results-table th.ncol, .results-table td.ncol {
+    width: 56px; text-align: right; color: #8892a6; white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 
-/* ===================== ДОБАВЛЕННЫЕ ПРАВИЛА ===================== */
-/* Выравнивание чекбоксов по вертикали на всей странице */
-.checkbox-item{
-    display:flex;
-    align-items:center;   /* вертикально по центру */
-    gap:8px;
-}
-.checkbox-item input[type="checkbox"]{ margin:0; }
-.checkbox-item label{ line-height:1.2; }
-
+/* ===== Доп. правила страницы инструментов ===== */
 /* Сводка дампа — слева и столбиком */
-#dumpContainer #status{
-    text-align:left;        /* по левому краю */
-    padding:10px 12px;
-}
+#dumpContainer .statusbar { padding: 10px 12px; }
 #dumpContainer .dump-summary{
-    display:flex;
-    flex-direction:column;  /* вертикальный список */
-    gap:6px;
-    align-items:flex-start; /* чтобы не центрировалось */
+    display:flex; flex-direction:column; gap:6px; align-items:flex-start;
 }
 
-/* В одну линию на десктопе, с аккуратным горизонтальным скроллом при нехватке места */
+/* Дамп: опции в одну линию c мягким горизонтальным скроллом */
 #dumpContainer .checkbox-group {
     display: flex;
     flex-wrap: nowrap;
     gap: 10px;
     align-items: center;
-    overflow-x: auto;                 /* если не влезли все 6 — появится мягкий скролл */
+    overflow-x: auto;                 /* если не влезли — появится скролл */
+    -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
 }
 #dumpContainer .checkbox-item { padding: 6px 10px; white-space: nowrap; }
 #dumpContainer .checkbox-item label { white-space: nowrap; }
 
-/* На телефонах разрешаем перенос в 2+ строки, чтобы не было горизонтального скролла */
+/* Адаптив */
+@media (max-width: 768px) {
+    .checkbox-group { grid-template-columns: repeat(2, 1fr); }
+}
 @media (max-width: 600px) {
+    .checkbox-group { grid-template-columns: 1fr; }
+    .buttons { flex-direction: column; }
+    .container { padding: 25px 20px; }
+    /* На телефонах — без горизонтального скролла */
     #dumpContainer .checkbox-group { flex-wrap: wrap; overflow-x: visible; }
+}
+
+.footer {
+    margin-top: 25px;
+    text-align: center;
+    color: #fff;
+    font-size: 14px;
+    opacity: .8;
 }
