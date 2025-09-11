@@ -32,7 +32,7 @@ public class MonitorController {
 
     @DeleteMapping("/database")
     public void deleteDatabase() {
-        service.stopMonitoringAndWait(5_000); // ждём до 5 секунд (можно больше)
+        service.stopMonitoringAndWait(5_000);
         db.clearMonitorChatDatabases();
     }
 
