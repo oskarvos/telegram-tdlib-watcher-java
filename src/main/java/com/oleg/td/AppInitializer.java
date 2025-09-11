@@ -47,7 +47,6 @@ public class AppInitializer {
                 config.getTdlib().getFilesDirectory(),
                 config.isCaseInsensitive()
         );
-
         try {
             // Подписываемся на апдейты авторизации
             authFlow.wireInto();
