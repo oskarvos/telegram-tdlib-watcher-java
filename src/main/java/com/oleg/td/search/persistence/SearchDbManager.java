@@ -22,35 +22,43 @@ public class SearchDbManager {
 
     public SearchDbManager(ChatResolver chatResolver) {
         this.chatResolver = chatResolver;
-        try { Files.createDirectories(dbDir); } catch (Exception ignored) {}
+        try {
+            Files.createDirectories(dbDir);
+        } catch (Exception ignored) {
+        }
     }
 
     // --- helpers
     private static final Pattern INVALID = Pattern.compile("[\\\\/:*?\"<>|]");
-    private static String q(String ident){ return "\"" + ident.replace("\"","\"\"") + "\""; }
 
-    private String chatName(long chatId){
+    private static String q(String ident) {
+        return "\"" + ident.replace("\"", "\"\"") + "\"";
+    }
+
+    private String chatName(long chatId) {
         try {
             String t = chatResolver.getChatTitle(chatId);
             if (t != null && !t.trim().isEmpty()) return t.trim();
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
         return "chat_" + Math.abs(chatId);
     }
 
-    private String safe(String name, long chatId){
+    private String safe(String name, long chatId) {
         if (name == null || name.isBlank()) return "unknown_chat";
         String s = INVALID.matcher(name).replaceAll("_").trim();
-        while (s.endsWith(".")) s = s.substring(0, s.length()-1).trim();
+        while (s.endsWith(".")) s = s.substring(0, s.length() - 1).trim();
         if (s.isEmpty()) s = "chat_" + Math.abs(chatId);
         if (s.length() > 100) s = s.substring(0, 100);
         return s;
     }
 
-    private Path dumpDbPath(long chatId){
+    private Path dumpDbPath(long chatId) {
         String fn = safe("DUMP " + chatName(chatId), chatId) + ".db";
         return dbDir.resolve(fn);
     }
-    private Path searchDbPath(long chatId){
+
+    private Path searchDbPath(long chatId) {
         String fn = safe("SEARCH " + chatName(chatId), chatId) + ".db";
         return dbDir.resolve(fn);
     }
@@ -58,52 +66,59 @@ public class SearchDbManager {
     private Connection openDump(long chatId) throws SQLException {
         return DriverManager.getConnection("jdbc:sqlite:" + dumpDbPath(chatId));
     }
+
     private Connection openSearch(long chatId) throws SQLException {
         return DriverManager.getConnection("jdbc:sqlite:" + searchDbPath(chatId));
     }
 
     // --- DUMP metadata (хранит чекпоинт поиска)
-    public void ensureDumpMetadata(long chatId){
+    public void ensureDumpMetadata(long chatId) {
         try (Connection c = openDump(chatId); Statement s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS " + q("metadata") + " (key TEXT PRIMARY KEY, value TEXT)");
-        } catch (SQLException e){
+        } catch (SQLException e) {
             log.error("DUMP {}: cannot ensure metadata: {}", chatName(chatId), e.getMessage(), e);
         }
     }
 
-    public String loadSearchCheckpoint(long chatId){
+    public String loadSearchCheckpoint(long chatId) {
         final String sql = "SELECT value FROM " + q("metadata") + " WHERE key=?";
         try (Connection c = openDump(chatId);
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, "search_last_message_id");
-            try (ResultSet rs = ps.executeQuery()){
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) return rs.getString(1);
             }
-        } catch (SQLException e){ log.warn("load search checkpoint err: {}", e.getMessage()); }
+        } catch (SQLException e) {
+            log.warn("load search checkpoint err: {}", e.getMessage());
+        }
         return null;
     }
 
-    public void saveSearchCheckpoint(long chatId, long messageId){
+    public void saveSearchCheckpoint(long chatId, long messageId) {
         final String sql = "INSERT OR REPLACE INTO " + q("metadata") + " (key,value) VALUES(?,?)";
         try (Connection c = openDump(chatId);
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, "search_last_message_id");
             ps.setString(2, Long.toString(messageId));
             ps.executeUpdate();
-        } catch (SQLException e){ log.error("save search checkpoint err: {}", e.getMessage(), e); }
+        } catch (SQLException e) {
+            log.error("save search checkpoint err: {}", e.getMessage(), e);
+        }
     }
 
-    public void resetSearchCheckpoint(long chatId){
+    public void resetSearchCheckpoint(long chatId) {
         final String sql = "DELETE FROM " + q("metadata") + " WHERE key=?";
         try (Connection c = openDump(chatId);
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, "search_last_message_id");
             ps.executeUpdate();
-        } catch (SQLException e){ log.error("reset search checkpoint err: {}", e.getMessage(), e); }
+        } catch (SQLException e) {
+            log.error("reset search checkpoint err: {}", e.getMessage(), e);
+        }
     }
 
     // --- SEARCH schema
-    public void prepareSearchSchema(long chatId){
+    public void prepareSearchSchema(long chatId) {
         final String t = q("search_results");
         final String create = "CREATE TABLE IF NOT EXISTS " + t + " (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT," +
@@ -118,20 +133,24 @@ public class SearchDbManager {
                 ")";
         final String idx1 = "CREATE INDEX IF NOT EXISTS search_keyword_idx ON " + t + "(keyword)";
         final String idx2 = "CREATE INDEX IF NOT EXISTS search_date_idx ON " + t + "(message_date)";
-        try (Connection c = openSearch(chatId); Statement s = c.createStatement()){
-            s.execute(create); s.execute(idx1); s.execute(idx2);
-        } catch (SQLException e){
+        try (Connection c = openSearch(chatId); Statement s = c.createStatement()) {
+            s.execute(create);
+            s.execute(idx1);
+            s.execute(idx2);
+        } catch (SQLException e) {
             log.error("SEARCH {}: schema error: {}", chatName(chatId), e.getMessage(), e);
         }
     }
 
-    /** Возвращает true, если вставлен НОВЫЙ результат (а не проигнорирован дубликат). */
+    /**
+     * Возвращает true, если вставлен НОВЫЙ результат (а не проигнорирован дубликат).
+     */
     public boolean saveSearchResult(long chatId, long messageId, LocalDateTime messageDate,
-                                    String keyword, String messageText, String senderId, String senderName){
+                                    String keyword, String messageText, String senderId, String senderName) {
         final String sql = "INSERT OR IGNORE INTO " + q("search_results") +
                 "(message_id,message_date,keyword,message_text,sender_id,sender_name,found_date) " +
                 "VALUES(?,?,?,?,?,?,?)";
-        try (Connection c = openSearch(chatId); PreparedStatement ps = c.prepareStatement(sql)){
+        try (Connection c = openSearch(chatId); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setLong(1, messageId);
             ps.setString(2, messageDate.toString());
             ps.setString(3, keyword);
@@ -141,54 +160,45 @@ public class SearchDbManager {
             ps.setString(7, LocalDateTime.now().toString());
             int affected = ps.executeUpdate();
             return affected > 0;
-        } catch (SQLException e){
+        } catch (SQLException e) {
             log.error("SEARCH save result err: {}", e.getMessage(), e);
             return false;
         }
     }
 
     // Очистить SEARCH-БД конкретного чата (DROP TABLE + VACUUM)
-    public void clearSearchDatabase(long chatId){
+    public void clearSearchDatabase(long chatId) {
         try (Connection c = openSearch(chatId)) {
             dropAllUserTables(c);
-            try (Statement s = c.createStatement()){ s.execute("VACUUM"); }
-        } catch (SQLException e){
+            try (Statement s = c.createStatement()) {
+                s.execute("VACUUM");
+            }
+        } catch (SQLException e) {
             log.error("clear SEARCH for chat {} err: {}", chatId, e.getMessage(), e);
         }
     }
 
-    // Очистить все SEARCH-*.db и сбросить чекпоинты в DUMP
-    public void clearSearchChatDatabases(){
+    // Очистить все SEARCH-*.db
+    public void clearSearchChatDatabases() {
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "SEARCH *.db")) {
-            for (Path p : ds){
+            for (Path p : ds) {
                 try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p)) {
                     dropAllUserTables(c);
-                    try (Statement s = c.createStatement()){ s.execute("VACUUM"); }
-                } catch (SQLException e){
+                    try (Statement s = c.createStatement()) {
+                        s.execute("VACUUM");
+                    }
+                } catch (SQLException e) {
                     log.error("clear SEARCH {} err: {}", p.getFileName(), e.getMessage(), e);
                 }
             }
-        } catch (Exception e){ log.error("list SEARCH*.db err: {}", e.getMessage(), e); }
-
-        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "DUMP *.db")) {
-            for (Path p : ds){
-                try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p)) {
-                    ensureTable(c, "metadata");
-                    try (PreparedStatement ps =
-                                 c.prepareStatement("DELETE FROM " + q("metadata") + " WHERE key=?")){
-                        ps.setString(1, "search_last_message_id");
-                        ps.executeUpdate();
-                    }
-                } catch (SQLException e){
-                    log.error("reset search checkpoint in {} err: {}", p.getFileName(), e.getMessage(), e);
-                }
-            }
-        } catch (Exception e){ log.error("list DUMP*.db err: {}", e.getMessage(), e); }
+        } catch (Exception e) {
+            log.error("list SEARCH*.db err: {}", e.getMessage(), e);
+        }
     }
 
     // --- helpers -------------
     private void ensureTable(Connection c, String name) throws SQLException {
-        try (Statement s = c.createStatement()){
+        try (Statement s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS " + q(name) + " (key TEXT PRIMARY KEY, value TEXT)");
         }
     }
@@ -196,18 +206,18 @@ public class SearchDbManager {
     private void dropAllUserTables(Connection c) throws SQLException {
         List<String> tables = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement("SELECT name FROM sqlite_master WHERE type='table'");
-             ResultSet rs = ps.executeQuery()){
-            while (rs.next()){
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
                 String n = rs.getString(1);
                 if (!"sqlite_sequence".equalsIgnoreCase(n)) tables.add(n);
             }
         }
-        try (Statement s = c.createStatement()){
+        try (Statement s = c.createStatement()) {
             for (String t : tables) s.execute("DROP TABLE IF EXISTS " + q(t));
         }
     }
 
-    public List<SearchResult> getSearchResults(long chatId, int limit, int offset){
+    public List<SearchResult> getSearchResults(long chatId, int limit, int offset) {
         final String sql = "SELECT rowid AS id, message_id, message_date, keyword, message_text, " +
                 "sender_id, sender_name, found_date FROM " + q("search_results") +
                 " ORDER BY found_date DESC LIMIT ? OFFSET ?";
@@ -231,7 +241,7 @@ public class SearchDbManager {
                     list.add(r);
                 }
             }
-        } catch (SQLException e){
+        } catch (SQLException e) {
             log.error("SEARCH get results err: {}", e.getMessage(), e);
         }
         return list;

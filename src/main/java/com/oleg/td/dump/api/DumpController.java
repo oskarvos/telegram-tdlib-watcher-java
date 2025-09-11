@@ -32,6 +32,7 @@ public class DumpController {
 
     @DeleteMapping("/database")
     public void deleteDatabaseAndFiles() {
+        dumpService.stopDump();
         db.clearDumpDatabasesAndDeleteFiles();
     }
 }

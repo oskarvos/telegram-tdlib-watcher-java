@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.nio.file.*;
 import java.sql.*;
 import java.time.LocalDateTime;
@@ -66,19 +67,17 @@ public class MonitorDbManager {
         return DriverManager.getConnection("jdbc:sqlite:" + p.toAbsolutePath());
     }
 
-
-    // --- DUMP metadata
-    public void ensureDumpMetadata(long chatId){
-        try (Connection c = openDump(chatId); Statement s = c.createStatement()) {
+    public void ensureMonitorMetadata(long chatId){
+        try (Connection c = openMonitor(chatId); Statement s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS " + q("metadata") + " (key TEXT PRIMARY KEY, value TEXT)");
         } catch (SQLException e){
-            log.error("DUMP {}: cannot ensure metadata: {}", chatName(chatId), e.getMessage(), e);
+            log.error("MONITOR {}: cannot ensure metadata: {}", chatName(chatId), e.getMessage(), e);
         }
     }
 
     public String loadMonitorCheckpoint(long chatId){
         final String sql = "SELECT value FROM " + q("metadata") + " WHERE key=?";
-        try (Connection c = openDump(chatId);
+        try (Connection c = openMonitor(chatId);
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, "monitor_last_message_id");
             try (ResultSet rs = ps.executeQuery()){
@@ -90,7 +89,7 @@ public class MonitorDbManager {
 
     public void saveMonitorCheckpoint(long chatId, long messageId){
         final String sql = "INSERT OR REPLACE INTO " + q("metadata") + " (key,value) VALUES(?,?)";
-        try (Connection c = openDump(chatId);
+        try (Connection c = openMonitor(chatId);
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, "monitor_last_message_id");
             ps.setString(2, Long.toString(messageId));
@@ -100,7 +99,7 @@ public class MonitorDbManager {
 
     public void resetMonitorCheckpoint(long chatId){
         final String sql = "DELETE FROM " + q("metadata") + " WHERE key=?";
-        try (Connection c = openDump(chatId);
+        try (Connection c = openMonitor(chatId);
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, "monitor_last_message_id");
             ps.executeUpdate();
@@ -150,33 +149,19 @@ public class MonitorDbManager {
 
     // --- clear all MONITOR *.db + reset checkpoints in all DUMP *.db
     public void clearMonitorChatDatabases(){
-        // 1) clear MONITOR db files
+        try { Files.createDirectories(dbDir); } catch (Exception ignore) {}
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "MONITOR *.db")) {
             for (Path p : ds){
-                try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p)) {
-                    dropAllUserTables(c);
-                    try (Statement s = c.createStatement()){ s.execute("VACUUM"); }
-                } catch (SQLException e){
-                    log.error("clear MONITOR {} err: {}", p.getFileName(), e.getMessage(), e);
-                }
+                deleteDbWithSidecars(p);              // удаляем файл + -wal/-shm
+                log.info("Удалён файл MONITOR БД: {}", p.getFileName());
             }
         } catch (Exception e){ log.error("list MONITOR*.db err: {}", e.getMessage(), e); }
+    }
 
-        // 2) reset checkpoints in every DUMP
-        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "DUMP *.db")) {
-            for (Path p : ds){
-                try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p)) {
-                    ensureTable(c, "metadata");
-                    try (PreparedStatement ps =
-                                 c.prepareStatement("DELETE FROM " + q("metadata") + " WHERE key=?")){
-                        ps.setString(1, "monitor_last_message_id");
-                        ps.executeUpdate();
-                    }
-                } catch (SQLException e){
-                    log.error("reset checkpoint in {} err: {}", p.getFileName(), e.getMessage(), e);
-                }
-            }
-        } catch (Exception e){ log.error("list DUMP*.db err: {}", e.getMessage(), e); }
+    private void deleteDbWithSidecars(Path dbFile) {
+        try { Files.deleteIfExists(dbFile); } catch (IOException ignore) {}
+        try { Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-wal")); } catch (IOException ignore) {}
+        try { Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-shm")); } catch (IOException ignore) {}
     }
 
     // --- helpers

@@ -52,6 +52,7 @@ public class SearchController {
 
     @DeleteMapping("/database")
     public void deleteDatabase() {
+        searchService.stopSearch();
         databaseManager.clearSearchChatDatabases(); // только SEARCH-базы
     }
 
