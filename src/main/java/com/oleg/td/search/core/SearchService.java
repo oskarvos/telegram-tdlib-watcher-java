@@ -1,8 +1,8 @@
 package com.oleg.td.search.core;
 
-import com.oleg.td.search.persistence.SearchDbManager;
 import com.oleg.td.search.api.SearchProgress;
 import com.oleg.td.search.api.SearchRequest;
+import com.oleg.td.search.persistence.SearchDbManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -20,6 +20,7 @@ public class SearchService {
 
     private final SearchCoordinator coordinator;
     private final SearchDbManager db;
+    private volatile Thread searchThread;
 
     public SearchService(SearchCoordinator coordinator, SearchDbManager db) {
         this.coordinator = coordinator;
@@ -35,7 +36,7 @@ public class SearchService {
         processedMessages.set(0);
         foundMessages.set(0);
 
-        new Thread(() -> {
+        searchThread = new Thread(() -> {
             try {
                 log.info("Запуск поиска по чатам...");
                 coordinator.searchChats(request, this::incrementProgress, this::incrementFound);
@@ -44,13 +45,33 @@ public class SearchService {
                 log.error("Ошибка при выполнении поиска: {}", e.getMessage(), e);
             } finally {
                 running.set(false);
+                searchThread = null; // ← важно
             }
-        }).start();
+        }, "search-thread");
+        searchThread.start();
     }
 
     public void stopSearch() {
         coordinator.stop();
+        Thread t = searchThread;
+        if (t != null) t.interrupt(); // прервём возможный sleep в координаторе
         log.info("Получен сигнал остановки поиска");
+    }
+
+    /**
+     * Остановить и дождаться завершения потока (для безопасной очистки БД).
+     */
+    public void stopSearchAndWait(long timeoutMs) {
+        stopSearch();
+        Thread t = searchThread;
+        if (t != null) {
+            try {
+                t.join(Math.max(0, timeoutMs));
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        log.info("Поиск остановлен (готово к очистке БД)");
     }
 
     public SearchProgress getProgress() {
@@ -63,18 +84,5 @@ public class SearchService {
 
     public synchronized void incrementFound() {
         foundMessages.incrementAndGet();
-    }
-
-    public void deleteSearchDatabase(long chatId) {
-        coordinator.stop();
-        db.clearSearchDatabase(chatId);
-        db.resetSearchCheckpoint(chatId);
-        log.info("SEARCH-БД и чекпоинт поиска очищены для chatId={}", chatId);
-    }
-
-    public void deleteSearchDatabase() {
-        coordinator.stop();
-        db.clearSearchChatDatabases();
-        log.info("Очищены все SEARCH-БД и сброшены чекпоинты поиска");
     }
 }

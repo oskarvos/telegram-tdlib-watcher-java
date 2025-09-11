@@ -13,9 +13,9 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/api/search")
 public class SearchController {
     private final SearchService searchService;
-    private final ChatDumpCoordinator chatDumpCoordinator;
+    private final ChatDumpCoordinator chatDumpCoordinator; // как было
     private final ChatResolver chatResolver;
-    private final SearchDbManager databaseManager; // <--- добавить
+    private final SearchDbManager databaseManager;
 
     public SearchController(SearchService searchService,
                             ChatDumpCoordinator chatDumpCoordinator,
@@ -30,7 +30,6 @@ public class SearchController {
     @PostMapping("/start")
     public void start(@RequestBody SearchRequest request) {
         final String kw = request.getKeyword() == null ? "" : request.getKeyword();
-        // Либо совсем убрать ограничение, либо сделать щедрее, например 256
         if (kw.length() > 256) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
@@ -52,8 +51,19 @@ public class SearchController {
 
     @DeleteMapping("/database")
     public void deleteDatabase() {
-        searchService.stopSearch();
-        databaseManager.clearSearchChatDatabases(); // только SEARCH-базы
+        // 1) надёжно останавливаем поиск
+        searchService.stopSearchAndWait(5_000);
+
+        // 2) удаляем ВСЕ SEARCH БД-файлы целиком
+        databaseManager.clearSearchChatDatabases();
+    }
+
+    // (опционально) эндпоинт для удаления одной БД конкретного чата:
+    @DeleteMapping("/database/{chat}")
+    public void deleteChatDatabase(@PathVariable("chat") String chatRef) {
+        searchService.stopSearchAndWait(5_000);
+        long chatId = chatResolver.resolveFlexible(chatRef);
+        databaseManager.clearSearchDatabase(chatId);
     }
 
     @GetMapping("/results")

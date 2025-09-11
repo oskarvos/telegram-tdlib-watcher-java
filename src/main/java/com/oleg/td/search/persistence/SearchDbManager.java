@@ -6,7 +6,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.nio.file.*;
+import java.io.IOException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -166,33 +170,43 @@ public class SearchDbManager {
         }
     }
 
-    // Очистить SEARCH-БД конкретного чата (DROP TABLE + VACUUM)
+    // === УДАЛЕНИЕ ОДНОЙ SEARCH БД (по chatId) ===
     public void clearSearchDatabase(long chatId) {
-        try (Connection c = openSearch(chatId)) {
-            dropAllUserTables(c);
-            try (Statement s = c.createStatement()) {
-                s.execute("VACUUM");
-            }
-        } catch (SQLException e) {
-            log.error("clear SEARCH for chat {} err: {}", chatId, e.getMessage(), e);
-        }
+        Path p = searchDbPath(chatId);
+        deleteDbWithSidecars(p);
+        log.info("Удалён файл SEARCH БД: {}", p.getFileName());
     }
 
-    // Очистить все SEARCH-*.db
+    // === УДАЛЕНИЕ ВСЕХ SEARCH БД ===
     public void clearSearchChatDatabases() {
+        try {
+            Files.createDirectories(dbDir);
+        } catch (Exception ignore) {
+        }
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "SEARCH *.db")) {
-            for (Path p : ds) {
-                try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + p)) {
-                    dropAllUserTables(c);
-                    try (Statement s = c.createStatement()) {
-                        s.execute("VACUUM");
-                    }
-                } catch (SQLException e) {
-                    log.error("clear SEARCH {} err: {}", p.getFileName(), e.getMessage(), e);
-                }
+            for (Path dbFile : ds) {
+                deleteDbWithSidecars(dbFile);
+                log.info("Удалён файл SEARCH БД: {}", dbFile.getFileName());
             }
         } catch (Exception e) {
             log.error("list SEARCH*.db err: {}", e.getMessage(), e);
+        }
+    }
+
+    // --- helper: удалить *.db + побочные файлы WAL/SHM
+    private void deleteDbWithSidecars(Path dbFile) {
+        try {
+            Files.deleteIfExists(dbFile);
+        } catch (IOException e) {
+            log.warn("Не удалось удалить {}: {}", dbFile, e.getMessage());
+        }
+        try {
+            Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-wal"));
+        } catch (IOException ignore) {
+        }
+        try {
+            Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-shm"));
+        } catch (IOException ignore) {
         }
     }
 

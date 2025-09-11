@@ -32,7 +32,8 @@ public class MonitorController {
 
     @DeleteMapping("/database")
     public void deleteDatabase() {
-        db.clearMonitorChatDatabases(); // чистим все MONITOR-БД и сбрасываем чекпоинты мониторинга
+        service.stopMonitoringAndWait(5_000); // ждём до 5 секунд (можно больше)
+        db.clearMonitorChatDatabases();
     }
 
     @GetMapping("/results")
@@ -43,5 +44,4 @@ public class MonitorController {
         long chatId = service.resolveChatId(chatRef); // см. хелпер ниже
         return db.getMonitorResults(chatId, limit, offset);
     }
-
 }
