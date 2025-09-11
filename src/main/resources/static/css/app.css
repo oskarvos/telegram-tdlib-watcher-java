@@ -398,3 +398,20 @@ button {
     gap:6px;
     align-items:flex-start; /* чтобы не центрировалось */
 }
+
+/* В одну линию на десктопе, с аккуратным горизонтальным скроллом при нехватке места */
+#dumpContainer .checkbox-group {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 10px;
+    align-items: center;
+    overflow-x: auto;                 /* если не влезли все 6 — появится мягкий скролл */
+    scrollbar-width: thin;
+}
+#dumpContainer .checkbox-item { padding: 6px 10px; white-space: nowrap; }
+#dumpContainer .checkbox-item label { white-space: nowrap; }
+
+/* На телефонах разрешаем перенос в 2+ строки, чтобы не было горизонтального скролла */
+@media (max-width: 600px) {
+    #dumpContainer .checkbox-group { flex-wrap: wrap; overflow-x: visible; }
+}
