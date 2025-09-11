@@ -335,32 +335,6 @@ public class DumpDbManager {
         }
     }
 
-    public String loadMetadata(long chatId, String key) {
-        final String sql = "SELECT value FROM " + q("metadata") + " WHERE key=?";
-        try (Connection c = openDump(chatId);
-             PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, key);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) return rs.getString(1);
-            }
-        } catch (SQLException e) {
-            log.warn("DUMP get meta '{}' err: {}", key, e.getMessage());
-        }
-        return null;
-    }
-
-    public void saveMetadata(long chatId, String key, String value) {
-        final String sql = "INSERT OR REPLACE INTO " + q("metadata") + " (key,value) VALUES(?,?)";
-        try (Connection c = openDump(chatId);
-             PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, key);
-            ps.setString(2, value);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            log.error("DUMP set meta '{}' err: {}", key, e.getMessage(), e);
-        }
-    }
-
     // ---------- SCHEMA ----------
     public void prepareSchema(long chatId) {
         try (Connection c = openDump(chatId); Statement s = c.createStatement()) {

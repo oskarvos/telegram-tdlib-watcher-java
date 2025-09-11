@@ -67,7 +67,8 @@ public class MonitorCoordinator {
                 try {
                     String v = db.loadMonitorCheckpoint(chatId);
                     if (v != null && !v.isBlank()) lastSeen = Long.parseLong(v.trim());
-                } catch (Exception ignore) {}
+                } catch (Exception ignore) {
+                }
 
                 if (lastSeen == 0L) {
                     // получить id самого нового сообщения
@@ -203,48 +204,6 @@ public class MonitorCoordinator {
             }
         }
         return best;
-    }
-
-    // MonitorCoordinator.java
-
-    private long readOrInitCheckpoint(long chatId) {
-        long lastSeen = 0L;
-        try {
-            String v = db.loadMonitorCheckpoint(chatId);
-            if (v != null && !v.isBlank()) {
-                lastSeen = Long.parseLong(v.trim());
-            }
-        } catch (Exception ignore) {
-        }
-
-        // если чекпоинта нет — установить на актуальную «голову» чата
-        if (lastSeen == 0L) {
-            long top = fetchLatestMessageId(chatId);
-            if (top > 0) {
-                db.saveMonitorCheckpoint(chatId, top);
-                lastSeen = top;
-            }
-        }
-        return lastSeen;
-    }
-
-    private long fetchLatestMessageId(long chatId) {
-        var req = M.createObjectNode();
-        req.put("@type", "getChatHistory");
-        req.put("chat_id", chatId);
-        req.put("from_message_id", 0);  // от самой новой
-        req.put("offset", 0);
-        req.put("limit", 1);            // ровно одно — самое свежее
-        req.put("only_local", false);
-
-        var resp = client.requestWithFloodWaitSyncLimited(req, 30, TdJsonClient.Channel.MAIN);
-        if ("messages".equals(resp.path("@type").asText())) {
-            var arr = (ArrayNode) resp.path("messages");
-            if (arr != null && arr.size() > 0) {
-                return arr.get(0).path("id").asLong(0);
-            }
-        }
-        return 0L;
     }
 
     public void stop() {

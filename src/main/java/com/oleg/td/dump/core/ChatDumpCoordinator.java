@@ -5,10 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.oleg.td.dump.api.DumpRequest;
-import com.oleg.td.integrations.tdlibs.TdJsonClient;
-import com.oleg.td.integrations.telegram.ChatResolver;
 import com.oleg.td.dump.persistence.DumpDbManager;
 import com.oleg.td.dump.persistence.DumpDbManager.DbSession;
+import com.oleg.td.integrations.tdlibs.TdJsonClient;
+import com.oleg.td.integrations.telegram.ChatResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -19,7 +19,7 @@ import java.util.stream.Collectors;
 
 /**
  * Внедрено:
- *  - Работа с БД через DumpDbManager.DbSession (одно соединение на чат, PRAGMA, батч-коммиты, prepared statements).
+ * - Работа с БД через DumpDbManager.DbSession (одно соединение на чат, PRAGMA, батч-коммиты, prepared statements).
  * Никаких прочих оптимизаций не добавлялось.
  */
 @Component
@@ -68,9 +68,12 @@ public class ChatDumpCoordinator {
         this.downloader = downloader;
     }
 
-    /** Координатор принимает подробный слушатель. */
+    /**
+     * Координатор принимает подробный слушатель.
+     */
     public void dumpChats(DumpRequest request, DumpListener listener) {
-        if (listener == null) listener = new DumpListener() {};
+        if (listener == null) listener = new DumpListener() {
+        };
         stopRequested = false;
 
         // Кастомные расширения для текстовых документов
@@ -99,11 +102,11 @@ public class ChatDumpCoordinator {
             try (DbSession session = db.openSession(chatId)) {
 
                 // --- Пороговые messageId по типам (что уже сохранено) ---
-                long lastMsgId      = request.isMessages() ? db.getLastSavedMessageId(chatId) : Long.MAX_VALUE;
-                long lastPhotoId    = request.isPhotos()   ? db.getLastSavedPhotoId(chatId)   : Long.MAX_VALUE;
-                long lastVideoId    = request.isVideos()   ? db.getLastSavedVideoId(chatId)   : Long.MAX_VALUE;
-                long lastAudioId    = request.isAudio()    ? db.getLastSavedAudioId(chatId)   : Long.MAX_VALUE;
-                long lastLinkId     = request.isLinks()    ? db.getLastSavedLinkId(chatId)    : Long.MAX_VALUE;
+                long lastMsgId = request.isMessages() ? db.getLastSavedMessageId(chatId) : Long.MAX_VALUE;
+                long lastPhotoId = request.isPhotos() ? db.getLastSavedPhotoId(chatId) : Long.MAX_VALUE;
+                long lastVideoId = request.isVideos() ? db.getLastSavedVideoId(chatId) : Long.MAX_VALUE;
+                long lastAudioId = request.isAudio() ? db.getLastSavedAudioId(chatId) : Long.MAX_VALUE;
+                long lastLinkId = request.isLinks() ? db.getLastSavedLinkId(chatId) : Long.MAX_VALUE;
 
                 // Документы: учитываем изменение набора расширений
                 String storedRaw = session.loadMetadata("text_document_extensions");
@@ -119,19 +122,19 @@ public class ChatDumpCoordinator {
                 }
 
                 // --- Флаги «достигли сохранённого» по каждому типу ---
-                boolean reachedMsgs   = !request.isMessages();
+                boolean reachedMsgs = !request.isMessages();
                 boolean reachedPhotos = !request.isPhotos();
                 boolean reachedVideos = !request.isVideos();
-                boolean reachedAudio  = !request.isAudio();
-                boolean reachedDocs   = !request.isTextDocuments();
-                boolean reachedLinks  = !request.isLinks();
+                boolean reachedAudio = !request.isAudio();
+                boolean reachedDocs = !request.isTextDocuments();
+                boolean reachedLinks = !request.isLinks();
 
-                if (request.isMessages())      log.info("lastSaved(message)={}",  lastMsgId);
-                if (request.isPhotos())        log.info("lastSaved(photo)={}",    lastPhotoId);
-                if (request.isVideos())        log.info("lastSaved(video)={}",    lastVideoId);
-                if (request.isAudio())         log.info("lastSaved(audio)={}",    lastAudioId);
+                if (request.isMessages()) log.info("lastSaved(message)={}", lastMsgId);
+                if (request.isPhotos()) log.info("lastSaved(photo)={}", lastPhotoId);
+                if (request.isVideos()) log.info("lastSaved(video)={}", lastVideoId);
+                if (request.isAudio()) log.info("lastSaved(audio)={}", lastAudioId);
                 if (request.isTextDocuments()) log.info("lastSaved(document)={}", lastDocId);
-                if (request.isLinks())         log.info("lastSaved(link)={}",     lastLinkId);
+                if (request.isLinks()) log.info("lastSaved(link)={}", lastLinkId);
 
                 long fromMessageId = 0;
 
@@ -167,12 +170,24 @@ public class ChatDumpCoordinator {
                         long mid = msg.path("id").asLong();
 
                         // Обновляем «достигли порога» по каждому типу
-                        if (!reachedMsgs   && mid <= lastMsgId)   { reachedMsgs   = true; }
-                        if (!reachedPhotos && mid <= lastPhotoId) { reachedPhotos = true; }
-                        if (!reachedVideos && mid <= lastVideoId) { reachedVideos = true; }
-                        if (!reachedAudio  && mid <= lastAudioId) { reachedAudio  = true; }
-                        if (!reachedDocs   && mid <= lastDocId)   { reachedDocs   = true; }
-                        if (!reachedLinks  && mid <= lastLinkId)  { reachedLinks  = true; }
+                        if (!reachedMsgs && mid <= lastMsgId) {
+                            reachedMsgs = true;
+                        }
+                        if (!reachedPhotos && mid <= lastPhotoId) {
+                            reachedPhotos = true;
+                        }
+                        if (!reachedVideos && mid <= lastVideoId) {
+                            reachedVideos = true;
+                        }
+                        if (!reachedAudio && mid <= lastAudioId) {
+                            reachedAudio = true;
+                        }
+                        if (!reachedDocs && mid <= lastDocId) {
+                            reachedDocs = true;
+                        }
+                        if (!reachedLinks && mid <= lastLinkId) {
+                            reachedLinks = true;
+                        }
 
                         // Обрабатываем сообщение (с подсчётами)
                         try {
@@ -210,7 +225,10 @@ public class ChatDumpCoordinator {
                 }
 
                 // финальный коммит сессии
-                try { session.commit(); } catch (Exception ignore) {}
+                try {
+                    session.commit();
+                } catch (Exception ignore) {
+                }
             } catch (Exception sessionErr) {
                 log.error("Сессия дампа для '{}' завершилась ошибкой: {}", chatName, sessionErr.getMessage(), sessionErr);
             }
@@ -413,8 +431,8 @@ public class ChatDumpCoordinator {
 
             String filePath = null;
 
-            boolean shouldSaveTextDoc  = request.isTextDocuments() && isTextDocument && messageId > lastSavedDocumentId;
-            boolean shouldSaveAudioDoc = request.isAudio()         && isAudioDocument && messageId > lastSavedAudioId;
+            boolean shouldSaveTextDoc = request.isTextDocuments() && isTextDocument && messageId > lastSavedDocumentId;
+            boolean shouldSaveAudioDoc = request.isAudio() && isAudioDocument && messageId > lastSavedAudioId;
 
             if (fileId != null && (shouldSaveTextDoc || shouldSaveAudioDoc)) {
                 filePath = downloader.downloadBlocking(fileId);
@@ -423,7 +441,6 @@ public class ChatDumpCoordinator {
             if (shouldSaveTextDoc) {
                 session.saveDocument(messageId, fileId, remoteId, fileName, mimeType, filePath);
                 String ext = getFileExtension(fileName).toLowerCase();
-                if (ext.startsWith(".")) ext = ext.substring(1);
                 if (ext.isBlank()) ext = "unknown";
                 listener.onSavedDocument(ext);
                 log.debug("Сохранён текстовый документ: {} (msg_id={})", fileName, messageId);
@@ -468,7 +485,9 @@ public class ChatDumpCoordinator {
         return (dotIndex == -1) ? "" : fileName.substring(dotIndex + 1);
     }
 
-    /** Возвращает, сколько ссылок сохранено. */
+    /**
+     * Возвращает, сколько ссылок сохранено.
+     */
     private int extractLinksFromFormattedText(DbSession session, long chatId, long messageId, JsonNode formattedText) {
         if (formattedText == null || formattedText.isMissingNode()) return 0;
 

@@ -12,8 +12,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.*;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.regex.Pattern;
 
 @Component
@@ -56,18 +54,9 @@ public class MonitorDbManager {
         return s;
     }
 
-    private Path dumpDbPath(long chatId) {
-        String fn = safe("DUMP " + chatName(chatId), chatId) + ".db";
-        return dbDir.resolve(fn);
-    }
-
     private Path monitorDbPath(long chatId) {
         String fn = safe("MONITOR " + chatName(chatId), chatId) + ".db";
         return dbDir.resolve(fn);
-    }
-
-    private Connection openDump(long chatId) throws SQLException {
-        return DriverManager.getConnection("jdbc:sqlite:" + dumpDbPath(chatId));
     }
 
     private Connection openMonitor(long chatId) throws SQLException {
@@ -196,27 +185,6 @@ public class MonitorDbManager {
         try {
             Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-shm"));
         } catch (IOException ignore) {
-        }
-    }
-
-    // --- helpers
-    private void ensureTable(Connection c, String name) throws SQLException {
-        try (Statement s = c.createStatement()) {
-            s.execute("CREATE TABLE IF NOT EXISTS " + q(name) + " (key TEXT PRIMARY KEY, value TEXT)");
-        }
-    }
-
-    private void dropAllUserTables(Connection c) throws SQLException {
-        List<String> tables = new ArrayList<>();
-        try (PreparedStatement ps = c.prepareStatement("SELECT name FROM sqlite_master WHERE type='table'");
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                String n = rs.getString(1);
-                if (!"sqlite_sequence".equalsIgnoreCase(n)) tables.add(n);
-            }
-        }
-        try (Statement s = c.createStatement()) {
-            for (String t : tables) s.execute("DROP TABLE IF EXISTS " + q(t));
         }
     }
 

@@ -2,7 +2,6 @@ package com.oleg.td.search.core;
 
 import com.oleg.td.search.api.SearchProgress;
 import com.oleg.td.search.api.SearchRequest;
-import com.oleg.td.search.persistence.SearchDbManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -19,12 +18,10 @@ public class SearchService {
     private final AtomicInteger foundMessages = new AtomicInteger(0);
 
     private final SearchCoordinator coordinator;
-    private final SearchDbManager db;
     private volatile Thread searchThread;
 
-    public SearchService(SearchCoordinator coordinator, SearchDbManager db) {
+    public SearchService(SearchCoordinator coordinator) {
         this.coordinator = coordinator;
-        this.db = db;
     }
 
     public synchronized void startSearch(SearchRequest request) {

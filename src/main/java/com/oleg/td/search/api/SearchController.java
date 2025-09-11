@@ -1,6 +1,5 @@
 package com.oleg.td.search.api;
 
-import com.oleg.td.dump.core.ChatDumpCoordinator;
 import com.oleg.td.integrations.telegram.ChatResolver;
 import com.oleg.td.search.core.SearchService;
 import com.oleg.td.search.model.SearchResult;
@@ -20,16 +19,13 @@ public class SearchController {
     private static final Logger log = LoggerFactory.getLogger(SearchController.class);
 
     private final SearchService searchService;
-    private final ChatDumpCoordinator chatDumpCoordinator; // как было
     private final ChatResolver chatResolver;
     private final SearchDbManager databaseManager;
 
     public SearchController(SearchService searchService,
-                            ChatDumpCoordinator chatDumpCoordinator,
                             ChatResolver chatResolver,
                             SearchDbManager databaseManager) {
         this.searchService = searchService;
-        this.chatDumpCoordinator = chatDumpCoordinator;
         this.chatResolver = chatResolver;
         this.databaseManager = databaseManager;
     }
