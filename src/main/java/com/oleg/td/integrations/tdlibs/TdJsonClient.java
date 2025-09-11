@@ -2,7 +2,7 @@ package com.oleg.td.integrations.tdlibs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.oleg.td.app.Config;
+import com.oleg.td.app.config.AppProperties;
 import com.sun.jna.Library;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
@@ -33,16 +33,16 @@ public class TdJsonClient {
     }
 
     private final UpdateRouter router;
-    private final Config config;
+    private final AppProperties appProps;
     private final AtomicLong extraId = new AtomicLong();
     private final Pointer client;
     private final TdLib tdLib;
 
-    public TdJsonClient(@Lazy UpdateRouter router, Config config) {
+    public TdJsonClient(@Lazy UpdateRouter router, AppProperties appProps) {
         this.router = router;
-        this.config = config;
+        this.appProps = appProps;
 
-        String libPath = config.getLibPath();
+        String libPath = appProps.getLibPath();
         if (libPath != null && !libPath.isEmpty()) {
             log.info("Loading TDLib from: {}", libPath);
             this.tdLib = Native.load(libPath, TdLib.class);

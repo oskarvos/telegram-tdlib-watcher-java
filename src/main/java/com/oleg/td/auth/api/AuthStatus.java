@@ -1,5 +1,8 @@
 package com.oleg.td.auth.api;
 
+/**
+ * // DTO для ответа статуса авторизации и наличия основных параметров.
+ */
 public class AuthStatus {
     private boolean authorized;
     private boolean hasApiId;

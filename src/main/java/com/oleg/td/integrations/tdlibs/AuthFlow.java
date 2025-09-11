@@ -1,7 +1,9 @@
 package com.oleg.td.integrations.tdlibs;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.oleg.td.app.Config;
+import com.oleg.td.app.config.TdlibProperties;
+import com.oleg.td.app.config.AppProperties;
+import com.oleg.td.auth.service.AuthRuntimeStore;
 import com.oleg.td.common.Utils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,18 +18,24 @@ public class AuthFlow {
     private static final Logger log = LoggerFactory.getLogger(AuthFlow.class);
 
     private final TdJsonClient client;
-    private final Config cfg;
+    private final TdlibProperties td;
+    private final AppProperties app;
+    private final AuthRuntimeStore authStore;
+
     private final UpdateRouter router;
 
     private final AtomicBoolean authorized = new AtomicBoolean(false);
     private final AtomicReference<String> stateRef = new AtomicReference<>(null);
     private boolean wired = false;
 
-    public AuthFlow(TdJsonClient client, Config cfg, UpdateRouter router) {
+    public AuthFlow(TdJsonClient client, TdlibProperties td, AppProperties app, UpdateRouter router, AuthRuntimeStore authStore) {
         this.client = client;
-        this.cfg = cfg;
+        this.td = td;
+        this.app = app;
         this.router = router;
+        this.authStore = authStore;
     }
+
 
     /**
      * Подписывается на обновления авторизации.
@@ -116,24 +124,24 @@ public class AuthFlow {
         String osVersion = System.getProperty("os.version", "");
         String systemVersion = osName + " " + osVersion;
 
-        String phoneDigits = (cfg.getAuth() != null && cfg.getAuth().getPhone() != null)
-                ? cfg.getAuth().getPhone().replaceAll("\\D", "")
+        String phoneDigits = authStore.get().getPhone() != null
+                ? authStore.get().getPhone().replaceAll("\\D", "")
                 : "unknown";
-        String suffix = cfg.getTdlib().getApiId() + "_" + phoneDigits;
+        String suffix = td.getApiId() + "_" + phoneDigits;
 
-        p.put("use_test_dc", cfg.getUseTestDc());
-        p.put("database_directory", cfg.getTdlib().getDatabaseDirectory() + "/" + suffix);
-        p.put("files_directory", cfg.getTdlib().getFilesDirectory() + "/" + suffix);
+        p.put("use_test_dc", app.getUseTestDc());
+        p.put("database_directory", td.getDatabaseDirectory() + "/" + suffix);
+        p.put("files_directory", td.getFilesDirectory() + "/" + suffix);
         p.put("use_file_database", true);
         p.put("use_chat_info_database", true);
         p.put("use_message_database", true);
         p.put("use_secret_chats", false);
-        p.put("api_id", cfg.getTdlib().getApiId());
-        p.put("api_hash", cfg.getTdlib().getApiHash());
-        p.put("system_language_code", cfg.getTdlib().getSystemLanguageCode());
-        p.put("device_model", cfg.getTdlib().getDeviceModel());
+        p.put("api_id", td.getApiId());
+        p.put("api_hash", td.getApiHash());
+        p.put("system_language_code", td.getSystemLanguageCode());
+        p.put("device_model", td.getDeviceModel());
         p.put("system_version", systemVersion);
-        p.put("application_version", cfg.getTdlib().getApplicationVersion());
+        p.put("application_version", td.getApplicationVersion());
         p.put("enable_storage_optimizer", true);
         p.put("ignore_file_names", true);
         p.put("database_encryption_key", "");
@@ -144,8 +152,8 @@ public class AuthFlow {
     }
 
     private void sendPhoneNumber() {
-        String phone = cfg.getAuth() != null && cfg.getAuth().getPhone() != null
-                ? cfg.getAuth().getPhone().trim()
+        String phone = authStore.get().getPhone() != null
+                ? authStore.get().getPhone().trim()
                 : readValue("Введите номер телефона (+xxxxxxxxxxx): ");
 
         ObjectNode req = Utils.obj("setAuthenticationPhoneNumber");
@@ -169,8 +177,8 @@ public class AuthFlow {
 
     private void sendCodeWithRetry() {
         while (true) {
-            String code = cfg.getAuth() != null && cfg.getAuth().getCode() != null
-                    ? cfg.getAuth().getCode().trim()
+            String code = authStore.get().getCode() != null
+                    ? authStore.get().getCode().trim()
                     : readValue("Введите код из Telegram: ");
 
             ObjectNode req = Utils.obj("checkAuthenticationCode");
@@ -180,7 +188,7 @@ public class AuthFlow {
             if ("error".equals(resp.path("@type").asText())
                     && resp.path("code").asInt() == 400
                     && resp.path("message").asText().toLowerCase().contains("code")) {
-                if (cfg.getAuth() != null) cfg.getAuth().setCode(null);
+                authStore.get().setCode(null);
                 log.warn("Неверный код, попробуйте снова");
                 continue;
             }
@@ -190,8 +198,8 @@ public class AuthFlow {
     }
 
     private void sendPassword() {
-        String password = cfg.getAuth() != null && cfg.getAuth().getPass() != null
-                ? cfg.getAuth().getPass().trim()
+        String password = authStore.get().getPass() != null
+                ? authStore.get().getPass().trim()
                 : readValue("Введите пароль двухфакторной аутентификации: ");
         ObjectNode req = Utils.obj("checkAuthenticationPassword");
         req.put("password", password);

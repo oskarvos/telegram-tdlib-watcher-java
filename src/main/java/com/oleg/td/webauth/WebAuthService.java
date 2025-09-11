@@ -2,7 +2,9 @@ package com.oleg.td.webauth;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.oleg.td.app.Config;
+import com.oleg.td.app.config.TdlibProperties;
+import com.oleg.td.app.config.AppProperties;
+import com.oleg.td.auth.service.AuthRuntimeStore;
 import com.oleg.td.integrations.tdlibs.TdJsonClient;
 import com.oleg.td.webauth.dto.AuthStatusResponse;
 import com.oleg.td.webauth.dto.StartAuthRequest;
@@ -19,11 +21,16 @@ public class WebAuthService {
     private static final ObjectMapper M = new ObjectMapper();
 
     private final TdJsonClient client;
-    private final Config config;
+    private final TdlibProperties td;
+    private final AppProperties app;
+    private final AuthRuntimeStore authStore;
+    ;
 
-    public WebAuthService(TdJsonClient client, Config config) {
+    public WebAuthService(TdJsonClient client, TdlibProperties td, AppProperties app, AuthRuntimeStore authStore) {
         this.client = client;
-        this.config = config;
+        this.td = td;
+        this.app = app;
+        this.authStore = authStore;
     }
 
     public AuthStatusResponse start(StartAuthRequest req) {
@@ -39,22 +46,21 @@ public class WebAuthService {
             }
 
             // 1) Сохраняем в конфиг (как было)
-            config.getTdlib().setApiId(req.getApiId());
-            config.getTdlib().setApiHash(req.getApiHash().trim());
-            config.getAuth().setPhone(req.getPhone().trim());
-            config.setUseTestDc(Boolean.TRUE.equals(req.getUseTestDc()));
+            td.setApiId(req.getApiId());
+            td.setApiHash(req.getApiHash().trim());
+            authStore.get().setPhone(req.getPhone().trim());
+            app.setUseTestDc(Boolean.TRUE.equals(req.getUseTestDc()));
 
             // 2) Готовим каталоги и параметры (как было)
-            String dbBase = config.getTdlib().getDatabaseDirectory();
-            String filesBase = config.getTdlib().getFilesDirectory();
+            String dbBase = td.getDatabaseDirectory();
+            String filesBase = td.getFilesDirectory();
             String suffix = String.format("%d_%s%s",
                     req.getApiId(),
                     digitsOnly(req.getPhone()),
                     Boolean.TRUE.equals(req.getUseTestDc()) ? "_testdc" : ""
             );
-
-            String dbDir = java.nio.file.Paths.get(dbBase, suffix).toString();
-            String filesDir = java.nio.file.Paths.get(filesBase, suffix).toString();
+            String dbDir = Paths.get(dbBase, suffix).toString();
+            String filesDir = Paths.get(filesBase, suffix).toString();
 
             String osName = System.getProperty("os.name", "OS");
             String osVersion = System.getProperty("os.version", "");
@@ -62,21 +68,22 @@ public class WebAuthService {
 
             ObjectNode params = M.createObjectNode();
             params.put("@type", "setTdlibParameters");
-            params.put("use_test_dc", config.getUseTestDc());
+            params.put("use_test_dc", app.getUseTestDc());
             params.put("database_directory", dbDir);
             params.put("files_directory", filesDir);
             params.put("use_file_database", true);
             params.put("use_chat_info_database", true);
             params.put("use_message_database", true);
             params.put("use_secret_chats", false);
-            params.put("api_id", config.getTdlib().getApiId());
-            params.put("api_hash", config.getTdlib().getApiHash());
-            params.put("system_language_code", config.getTdlib().getSystemLanguageCode());
-            params.put("device_model", config.getTdlib().getDeviceModel());
+            params.put("api_id", td.getApiId());
+            params.put("api_hash", td.getApiHash());
+            params.put("system_language_code", td.getSystemLanguageCode());
+            params.put("device_model", td.getDeviceModel());
             params.put("system_version", systemVersion);
-            params.put("application_version", config.getTdlib().getApplicationVersion());
+            params.put("application_version", td.getApplicationVersion());
             params.put("enable_storage_optimizer", true);
             params.put("ignore_file_names", true);
+
 
             // 3) Идём по состояниям — НИКАКИХ «вслепую» вызовов
             String state = currentAuthType();
@@ -99,7 +106,7 @@ public class WebAuthService {
             if ("authorizationStateWaitPhoneNumber".equals(state)) {
                 ObjectNode reqPhone = M.createObjectNode();
                 reqPhone.put("@type", "setAuthenticationPhoneNumber");
-                reqPhone.put("phone_number", config.getAuth().getPhone());
+                reqPhone.put("phone_number", authStore.get().getPhone());
                 ObjectNode settings = reqPhone.putObject("settings");
                 settings.put("@type", "phoneNumberAuthenticationSettings");
                 settings.put("allow_flash_call", false);
@@ -110,7 +117,7 @@ public class WebAuthService {
                 if ("error".equals(phResp.path("@type").asText())) {
                     return AuthStatusResponse.error("Ошибка при отправке номера: " + phResp.path("message").asText());
                 }
-                state = currentAuthType(); // обновляем
+                state = currentAuthType();
             }
 
             // d) если ждём код/пароль — сообщаем фронту соответствующий статус
@@ -209,7 +216,9 @@ public class WebAuthService {
         }
     }
 
-    /** Возвращает строку вида authorizationStateWaitCode / authorizationStateReady и т.п. */
+    /**
+     * Возвращает строку вида authorizationStateWaitCode / authorizationStateReady и т.п.
+     */
     private String currentAuthType() {
         ObjectNode get = M.createObjectNode();
         get.put("@type", "getAuthorizationState");

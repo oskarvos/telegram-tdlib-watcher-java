@@ -1,6 +1,7 @@
 package com.oleg.td.auth.api;
 
-import com.oleg.td.app.Config;
+import com.oleg.td.app.config.TdlibProperties;
+import com.oleg.td.auth.service.AuthRuntimeStore;
 import com.oleg.td.integrations.tdlibs.AuthFlow;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,41 +10,55 @@ import org.springframework.web.bind.annotation.*;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * // Контроллер REST-эндпоинтов авторизации.
+ * // Отдаёт статус авторизации и запускает поток авторизации с переданными параметрами.
+ */
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
     private static final Logger log = LoggerFactory.getLogger(AuthController.class);
 
     private final AuthFlow authFlow;
-    private final Config   config;
+      private final TdlibProperties td;
+    private final AuthRuntimeStore authStore;
 
-    public AuthController(AuthFlow authFlow, Config config) {
+    public AuthController(AuthFlow authFlow, TdlibProperties td, AuthRuntimeStore authStore) {
         this.authFlow = authFlow;
-        this.config   = config;
+        this.td = td;
+        this.authStore = authStore;
     }
 
+    /**
+     * // GET /api/auth/status
+     * // Возвращает текущий статус авторизации и наличие введённых параметров.
+     */
     @GetMapping("/status")
     public AuthStatus status() {
         AuthStatus s = new AuthStatus();
         s.setAuthorized(authFlow.isAuthorized());
-        s.setHasApiId(config.getTdlib().getApiId() > 0);
-        s.setHasApiHash(notBlank(config.getTdlib().getApiHash()));
-        s.setHasPhone(notBlank(config.getAuth().getPhone()));
-        s.setPhoneMasked(mask(config.getAuth().getPhone()));
+        s.setHasApiId(td.getApiId() > 0);
+        s.setHasApiHash(notBlank(td.getApiHash()));
+        s.setHasPhone(notBlank(authStore.get().getPhone()));
+        s.setPhoneMasked(mask(authStore.get().getPhone()));
         return s;
     }
 
+    /**
+     * // POST /api/auth/start
+     * // Принимает параметры авторизации, применяет их в конфиг и запускает блокирующую авторизацию.
+     * // Возвращает флаг успеха и текстовое сообщение.
+     */
     @PostMapping("/start")
     public Map<String, Object> start(@RequestBody AuthStartRequest req) {
         Map<String, Object> resp = new HashMap<>();
         try {
-            if (req.getApiId() != null) config.getTdlib().setApiId(req.getApiId());
-            if (req.getApiHash() != null) config.getTdlib().setApiHash(req.getApiHash().trim());
-            if (req.getPhone() != null) config.getAuth().setPhone(req.getPhone().trim());
-            config.getAuth().setCode(req.getCode());
-            config.getAuth().setPass(req.getPass());
+            if (req.getApiId() != null) td.setApiId(req.getApiId());
+            if (req.getApiHash() != null) td.setApiHash(req.getApiHash().trim());
+            if (req.getPhone() != null) authStore.get().setPhone(req.getPhone().trim());
+            authStore.get().setCode(req.getCode());
+            authStore.get().setPass(req.getPass());
 
-            // Повторный вызов допускается: используем вашу существующую логику
             authFlow.wireInto();
             authFlow.authorizeBlocking();
 
@@ -51,15 +66,17 @@ public class AuthController {
             resp.put("authorized", ok);
             resp.put("message", ok ? "Авторизация выполнена" : "Авторизация не подтверждена");
         } catch (Exception e) {
-            log.error("Auth start error: {}", e.getMessage(), e);
+            log.error("Ошибка запуска авторизации: {}", e.getMessage(), e);
             resp.put("authorized", false);
             resp.put("message", e.getMessage());
         }
         return resp;
     }
 
+    // // Вспомогательный метод: проверка строки на непустоту.
     private static boolean notBlank(String s) { return s != null && !s.isBlank(); }
 
+    // // Вспомогательный метод: маскирование номера телефона.
     private static String mask(String p) {
         if (!notBlank(p)) return null;
         String d = p.replaceAll("\\s+", "");
