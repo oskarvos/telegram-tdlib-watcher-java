@@ -6,10 +6,17 @@ import { MonitorModule } from './modules/MonitorModule.js';
 
 async function ensureAuthorizedOrRedirect() {
     try {
-        const r = await fetch('/api/webauth/status', { headers: { 'Content-Type': 'application/json' } });
+        const r = await fetch('/api/webauth/status', {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include'
+        });
+        if (r.status === 401 || r.status === 403) {
+            window.location.replace('/');
+            return false;
+        }
         const st = await r.json();
         if (!(st?.ok && st.state === 'READY')) {
-// почему redirect: при обновлении /app без авторизации сразу уводим на мастер
             window.location.replace('/');
             return false;
         }
@@ -19,7 +26,6 @@ async function ensureAuthorizedOrRedirect() {
         return false;
     }
 }
-
 
 class App {
     constructor() {
@@ -79,12 +85,52 @@ function splitChats(text) {
         .filter(Boolean);
 }
 
+// Перехватываем клики по любым <button> заранее (в capture-фазе).
+// Если сессии нет — мгновенно уводим на / и не даём выполниться обработчикам.
+function installAuthGuardButtons(root = document) {
+    root.addEventListener('click', async (e) => {
+        const btn = e.target.closest('button, [role="button"]');
+        if (!btn) return;
+
+        // Быстрый пинг статуса (очень дешёвый)
+        try {
+            const r = await fetch('/api/webauth/status', {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                cache: 'no-store'
+            });
+
+            if (r.status === 401 || r.status === 403) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                window.location.replace('/');
+                return;
+            }
+
+            const st = await r.json().catch(() => ({}));
+            if (!(st?.ok && st.state === 'READY')) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                window.location.replace('/');
+                return;
+            }
+        } catch {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            window.location.replace('/');
+            return;
+        }
+    }, true); // capture — сработаем раньше «обычных» обработчиков
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
     const ok = await ensureAuthorizedOrRedirect();
     if (!ok) return; // редирект инициирован
+
+    installAuthGuardButtons();   // <— новый клик-гард
+
     window.app = new App();
 });
-
 
 export { normalizeChat, splitChats };
