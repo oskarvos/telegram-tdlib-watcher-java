@@ -59,7 +59,7 @@ public class TdJsonClient {
     private void initTdlibLogging() {
         ObjectNode verbosity = MAPPER.createObjectNode();
         verbosity.put("@type", "setLogVerbosityLevel");
-        verbosity.put("new_verbosity_level", 3);
+        verbosity.put("new_verbosity_level", 1);
         send(verbosity);
 
         ObjectNode setLogStream = MAPPER.createObjectNode();
