@@ -11,8 +11,8 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * // Контроллер REST-эндпоинтов авторизации.
- * // Отдаёт статус авторизации и запускает поток авторизации с переданными параметрами.
+ * REST-контроллер для управления процессом авторизации через TDLib.
+ * Предоставляет эндпоинты статуса авторизации и запуска/остановки процесса.
  */
 @RestController
 @RequestMapping("/api/auth")
@@ -30,8 +30,8 @@ public class AuthController {
     }
 
     /**
-     * // GET /api/auth/status
-     * // Возвращает текущий статус авторизации и наличие введённых параметров.
+     * GET /api/auth/status
+     * Возвращает текущий статус авторизации и наличие введённых параметров.
      */
     @GetMapping("/status")
     public AuthStatus status() {
@@ -45,9 +45,9 @@ public class AuthController {
     }
 
     /**
-     * // POST /api/auth/start
-     * // Принимает параметры авторизации, применяет их в конфиг и запускает блокирующую авторизацию.
-     * // Возвращает флаг успеха и текстовое сообщение.
+     * POST /api/auth/start
+     * Принимает параметры авторизации, сохраняет их и запускает блокирующую процедуру авторизации.
+     * Возвращает флаг успеха и сообщение.
      */
     @PostMapping("/start")
     public Map<String, Object> start(@RequestBody AuthStartRequest req) {
@@ -73,12 +73,12 @@ public class AuthController {
         return resp;
     }
 
-    // // Вспомогательный метод: проверка строки на непустоту.
+    // Вспомогательный метод: проверка строки на непустоту
     private static boolean notBlank(String s) {
         return s != null && !s.isBlank();
     }
 
-    // // Вспомогательный метод: маскирование номера телефона.
+    // Вспомогательный метод: маскирование номера телефона для отображения
     private static String mask(String p) {
         if (!notBlank(p)) return null;
         String d = p.replaceAll("\\s+", "");

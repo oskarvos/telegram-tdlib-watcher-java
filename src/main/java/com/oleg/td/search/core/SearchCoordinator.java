@@ -1,21 +1,13 @@
-/* ===========================================================
- *  SearchCoordinator — обход истории чатов и сохранение совпадений
- *  - Работает с TDLib (TdJsonClient)
- *  - Ищет по сообщениям, сохраняет результаты ТОЛЬКО в SEARCH-БД
- *  - SEARCH-БД содержит одну пользовательскую таблицу search_results
- *  - Логика: на каждый новый запрос (новое слово) поиск выполняется
- *    по ВОЗМОЖНО ПОЛНОЙ истории чата (без чекпоинтов/пропусков).
- * =========================================================== */
 package com.oleg.td.search.core;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.oleg.td.integrations.telegram.ChatResolver;
-import com.oleg.td.search.persistence.SearchDbManager;
 import com.oleg.td.integrations.tdlibs.TdJsonClient;
+import com.oleg.td.integrations.telegram.ChatResolver;
 import com.oleg.td.search.api.SearchRequest;
+import com.oleg.td.search.persistence.SearchDbManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -49,12 +41,21 @@ public class SearchCoordinator {
 
     /**
      * Поиск по всей истории выбранных чатов.
-     * - Поддерживает подстроку или regex (чувствительность к регистру опциональна).
+     * - Поддерживает подстроку/regex/целое слово (регистрозависимость опциональна).
      * - Ищет в тексте сообщений и в caption медиасообщений.
      * - Пишет совпадения в SEARCH-БД (таблица search_results).
      */
     public void searchChats(SearchRequest request, Runnable progressCallback, Runnable foundCallback) {
         stopRequested = false;
+
+        // NEW: заранее компилируем паттерн с учётом case/regex/wholeWord
+        final Pattern compiledPattern;
+        try {
+            compiledPattern = buildSearchPattern(request);
+        } catch (Exception e) {
+            log.warn("Некорректный шаблон поиска: {}", e.getMessage());
+            return;
+        }
 
         for (String chatRef : request.getChats()) {
             if (stopRequested) {
@@ -66,13 +67,12 @@ public class SearchCoordinator {
             String chatName = resolver.getChatTitle(chatId);
             log.info("Начинаем поиск в чате '{}' по ключу: {}", chatName, request.getKeyword());
 
-            // Готовим схему SEARCH-БД (для данного чата)
             db.prepareSearchSchema(chatId);
 
             long fromMessageId = 0;          // старт с самых новых
             boolean reachedEnd = false;
             int totalMessagesProcessed = 0;
-            final int MAX_MESSAGES = 300_000; // предохранитель на крайний случай
+            final int MAX_MESSAGES = 300_000; // страховка
 
             while (!stopRequested && !reachedEnd && totalMessagesProcessed < MAX_MESSAGES) {
                 ObjectNode req = MAPPER.createObjectNode();
@@ -103,7 +103,7 @@ public class SearchCoordinator {
                     if (totalMessagesProcessed >= MAX_MESSAGES) break;
 
                     try {
-                        processMessageForSearch(chatId, chatName, msg, request, foundCallback);
+                        processMessageForSearch(chatId, chatName, msg, request, foundCallback, compiledPattern);
                     } catch (Exception ex) {
                         long mid = msg.path("id").asLong();
                         log.error("Ошибка обработки сообщения {} из чата '{}': {}", mid, chatName, ex.getMessage(), ex);
@@ -136,9 +136,11 @@ public class SearchCoordinator {
         }
     }
 
-    /** Проверка одного сообщения: текст + подписи у медиа */
+    /** Проверка одного сообщения: текст + подписи у медиа (c wholeWord/regex логикой) */
     private void processMessageForSearch(long chatId, String chatTitle, JsonNode msg,
-                                         SearchRequest request, Runnable foundCallback) {
+                                         SearchRequest request, Runnable foundCallback,
+                                         Pattern compiledPattern) {
+
         long messageId = msg.path("id").asLong();
         long date = msg.path("date").asLong(0);
         LocalDateTime messageDate = LocalDateTime.ofInstant(Instant.ofEpochSecond(date), ZoneId.systemDefault());
@@ -149,30 +151,40 @@ public class SearchCoordinator {
         JsonNode content = msg.path("content");
         String ctype = content.path("@type").asText();
 
-        // Берём основной текст, если это messageText
+        // Собираем текст: основной + подписи к медиа
         StringBuilder sb = new StringBuilder();
         if ("messageText".equals(ctype)) {
             JsonNode ft = content.path("text");
             String text = ft.path("text").asText(null);
             if (text != null) sb.append(text);
         }
-
-        // Добавляем caption для медиа (фото/видео/документы/аудио)
         appendCaptionIfAny(ctype, content, sb);
 
         String aggregatedText = sb.toString();
-        if (containsKeyword(aggregatedText, request.getKeyword(), request.isCaseSensitive(), request.isUseRegex())) {
+
+        // ПУСТОЙ ключ (и не regex): индексируем всё НЕпустое (как и раньше)
+        if ((request.getKeyword() == null || request.getKeyword().isEmpty()) && !request.isUseRegex()) {
+            if (aggregatedText != null && !aggregatedText.isBlank()) {
+                boolean inserted = db.saveSearchResult(
+                        chatId, messageId, messageDate,
+                        request.getKeyword(), aggregatedText,
+                        senderId, senderName
+                );
+                if (inserted && foundCallback != null) foundCallback.run();
+            }
+            return;
+        }
+
+        // Основная проверка совпадения: compiledPattern учитывает case/regex/wholeWord
+        if (aggregatedText != null && compiledPattern.matcher(aggregatedText).find()) {
             boolean inserted = db.saveSearchResult(
                     chatId, messageId, messageDate,
                     request.getKeyword(), aggregatedText,
                     senderId, senderName
             );
-
             if (inserted) {
                 log.info("Найдено НОВОЕ совпадение в чате '{}', сообщение {}: {}", chatTitle, messageId, aggregatedText);
-                if (foundCallback != null) foundCallback.run();   // увеличиваем только для новых
-            } else {
-                log.debug("Совпадение уже было (дубликат) в чате '{}', сообщение {}", chatTitle, messageId);
+                if (foundCallback != null) foundCallback.run();
             }
         }
     }
@@ -195,30 +207,6 @@ public class SearchCoordinator {
                 break;
             default:
                 // другие типы нам не важны
-        }
-    }
-
-    /** Подстрока/regex-поиск с поддержкой пустого ключа (0 символов) */
-    private boolean containsKeyword(String text, String keyword, boolean caseSensitive, boolean useRegex) {
-        // Пустой ключ — матчим любое НЕпустое сообщение/подпись (индексация)
-        if (keyword == null || keyword.isEmpty()) {
-            return text != null && !text.isBlank();
-        }
-        if (text == null) return false;
-
-        if (useRegex) {
-            try {
-                int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE;
-                Pattern pattern = Pattern.compile(keyword, flags);
-                return pattern.matcher(text).find();
-            } catch (Exception e) {
-                log.warn("Ошибка компиляции regex pattern: {}", e.getMessage());
-                return false;
-            }
-        } else {
-            return caseSensitive
-                    ? text.contains(keyword)
-                    : text.toLowerCase().contains(keyword.toLowerCase());
         }
     }
 
@@ -279,6 +267,40 @@ public class SearchCoordinator {
 
         // Фолбэк — как было
         return senderIdJson;
+    }
+
+    /**
+     * Собирает паттерн с учётом:
+     *  - useRegex: пользовательский RegEx (wholeWord игнорируется)
+     *  - wholeWord: совпадение только целого слова (Unicode-границы)
+     *  - caseSensitive: учитывать регистр или нет
+     */
+    private Pattern buildSearchPattern(SearchRequest req) {
+        String kw = req.getKeyword() == null ? "" : req.getKeyword();
+        int flags = req.isCaseSensitive()
+                ? 0
+                : (Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+
+        if (req.isUseRegex()) {
+            // Пользователь сам управляет границами слова.
+            return Pattern.compile(kw, flags);
+        }
+
+        if (kw.isBlank()) {
+            // Совпадение с любой строкой; "непустость" фильтруется в вызывающем коде.
+            return Pattern.compile("(?s).*", flags);
+        }
+
+        String quoted = Pattern.quote(kw);
+
+        if (req.isWholeWord() && kw.chars().noneMatch(Character::isWhitespace)) {
+            // Границы «слова»: по краям — не буква/диакритика/цифра/_
+            String regex = "(?<![\\p{L}\\p{M}\\p{Nd}_])" + quoted + "(?![\\p{L}\\p{M}\\p{Nd}_])";
+            return Pattern.compile(regex, flags);
+        } else {
+            // Обычный поиск подстроки
+            return Pattern.compile(quoted, flags);
+        }
     }
 
     /** Внешний запрос на остановку */

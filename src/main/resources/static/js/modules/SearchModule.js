@@ -6,22 +6,26 @@ export class SearchModule extends ApiClient {
         super('/api/search');
         this.notify = new Notifier();
 
-        // Хранилище и ограничения
-        this.MAX_KEYWORD_LEN = 30;
+        // === Настройки ===
+        this.MAX_KEYWORD_LEN = 50;             // <-- было 30, из-за этого длинные пресеты урезались
         this.storageKey = 'tdtools.search.v1';
         this.baselineFoundTotal = 0;
 
-        // Данные таблицы и состояние сортировки
+        // Таблица результатов
         this.resultsData = [];
-        this.sort = {key: 'messageDate', dir: 'desc'}; // по умолчанию — новые сверху
+        this.sort = {key: 'messageDate', dir: 'desc'};
 
-        // Ссылки на DOM
+        // DOM
         this.dom = {
             container: document.getElementById('searchContainer'),
+
             chats: document.getElementById('searchChats'),
             keyword: document.getElementById('searchKeyword'),
+
             case: document.getElementById('caseSensitive'),
+            wholeWord: document.getElementById('wholeWord'),
             regex: document.getElementById('regexMode'),
+
             lengthMode: document.getElementById('lengthMode'),
             lengthValue: document.getElementById('lengthValue'),
 
@@ -38,12 +42,15 @@ export class SearchModule extends ApiClient {
             bar: document.getElementById('searchProgress-bar'),
 
             resultsChat: document.getElementById('searchResultsChat'),
-            resultsBox: document.getElementById('searchResults')
+            resultsBox: document.getElementById('searchResults'),
+
+            // новый контейнер пресетов
+            presetBar: document.querySelector('#searchContainer .preset-bar')
         };
 
-        // В строку "Статистика ..." добавим кусочек ", новых: 0"
+        // UI: добавить счётчик «новых»
         const statsRight = this.dom.container?.querySelector('.progress-label span:last-child');
-        if (statsRight) {
+        if (statsRight && !statsRight.querySelector('.num-new')) {
             const wrap = document.createElement('span');
             wrap.style.marginLeft = '6px';
             wrap.innerHTML = ', новых: <span class="num-new">0</span>';
@@ -51,62 +58,63 @@ export class SearchModule extends ApiClient {
             this.dom.newValue = wrap.querySelector('.num-new');
         }
 
-
-        // safety: maxlength
+        // max length — страховка
         if (this.dom.keyword && !this.dom.keyword.hasAttribute('maxlength')) {
             this.dom.keyword.setAttribute('maxlength', String(this.MAX_KEYWORD_LEN));
         }
 
-        // Слушатели
-        this.dom.btnStart?.addEventListener('click', (e) => {
-            e.preventDefault();
-            this.start();
-        });
+        // === Слушатели ===
+        this.dom.btnStart?.addEventListener('click', (e) => { e.preventDefault(); this.start(); });
         this.dom.btnStop?.addEventListener('click', () => this.stop());
         this.dom.btnDelDb?.addEventListener('click', () => this.clearDb());
         this.dom.btnLoadRes?.addEventListener('click', () => this.loadResults());
 
-        this.dom.keyword?.addEventListener('input', () => {
-            this.#updateKwLen();
-            this.saveState();
-        });
+        this.dom.keyword?.addEventListener('input', () => { this.#updateKwLen(); this.saveState(); });
         this.dom.chats?.addEventListener('input', () => this.saveState());
         this.dom.case?.addEventListener('change', () => this.saveState());
-        this.dom.regex?.addEventListener('change', () => this.saveState());
+        this.dom.wholeWord?.addEventListener('change', () => this.saveState());
+        this.dom.regex?.addEventListener('change', () => { this.#syncRegexWholeWordUi(); this.saveState(); });
 
-        // Режим «по длине»
+        // Режим «по длине» — локальная функция для синхронизации
         const syncLengthUi = () => {
             const on = !!this.dom.lengthMode?.checked;
             if (this.dom.lengthValue) this.dom.lengthValue.disabled = !on;
             if (this.dom.keyword) this.dom.keyword.disabled = on;
+
+            // при поиске по длине — включаем regex, отключаем wholeWord
             if (this.dom.regex) {
                 this.dom.regex.checked = on ? true : this.dom.regex.checked;
                 this.dom.regex.disabled = on;
             }
+            if (this.dom.wholeWord) {
+                this.dom.wholeWord.checked = on ? false : this.dom.wholeWord.checked;
+                this.dom.wholeWord.disabled = on || !!this.dom.regex?.checked;
+            }
         };
-        this.dom.lengthMode?.addEventListener('change', () => {
-            syncLengthUi();
-            this.saveState();
-        });
+        this.dom.lengthMode?.addEventListener('change', () => { syncLengthUi(); this.saveState(); });
         this.dom.lengthValue?.addEventListener('input', () => this.saveState());
         syncLengthUi();
 
-        // Делегирование кликов по заголовкам таблицы для сортировки
-        this.dom.resultsBox?.addEventListener('click', (e) => {
-            const th = e.target.closest('th[data-key]');
-            if (!th) return;
-            const key = th.dataset.key;
+        // Пресеты: делегирование клика
+        this.dom.presetBar?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-preset-regex]');
+            if (!btn) return;
+            const patt = btn.getAttribute('data-preset-regex') || '';
+            if (!patt) return;
 
-            // Дата и Время используют единый сорт-ключ messageDate
-            const newKey = key;
+            // Подставим паттерн, включим regex, выключим wholeWord/length
+            if (this.dom.keyword) this.dom.keyword.value = String(patt).slice(0, this.MAX_KEYWORD_LEN);
+            if (this.dom.regex) this.dom.regex.checked = true;
+            if (this.dom.wholeWord) this.dom.wholeWord.checked = false;
+            if (this.dom.lengthMode) this.dom.lengthMode.checked = false;
 
-            if (this.sort.key === newKey) {
-                this.sort.dir = this.sort.dir === 'asc' ? 'desc' : 'asc';
-            } else {
-                this.sort.key = newKey;
-                this.sort.dir = newKey === 'messageDate' ? 'desc' : 'asc';
-            }
-            this.#renderResults(this.resultsDataRaw || []); // перерисуем из исходных данных
+            // снять блокировки и обновить UI
+            syncLengthUi();
+            this.#syncRegexWholeWordUi();
+            this.#updateKwLen();
+            this.saveState();
+            this.dom.keyword?.focus();
+            this.notify.info(`Пресет: ${btn.textContent.trim()}`);
         });
 
         // Инициализация
@@ -120,11 +128,8 @@ export class SearchModule extends ApiClient {
 
     async start() {
         let req;
-        try {
-            req = this.#collect();
-        } catch (e) {
-            return this.setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c');
-        }
+        try { req = this.#collect(); }
+        catch (e) { return this.setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c'); }
 
         if (!req.chats.length) {
             return this.setStatus('Ошибка: не указаны чаты', '#ffecec', '#e74c3c');
@@ -135,9 +140,8 @@ export class SearchModule extends ApiClient {
 
         this.saveState();
 
-        // UI
         this.dom.bar?.classList.remove('green');
-        if (req.keyword.length === 0) {
+        if (req.keyword.length === 0 && !req.useRegex) {
             this.setStatus('Пустой ключ: индексируем все непустые сообщения/подписи', '#edf7ff', '#2c3e50');
         } else {
             this.setStatus('Запуск поиска…', '#edf7ff', '#2c3e50');
@@ -145,7 +149,6 @@ export class SearchModule extends ApiClient {
         this.setProgress(0, 0, false);
 
         try {
-            // Считаем, сколько уже есть результатов в БД по всем выбранным чатам
             this.setStatus('Готовим статистику…', '#edf7ff', '#2c3e50');
             this.baselineFoundTotal = await this.#computeBaselineTotal(req.chats);
 
@@ -187,9 +190,7 @@ export class SearchModule extends ApiClient {
 
     async loadResults() {
         const chat = (this.dom.resultsChat?.value || '').trim();
-        if (!chat) {
-            return this.setStatus('Укажите чат для показа результатов', '#fff4e6', '#e67e22');
-        }
+        if (!chat) return this.setStatus('Укажите чат для показа результатов', '#fff4e6', '#e67e22');
         try {
             const data = await this.get('/results?chat=' + encodeURIComponent(chat));
             this.#renderResults(Array.isArray(data) ? data : []);
@@ -207,23 +208,27 @@ export class SearchModule extends ApiClient {
 
         const lengthMode = !!this.dom.lengthMode?.checked;
         let useRegex = !!this.dom.regex?.checked;
+        let wholeWord = !!this.dom.wholeWord?.checked;
+
         let keyword = (this.dom.keyword?.value || '').trim().slice(0, this.MAX_KEYWORD_LEN);
 
         if (lengthMode) {
             const L = Number(this.dom.lengthValue?.value) || 0;
-            if (L < 1 || L > this.MAX_KEYWORD_LEN) {
-                throw new Error(`Длина слова должна быть 1–${this.MAX_KEYWORD_LEN}`);
-            }
-            // Ровно L символов [A-Za-z0-9_], без \b
+            if (L < 1 || L > 30) throw new Error(`Длина слова должна быть 1–30`);
+            // Ровно L символов [A-Za-z0-9_]
             keyword = `(^|[^A-Za-z0-9_])[A-Za-z0-9_]{${L}}(?![A-Za-z0-9_])`;
             useRegex = true;
+            wholeWord = false;
         }
+
+        if (useRegex) wholeWord = false;
 
         return {
             chats,
             keyword,
             caseSensitive: !!this.dom.case?.checked,
-            useRegex
+            useRegex,
+            wholeWord
         };
     }
 
@@ -237,11 +242,10 @@ export class SearchModule extends ApiClient {
                 const running = !!(p?.running ?? true);
 
                 this.setProgress(processed, found, !running);
+                const total = (this.baselineFoundTotal || 0) + found;
                 if (running) {
-                    const total = (this.baselineFoundTotal || 0) + found;
                     this.setStatus(`Поиск… Обработано: ${processed}, найдено: ${total}, новых: ${found}`, '#edf7ff', '#2c3e50');
                 } else {
-                    const total = (this.baselineFoundTotal || 0) + found;
                     this.dom.bar?.classList.add('green');
                     this.setStatus(`Поиск завершён. Обработано: ${processed}, найдено: ${total}, новых: ${found}`, '#e7f6ec', '#27ae60');
                 }
@@ -274,11 +278,8 @@ export class SearchModule extends ApiClient {
         if (this.dom.bar) this.dom.bar.style.width = complete ? '100%' : '0%';
     }
 
-    // ===== Таблица результатов (нумерация + сортировка) =====
     #renderResults(list) {
         if (!this.dom.resultsBox) return;
-
-        // Сырой массив запомним, чтобы сортировать без потерь
         this.resultsDataRaw = Array.isArray(list) ? list : [];
 
         if (!Array.isArray(list) || list.length === 0) {
@@ -287,34 +288,28 @@ export class SearchModule extends ApiClient {
             return;
         }
 
-        // Нормализуем поля
         this.resultsData = list.map((r) => {
             const iso = (r.messageDate ?? '').toString();
             const {date, time, key} = this.#splitDateTime(iso);
             return {
                 chatTitle: r.chatTitle ?? '',
-                messageDate: iso,     // исходная ISO-строка LocalDateTime
-                _dtKey: key,          // yyyyMMddHHmmss — ключ сортировки
-                _date: date,          // 31.12.2025
-                _time: time,          // 23:59:59
+                messageDate: iso,
+                _dtKey: key,
+                _date: date,
+                _time: time,
                 senderName: r.senderName ?? (r.senderId ?? ''),
                 messageText: r.messageText ?? ''
             };
         });
 
-        // Отрисуем
         const rows = this.#sortedData();
         this.dom.resultsBox.innerHTML = this.#tableHtml(rows);
     }
 
     #sortedData() {
-        const key = this.sort.key; // 'chatTitle' | 'messageDate' | 'senderName' | 'messageText'
+        const key = this.sort.key;
         const dir = this.sort.dir === 'asc' ? 1 : -1;
-
-        const val = (row) => {
-            if (key === 'messageDate') return row._dtKey || '';
-            return (row[key] ?? '').toString().toLowerCase();
-        };
+        const val = (row) => key === 'messageDate' ? (row._dtKey || '') : (row[key] ?? '').toString().toLowerCase();
 
         const arr = [...this.resultsData];
         arr.sort((a, b) => {
@@ -327,9 +322,7 @@ export class SearchModule extends ApiClient {
     }
 
     #tableHtml(rows) {
-        const esc = (s) => (s ?? '').toString()
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
+        const esc = (s) => (s ?? '').toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         const arrow = this.sort.dir === 'asc' ? '▲' : '▼';
         const th = (label, key, extraCls = '') =>
             `<th data-key="${key}" class="sortable${this.sort.key === key ? ' active' : ''} ${extraCls}">
@@ -369,7 +362,6 @@ export class SearchModule extends ApiClient {
     }
 
     #splitDateTime(iso) {
-        // ожидаем LocalDateTime.toString(): 'YYYY-MM-DDTHH:mm:SS[.nnn]'
         if (!iso || typeof iso !== 'string' || !iso.includes('T')) {
             return {date: '', time: '', key: ''};
         }
@@ -377,7 +369,7 @@ export class SearchModule extends ApiClient {
         const [y, m, d2] = (d || '').split('-');
         const time = (tRaw || '').slice(0, 8);
         const date = (y && m && d2) ? `${d2}.${m}.${y}` : iso;
-        const key = `${y || ''}${m || ''}${d2 || ''}${time.replace(/:/g, '')}`; // yyyymmddHHMMSS
+        const key = `${y || ''}${m || ''}${d2 || ''}${time.replace(/:/g, '')}`;
         return {date, time, key};
     }
 
@@ -388,12 +380,12 @@ export class SearchModule extends ApiClient {
                 keyword: (this.dom.keyword?.value || ''),
                 caseSensitive: !!this.dom.case?.checked,
                 useRegex: !!this.dom.regex?.checked,
+                wholeWord: !!this.dom.wholeWord?.checked,
                 lengthMode: !!this.dom.lengthMode?.checked,
                 lengthValue: Number(this.dom.lengthValue?.value) || 0
             };
             localStorage.setItem(this.storageKey, JSON.stringify(s));
-        } catch {
-        }
+        } catch { /* noop */ }
     }
 
     restoreState() {
@@ -405,10 +397,11 @@ export class SearchModule extends ApiClient {
             if (this.dom.keyword) this.dom.keyword.value = (s.keyword || '').slice(0, this.MAX_KEYWORD_LEN);
             if (this.dom.case) this.dom.case.checked = !!s.caseSensitive;
             if (this.dom.regex) this.dom.regex.checked = !!s.useRegex;
+            if (this.dom.wholeWord) this.dom.wholeWord.checked = !!s.wholeWord;
             if (this.dom.lengthMode) this.dom.lengthMode.checked = !!s.lengthMode;
             if (this.dom.lengthValue) this.dom.lengthValue.value = String(s.lengthValue || 0);
-        } catch {
-        }
+            this.#syncRegexWholeWordUi();
+        } catch { /* noop */ }
     }
 
     #updateKwLen() {
@@ -420,14 +413,17 @@ export class SearchModule extends ApiClient {
     async #computeBaselineTotal(chats) {
         try {
             const lists = await Promise.all(
-                chats.map(c =>
-                    this.get('/results?chat=' + encodeURIComponent(c)).catch(() => [])
-                )
+                chats.map(c => this.get('/results?chat=' + encodeURIComponent(c)).catch(() => []))
             );
             return lists.reduce((sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0), 0);
-        } catch {
-            return 0;
-        }
+        } catch { return 0; }
     }
 
+    #syncRegexWholeWordUi() {
+        const rx = !!this.dom.regex?.checked;
+        if (this.dom.wholeWord) {
+            if (rx) this.dom.wholeWord.checked = false;
+            this.dom.wholeWord.disabled = rx || !!this.dom.lengthMode?.checked;
+        }
+    }
 }

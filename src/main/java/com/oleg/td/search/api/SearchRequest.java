@@ -7,16 +7,21 @@ public class SearchRequest {
     private String keyword;
     private boolean caseSensitive;
     private boolean useRegex;
+    private boolean wholeWord;
 
-    // Конструкторы, геттеры и сеттеры
     public SearchRequest() {
     }
 
-    public SearchRequest(List<String> chats, String keyword, boolean caseSensitive, boolean useRegex) {
+    public SearchRequest(List<String> chats,
+                         String keyword,
+                         boolean caseSensitive,
+                         boolean useRegex,
+                         boolean wholeWord) {
         this.chats = chats;
         this.keyword = keyword;
         this.caseSensitive = caseSensitive;
         this.useRegex = useRegex;
+        this.wholeWord = wholeWord;
     }
 
     public List<String> getChats() {
@@ -49,5 +54,13 @@ public class SearchRequest {
 
     public void setUseRegex(boolean useRegex) {
         this.useRegex = useRegex;
+    }
+
+    public boolean isWholeWord() {
+        return wholeWord;
+    }
+
+    public void setWholeWord(boolean wholeWord) {
+        this.wholeWord = wholeWord;
     }
 }

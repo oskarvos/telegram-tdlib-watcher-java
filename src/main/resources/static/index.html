@@ -103,43 +103,75 @@ id: 123456789">
             <label>Чаты (по одному в строке, @username, t.me/*, id, first:name)</label>
             <textarea id="searchChats" rows="4" placeholder="@somechannel
 t.me/c/12345/6
-id: 123456789">
-            </textarea>
+id: 123456789"></textarea>
         </div>
+
         <div class="form-group">
-            <label>Ключевое слово / Regex
-                <small id="kwLenHint" style="color:#666;font-weight:400;margin-left:6px;">0/30</small>
+            <label>
+                Ключевое слово / Regex
+                <small id="kwLenHint" style="color:#666;font-weight:400;margin-left:6px;">0/50</small>
             </label>
-            <input id="searchKeyword" type="text" maxlength="30"
-                   placeholder="0–30 символов, можно пусто (тогда — все сообщения)"/>
+            <input id="searchKeyword" type="text" maxlength="50"
+                   placeholder="0–50 символов, можно пусто (тогда — все сообщения)"/>
         </div>
-        <div class="checkbox-group">
-            <div class="checkbox-item"><input id="caseSensitive" type="checkbox"><label for="caseSensitive">Чувствительно
-                к регистру</label></div>
-            <div class="checkbox-item"><input id="regexMode" type="checkbox"><label for="regexMode">Использовать
-                regex</label></div>
+
+        <!-- РЯД 1: Регистр • Целое слово • Regex + пресеты справа -->
+        <div class="search-controls">
+            <div class="row">
+                <div class="left">
+                    <div class="cb checkbox-item">
+                        <input id="caseSensitive" type="checkbox">
+                        <label for="caseSensitive">Регистр</label>
+                    </div>
+                    <div class="cb checkbox-item">
+                        <input id="wholeWord" type="checkbox">
+                        <label for="wholeWord" title="Совпадение ровно со словом (Иван ≠ Иванов)">Целое слово</label>
+                    </div>
+                    <div class="cb checkbox-item">
+                        <input id="regexMode" type="checkbox">
+                        <label for="regexMode">Regex</label>
+                    </div>
+                </div>
+
+                <!-- Пресеты -->
+                <div class="preset-bar">
+                    <button type="button" class="pill" data-preset-regex="[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}">Email</button>
+                    <button type="button" class="pill" data-preset-regex="https?://[^\s]+">URL</button>
+                    <button type="button" class="pill" data-preset-regex="(?&lt;!\d)\d+(?!\d)">Целое число</button>
+                    <button type="button" class="pill" data-preset-regex="(?&lt;!\d)\d+(?:[.,]\d{2})?\s?(?:₽|руб\.?)">Сумма ₽</button>
+                    <button type="button" class="pill" data-preset-regex="\+7\s?\d{3}\s?\d{3}\s?\d{2}\s?\d{2}">Телефон +7</button>
+                    <button type="button" class="pill" data-preset-regex="\b\d{2}\.\d{2}\.\d{4}\b">Дата дд.мм.гггг</button>
+                </div>
+            </div>
+
+            <!-- РЯД 2: длина -->
+            <div class="row row-length">
+                <div class="left">
+                    <div class="cb checkbox-item">
+                        <input id="lengthMode" type="checkbox">
+                        <label for="lengthMode">Искать по длине</label>
+                    </div>
+                </div>
+                <div class="length-box">
+                    <label for="lengthValue" style="margin:0;">Длина</label>
+                    <input id="lengthValue" type="number" min="1" max="30" value="17" style="width:90px;" disabled>
+                    <span style="color:#666;">символов</span>
+                </div>
+            </div>
         </div>
-        <div class="checkbox-item">
-            <input id="lengthMode" type="checkbox">
-            <label for="lengthMode">Искать по длине</label>
-        </div>
-        <div class="checkbox-item" style="display:flex;align-items:center;gap:8px;min-width:180px;">
-            <label for="lengthValue" style="margin:0;">Длина</label>
-            <input id="lengthValue" type="number" min="1" max="30" value="17" style="width:90px;" disabled>
-            <span style="color:#666;">символов</span>
-        </div>
+
         <div class="buttons">
             <button class="btn-primary" id="startSearchBtn">Начать поиск</button>
             <button class="btn-danger" id="stopSearchBtn">Остановить</button>
         </div>
 
         <div class="progress-container">
-            <div class="progress-label"><span>Статистика</span><span><span id="searchProcessedValue">0</span> / найдено: <span
-                    id="searchFoundValue">0</span></span></div>
-            <div id="searchProgress">
-                <div id="searchProgress-bar"></div>
+            <div class="progress-label">
+                <span>Статистика</span>
+                <span><span id="searchProcessedValue">0</span> / найдено: <span id="searchFoundValue">0</span><span style="margin-left:6px;">, новых: <span class="num-new">0</span></span></span>
             </div>
-            <div id="searchStatus">Ожидание…</div>
+            <div id="searchProgress"><div id="searchProgress-bar"></div></div>
+            <div id="searchStatus" class="statusbar">Ожидание…</div>
         </div>
 
         <div class="form-group" style="margin-top:16px;">

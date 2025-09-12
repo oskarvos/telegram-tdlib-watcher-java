@@ -1,4 +1,4 @@
-/* app.css — очищено от ID-правил статусов, всё на .statusbar */
+/* app.css */
 
 /* Базовые стили */
 * {
@@ -499,4 +499,35 @@ button {
     color: #fff;
     font-size: 14px;
     opacity: .8;
+}
+
+/* Мини-панель пресетов Regex */
+.regex-chips {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin: 12px 0 4px;
+}
+.regex-chips .chip {
+    display: inline-flex; align-items: center;
+    padding: 6px 10px; border-radius: 999px;
+    background: #eef2f7; border: 1px solid #dde3ee;
+    cursor: pointer; font-size: 13px; user-select: none;
+}
+.regex-chips .chip:hover { background: #e6edf8; }
+
+/* === Поиск: выравнивание чекбоксов и пресетов === */
+.search-controls { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.search-controls .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.search-controls .row .left { display: flex; gap: 10px; flex-wrap: wrap; }
+.search-controls .cb { display: flex; align-items: center; gap: 8px; background: #f8f9fa; border-radius: 8px; padding: 8px 10px; }
+.preset-bar { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.preset-bar .pill {
+    padding: 6px 10px; border-radius: 999px; background: #fff; border: 1px solid #e5e9f2;
+    font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.preset-bar .pill:hover { background: #f3f6fb; }
+.search-controls .row-length { align-items: center; }
+.search-controls .length-box { display: flex; align-items: center; gap: 8px; }
+.search-controls .length-box input[type="number"] { width: 90px; }
+@media (max-width: 700px) {
+    .preset-bar { justify-content: flex-start; }
 }
