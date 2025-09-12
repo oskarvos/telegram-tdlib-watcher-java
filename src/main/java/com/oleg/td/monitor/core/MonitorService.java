@@ -1,83 +1,111 @@
 package com.oleg.td.monitor.core;
 
+import com.oleg.td.integrations.telegram.ChatResolver;
 import com.oleg.td.monitor.api.MonitorProgress;
 import com.oleg.td.monitor.api.MonitorRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * Сервис управления мониторингом.
+ * Запускает/останавливает поток и отдаёт прогресс.
+ */
 @Service
 public class MonitorService {
+
     private static final Logger log = LoggerFactory.getLogger(MonitorService.class);
 
-    private final AtomicBoolean running = new AtomicBoolean(false);
-    private final AtomicInteger processed = new AtomicInteger(0);
-    private final AtomicInteger found = new AtomicInteger(0);
+    private final AtomicBoolean running = new AtomicBoolean(false); // флаг работы
+    private final AtomicInteger processed = new AtomicInteger(0);   // счётчик обработанных
+    private final AtomicInteger found = new AtomicInteger(0);       // счётчик попаданий
 
-    private final MonitorCoordinator coordinator;
-    private final com.oleg.td.integrations.telegram.ChatResolver resolver;
-    private volatile Thread monitorThread;
+    private final MonitorCoordinator coordinator; // координатор
+    private final ChatResolver resolver;          // резолвер чатов
 
-    public MonitorService(MonitorCoordinator coordinator,
-                          com.oleg.td.integrations.telegram.ChatResolver resolver) {
+    private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "monitor-thread");
+        t.setDaemon(true);
+        return t;
+    });
+
+    private Future<?> monitorFuture; // трекинг задачи
+
+    public MonitorService(MonitorCoordinator coordinator, ChatResolver resolver) {
         this.coordinator = coordinator;
         this.resolver = resolver;
     }
 
-    public long resolveChatId(String chatRef){
+    /** Резолв chat_id из строки. */
+    public long resolveChatId(String chatRef) {
         return resolver.resolveFlexible(chatRef);
     }
 
+    /** Запуск мониторинга. */
     public synchronized void startMonitoring(MonitorRequest req) {
         if (running.get()) {
             log.warn("Мониторинг уже выполняется");
             return;
         }
+
         running.set(true);
         processed.set(0);
         found.set(0);
 
-        monitorThread = new Thread(() -> {
+        monitorFuture = executor.submit(() -> {
             try {
                 coordinator.monitor(req, this::incProcessed, this::incFound);
-            } catch (Exception e) {
-                log.error("Ошибка мониторинга: {}", e.getMessage(), e);
+            } catch (Exception e) { // защита от сбоев в потоке
+                log.error("Критическая ошибка мониторинга: {}", e.getMessage(), e);
             } finally {
                 running.set(false);
-                monitorThread = null; // ← важно
+                monitorFuture = null; // освобождаем ссылку
             }
-        }, "monitor-thread");
-        monitorThread.start();
+        });
+
+        log.info("Задача мониторинга отправлена в исполнение");
     }
 
+    /** Остановка мониторинга. */
     public void stopMonitoring() {
-        coordinator.stop();
-        Thread t = monitorThread;
-        if (t != null) t.interrupt(); // прервём sleep()
+        coordinator.stop(); // отдаём флаг
+        Future<?> f = monitorFuture;
+        if (f != null && !f.isDone()) {
+            f.cancel(true); // прервём sleep()
+        }
         log.info("Получен сигнал остановки мониторинга");
     }
 
-    /** Остановить мониторинг и подождать завершения потока (для безопасной очистки БД). */
+    /** Остановка и ожидание завершения потока. */
     public void stopMonitoringAndWait(long timeoutMs) {
         stopMonitoring();
-        Thread t = monitorThread;
-        if (t != null) {
+        Future<?> f = monitorFuture;
+        if (f != null) {
             try {
-                t.join(Math.max(0, timeoutMs));
+                f.get(Math.max(1, timeoutMs), TimeUnit.MILLISECONDS);
+            } catch (TimeoutException te) {
+                log.warn("Ожидание завершения мониторинга по таймауту {} мс", timeoutMs);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
+            } catch (CancellationException | ExecutionException e) {
+                // уже остановлено/ошибка — просто завершаем
             }
         }
         log.info("Мониторинг остановлен (готово к очистке БД)");
     }
 
+    /** Текущий прогресс. */
     public MonitorProgress getProgress() {
         return new MonitorProgress(processed.get(), found.get(), running.get());
     }
 
-    private void incProcessed(){ processed.incrementAndGet(); }
-    private void incFound(){ found.incrementAndGet(); }
+    // инкремент обработанных сообщений
+    private void incProcessed() { processed.incrementAndGet(); }
+
+    // инкремент найденных совпадений
+    private void incFound() { found.incrementAndGet(); }
 }

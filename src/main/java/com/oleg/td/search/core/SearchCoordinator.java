@@ -45,10 +45,21 @@ public class SearchCoordinator {
      * - Ищет в тексте сообщений и в caption медиасообщений.
      * - Пишет совпадения в SEARCH-БД (таблица search_results).
      */
+    // SearchCoordinator.java
+    /**
+     * Поиск по всей истории выбранных чатов.
+     * - Поддерживает подстроку/regex/целое слово (регистрозависимость опциональна).
+     * - Ищет в тексте сообщений и в caption медиасообщений.
+     * - Пишет совпадения в SEARCH-БД (таблица search_results).
+     *
+     * Исправление: корректный переход по истории TDLib:
+     * после пакета используем from_message_id = oldestMessageId - 1,
+     * иначе TDLib будет возвращать тот же пакет бесконечно.
+     */
     public void searchChats(SearchRequest request, Runnable progressCallback, Runnable foundCallback) {
         stopRequested = false;
 
-        // NEW: заранее компилируем паттерн с учётом case/regex/wholeWord
+        // заранее компилируем паттерн
         final Pattern compiledPattern;
         try {
             compiledPattern = buildSearchPattern(request);
@@ -69,7 +80,7 @@ public class SearchCoordinator {
 
             db.prepareSearchSchema(chatId);
 
-            long fromMessageId = 0;          // старт с самых новых
+            long fromMessageId = 0L;        // старт с самых новых
             boolean reachedEnd = false;
             int totalMessagesProcessed = 0;
             final int MAX_MESSAGES = 300_000; // страховка
@@ -116,11 +127,28 @@ public class SearchCoordinator {
                     if (mid < oldestMessageId) oldestMessageId = mid;
                 }
 
+                // КЛЮЧЕВАЯ ПРАВКА: смещаемся на oldest - 1, а не на oldest.
                 if (!reachedEnd) {
                     if (oldestMessageId != Long.MAX_VALUE) {
-                        fromMessageId = oldestMessageId;
+                        long nextFrom = oldestMessageId - 1L;
+
+                        // Гвард 1: если дошли до начала (id <= 0), считаем, что история закончилась
+                        if (nextFrom <= 0L) {
+                            reachedEnd = true;
+                        } else {
+                            // Гвард 2: если TDLib по какой-то причине вернул тот же fromMessageId (например, при редких аномалиях),
+                            // принудительно завершаем, чтобы не зациклиться.
+                            if (fromMessageId == nextFrom) {
+                                log.warn("Зафиксирован повтор from_message_id={} в чате '{}'. Прерываем, чтобы избежать цикла.",
+                                        nextFrom, chatName);
+                                reachedEnd = true;
+                            } else {
+                                fromMessageId = nextFrom;
+                            }
+                        }
                     } else {
-                        break;
+                        // Если по какой-то причине не вычислили oldestMessageId, заканчиваем
+                        reachedEnd = true;
                     }
 
                     try {

@@ -17,16 +17,21 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.regex.Pattern;
 
+/**
+ * Координатор цикла мониторинга.
+ * Опрос чатов, фильтрация, запись результатов и чекпоинтов.
+ */
 @Component
 public class MonitorCoordinator {
+
     private static final Logger log = LoggerFactory.getLogger(MonitorCoordinator.class);
     private static final ObjectMapper M = new ObjectMapper();
 
-    private final TdJsonClient client;
-    private final ChatResolver resolver;
-    private final MonitorDbManager db;
+    private final TdJsonClient client;  // TDLib клиент
+    private final ChatResolver resolver; // резолвер чатов
+    private final MonitorDbManager db;   // менеджер БД мониторинга
 
-    private volatile boolean stopRequested = false;
+    private volatile boolean stopRequested = false; // флаг остановки
 
     public MonitorCoordinator(TdJsonClient client, ChatResolver resolver, MonitorDbManager db) {
         this.client = client;
@@ -34,49 +39,51 @@ public class MonitorCoordinator {
         this.db = db;
     }
 
+    /** Главный цикл мониторинга. */
     public void monitor(MonitorRequest request, Runnable progressCb, Runnable foundCb) {
         stopRequested = false;
 
         // интервал опроса
         long intervalMs = toMillisFixed(request.getPollInterval());
         if (request.getPollInterval() == null && request.getPollIntervalMs() != null) {
-            intervalMs = nearestAllowed(request.getPollIntervalMs());
+            intervalMs = nearestAllowed(request.getPollIntervalMs()); // выравнивание к допустимым значениям
         }
 
-        // компилируем шаблон один раз (логика как в поиске)
+        // компилируем шаблон один раз
         final Pattern compiled;
         try {
             compiled = buildMonitorPattern(request.getKeyword(), request.isCaseSensitive(), request.isUseRegex());
         } catch (Exception e) {
-            log.warn("Некорректный шаблон Regex '{}': {}", request.getKeyword(), e.getMessage());
+            log.warn("Некорректный шаблон регулярного выражения '{}': {}", request.getKeyword(), e.getMessage());
             return;
         }
 
-        // чаты
+        // резолв чатов
         long[] chatIds = request.getChats().stream()
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .mapToLong(resolver::resolveFlexible)
                 .toArray();
 
-        // схемы MONITOR и метаданные MONITOR (чекпоинт тоже в MONITOR)
+        // схемы и метаданные
         for (long chatId : chatIds) {
             db.prepareMonitorSchema(chatId);
             db.ensureMonitorMetadata(chatId);
         }
 
-        log.info("Мониторинг запущен по {} чатам, интервал {} мс", chatIds.length, intervalMs);
+        log.info("Мониторинг запущен по {} чатам, интервал опроса {} мс", chatIds.length, intervalMs);
 
+        // главный цикл
         while (!stopRequested) {
             for (long chatId : chatIds) {
                 if (stopRequested) break;
 
-                // 1) читаем чекпоинт; если его нет — инициализируем на "голову"
+                // читаем чекпоинт; при отсутствии — инициализация на «голову»
                 long lastSeen = 0L;
                 try {
                     String v = db.loadMonitorCheckpoint(chatId);
                     if (v != null && !v.isBlank()) lastSeen = Long.parseLong(v.trim());
-                } catch (Exception ignore) {
+                } catch (Exception ignore) { // безопасный парс
                 }
 
                 if (lastSeen == 0L) {
@@ -101,9 +108,11 @@ public class MonitorCoordinator {
                         }
                     }
                 }
+
                 long maxSeen = lastSeen;
-                try {
-                    // 2) берём последние N сообщений
+
+                try { // защищаем цикл мониторинга от падений TDLib/SQLite
+                    // берём последние N сообщений
                     ObjectNode req = M.createObjectNode();
                     req.put("@type", "getChatHistory");
                     req.put("chat_id", chatId);
@@ -120,6 +129,7 @@ public class MonitorCoordinator {
 
                     for (JsonNode msg : messages) {
                         if (stopRequested) break;
+
                         long mid = msg.path("id").asLong(0);
                         if (mid <= lastSeen) continue; // строго только новые
 
@@ -135,24 +145,26 @@ public class MonitorCoordinator {
                         if ("messageText".equals(content.path("@type").asText())) {
                             text = content.path("text").path("text").asText(null);
                         }
+
                         if (progressCb != null) progressCb.run();
 
-                        if (text != null && !text.isEmpty() && compiled != null && compiled.matcher(text).find()) {
+                        if (text != null && !text.isEmpty() && compiled.matcher(text).find()) {
                             db.saveMonitorHit(chatId, mid, mdt, request.getKeyword(), text, senderId, senderName);
                             if (foundCb != null) foundCb.run();
                         }
+
                         if (mid > maxSeen) maxSeen = mid;
                     }
 
                     if (maxSeen > lastSeen) db.saveMonitorCheckpoint(chatId, maxSeen);
                 } catch (Exception e) {
-                    log.warn("Мониторинг: ошибка чата {}: {}", chatId, e.getMessage());
+                    log.warn("Ошибка мониторинга для чата {}: {}", chatId, e.getMessage());
                 }
             }
 
             try {
                 Thread.sleep(intervalMs);
-            } catch (InterruptedException ie) {
+            } catch (InterruptedException ie) { // прерывание при остановке
                 Thread.currentThread().interrupt();
                 break;
             }
@@ -161,7 +173,7 @@ public class MonitorCoordinator {
         log.info("Мониторинг остановлен");
     }
 
-    /** Та же идея, что в поиске: флаги регистра; при не-Regex — экранированный подстрочный поиск. */
+    /** Построение шаблона поиска: регистр и безопасный подстрочный поиск без Regex. */
     private Pattern buildMonitorPattern(String keyword, boolean caseSensitive, boolean useRegex) {
         String kw = keyword == null ? "" : keyword;
         if (kw.isEmpty()) throw new IllegalArgumentException("Ключевое слово пусто");
@@ -171,11 +183,12 @@ public class MonitorCoordinator {
         return Pattern.compile(quoted, flags); // подстрока
     }
 
+    /** Фиксированные текстовые интервалы. */
     private static long toMillisFixed(String v) {
         if (v == null) return 60_000L; // по умолчанию 1 мин
         switch (v) {
             case "1s":  return 1_000L;
-            case "15s": return 15_000L;     // NEW
+            case "15s": return 15_000L; // NEW
             case "30s": return 30_000L;
             case "1m":  return 60_000L;
             case "5m":  return 300_000L;
@@ -190,6 +203,7 @@ public class MonitorCoordinator {
             1_000L, 15_000L, 30_000L, 60_000L, 300_000L, 1_800_000L, 3_600_000L, 86_400_000L
     };
 
+    /** Ближайшее допустимое значение интервала. */
     private static long nearestAllowed(long ms) {
         long best = ALLOWED[0], diff = Long.MAX_VALUE;
         for (long a : ALLOWED) {
@@ -202,6 +216,7 @@ public class MonitorCoordinator {
         return best;
     }
 
+    /** Сигнал остановки мониторинга. */
     public void stop() {
         stopRequested = true;
     }

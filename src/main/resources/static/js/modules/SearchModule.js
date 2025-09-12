@@ -1,69 +1,75 @@
 import {ApiClient} from '../apiClient.js';
-import {Notifier} from '../components/Notifier.js';
+import {Notifier}  from '../components/Notifier.js';
+import {Logger}    from '../components/Logger.js';
+import { splitChats, normalizeChat } from '../utils.js';
 
+
+/** Модуль «Поиск» для индексации и поиска сообщений. */
 export class SearchModule extends ApiClient {
     constructor() {
         super('/api/search');
-        this.notify = new Notifier();
+        this.notify = new Notifier(); // тосты
+        this.log = new Logger();      // логгер
 
-        // === Настройки ===
-        this.MAX_KEYWORD_LEN = 50;             // <-- было 30, из-за этого длинные пресеты урезались
-        this.storageKey = 'tdtools.search.v1';
-        this.baselineFoundTotal = 0;
+        // настройки
+        this.MAX_KEYWORD_LEN = 50; // максимально допустимая длина ключа
 
-        // Таблица результатов
-        this.resultsData = [];
-        this.sort = {key: 'messageDate', dir: 'desc'};
+        // сортировка/данные результатов
+        this.resultsData = [];                          // подготовленные строки
+        this.resultsDataRaw = [];                       // как пришло с сервера
+        this.sort = { key: 'messageDate', dir: 'desc' };// текущая сортировка
+        this.baselineFoundTotal = 0;                    // базовый found до старта
 
         // DOM
         this.dom = {
-            container: document.getElementById('searchContainer'),
-
-            chats: document.getElementById('searchChats'),
-            keyword: document.getElementById('searchKeyword'),
-
-            case: document.getElementById('caseSensitive'),
-            wholeWord: document.getElementById('wholeWord'),
-            regex: document.getElementById('regexMode'),
-
-            lengthMode: document.getElementById('lengthMode'),
-            lengthValue: document.getElementById('lengthValue'),
-
-            kwLenHint: document.getElementById('kwLenHint'),
-
-            btnStart: document.getElementById('startSearchBtn'),
-            btnStop: document.getElementById('stopSearchBtn'),
-            btnLoadRes: document.getElementById('loadSearchResultsBtn'),
-            btnDelDb: document.getElementById('deleteSearchDbBtn'),
-
+            container:      document.getElementById('searchContainer'),
+            chats:          document.getElementById('searchChats'),
+            keyword:        document.getElementById('searchKeyword'),
+            case:           document.getElementById('caseSensitive'),
+            wholeWord:      document.getElementById('wholeWord'),
+            regex:          document.getElementById('regexMode'),
+            lengthMode:     document.getElementById('lengthMode'),
+            lengthValue:    document.getElementById('lengthValue'),
+            kwLenHint:      document.getElementById('kwLenHint'),
+            btnStart:       document.getElementById('startSearchBtn'),
+            btnStop:        document.getElementById('stopSearchBtn'),
+            btnLoadRes:     document.getElementById('loadSearchResultsBtn'),
+            btnDelDb:       document.getElementById('deleteSearchDbBtn'),
             processedValue: document.getElementById('searchProcessedValue'),
-            foundValue: document.getElementById('searchFoundValue'),
-            status: document.getElementById('searchStatus'),
-            bar: document.getElementById('searchProgress-bar'),
-
-            resultsChat: document.getElementById('searchResultsChat'),
-            resultsBox: document.getElementById('searchResults'),
-
-            // новый контейнер пресетов
-            presetBar: document.querySelector('#searchContainer .preset-bar')
+            foundValue:     document.getElementById('searchFoundValue'),
+            status:         document.getElementById('searchStatus'),
+            bar:            document.getElementById('searchProgress-bar'),
+            resultsChat:    document.getElementById('searchResultsChat'),
+            resultsBox:     document.getElementById('searchResults'),
+            presetBar:      document.querySelector('#searchContainer .preset-bar')
         };
 
-        // UI: добавить счётчик «новых»
+        // добавить «новых: 0», если нет
         const statsRight = this.dom.container?.querySelector('.progress-label span:last-child');
         if (statsRight && !statsRight.querySelector('.num-new')) {
             const wrap = document.createElement('span');
             wrap.style.marginLeft = '6px';
             wrap.innerHTML = ', новых: <span class="num-new">0</span>';
             statsRight.appendChild(wrap);
-            this.dom.newValue = wrap.querySelector('.num-new');
+            this.dom.newValue = wrap.querySelector('.num-new'); // число новых
         }
 
-        // max length — страховка
+        // защита на maxlength
         if (this.dom.keyword && !this.dom.keyword.hasAttribute('maxlength')) {
             this.dom.keyword.setAttribute('maxlength', String(this.MAX_KEYWORD_LEN));
         }
 
-        // === Слушатели ===
+        this.#bind();
+        this.restoreState();
+        this.#updateKwLen();
+        this.setProgress(0, 0, false);
+        this.setStatus('Ожидание…', '#e9f1ff', '#2c3e50');
+    }
+
+    get storageKey() { return 'tdtools.search.v1'; } // ключ хранилища
+
+    // привязка событий
+    #bind() {
         this.dom.btnStart?.addEventListener('click', (e) => { e.preventDefault(); this.start(); });
         this.dom.btnStop?.addEventListener('click', () => this.stop());
         this.dom.btnDelDb?.addEventListener('click', () => this.clearDb());
@@ -75,7 +81,7 @@ export class SearchModule extends ApiClient {
         this.dom.wholeWord?.addEventListener('change', () => this.saveState());
         this.dom.regex?.addEventListener('change', () => { this.#syncRegexWholeWordUi(); this.saveState(); });
 
-        // Режим «по длине» — локальная функция для синхронизации
+        // режим «по длине»: синхронизация зависимостей
         const syncLengthUi = () => {
             const on = !!this.dom.lengthMode?.checked;
             if (this.dom.lengthValue) this.dom.lengthValue.disabled = !on;
@@ -95,14 +101,14 @@ export class SearchModule extends ApiClient {
         this.dom.lengthValue?.addEventListener('input', () => this.saveState());
         syncLengthUi();
 
-        // Пресеты: делегирование клика
+        // пресеты Regex
         this.dom.presetBar?.addEventListener('click', (e) => {
             const btn = e.target.closest('[data-preset-regex]');
             if (!btn) return;
             const patt = btn.getAttribute('data-preset-regex') || '';
             if (!patt) return;
 
-            // Подставим паттерн, включим regex, выключим wholeWord/length
+            // подставляем паттерн, включаем regex, выключаем wholeWord/length
             if (this.dom.keyword) this.dom.keyword.value = String(patt).slice(0, this.MAX_KEYWORD_LEN);
             if (this.dom.regex) this.dom.regex.checked = true;
             if (this.dom.wholeWord) this.dom.wholeWord.checked = false;
@@ -116,30 +122,28 @@ export class SearchModule extends ApiClient {
             this.dom.keyword?.focus();
             this.notify.info(`Пресет: ${btn.textContent.trim()}`);
         });
-
-        // Инициализация
-        this.restoreState();
-        this.#updateKwLen();
-        this.setProgress(0, 0, false);
-        this.setStatus('Ожидание…', '#e9f1ff', '#2c3e50');
     }
 
-    // ================= Публичные методы =================
-
+    // ===== публичные =====
     async start() {
         let req;
         try { req = this.#collect(); }
-        catch (e) { return this.setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c'); }
+        catch (e) {
+            this.setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c');
+            return;
+        }
 
         if (!req.chats.length) {
-            return this.setStatus('Ошибка: не указаны чаты', '#ffecec', '#e74c3c');
+            this.setStatus('Ошибка: не указаны чаты', '#ffecec', '#e74c3c');
+            return;
         }
         if (!req.useRegex && req.keyword.length > this.MAX_KEYWORD_LEN) {
-            return this.setStatus(`Ошибка: длина ключа не должна превышать ${this.MAX_KEYWORD_LEN} символов`, '#ffecec', '#e74c3c');
+            // проверяет длину строки
+            this.setStatus(`Ошибка: длина ключа не должна превышать ${this.MAX_KEYWORD_LEN} символов`, '#ffecec', '#e74c3c');
+            return;
         }
 
         this.saveState();
-
         this.dom.bar?.classList.remove('green');
         if (req.keyword.length === 0 && !req.useRegex) {
             this.setStatus('Пустой ключ: индексируем все непустые сообщения/подписи', '#edf7ff', '#2c3e50');
@@ -156,6 +160,7 @@ export class SearchModule extends ApiClient {
             this.notify.info('Поиск запущен');
             this.setStatus('Поиск выполняется…', '#edf7ff', '#2c3e50');
             this.#beginPolling();
+            this.log.info('Запущен поиск для чатов:', req.chats);
         } catch (e) {
             this.setStatus('Ошибка запуска: ' + e.message, '#ffecec', '#e74c3c');
         }
@@ -189,8 +194,11 @@ export class SearchModule extends ApiClient {
     }
 
     async loadResults() {
-        const chat = (this.dom.resultsChat?.value || '').trim();
-        if (!chat) return this.setStatus('Укажите чат для показа результатов', '#fff4e6', '#e67e22');
+        const chat = normalizeChat(this.dom.resultsChat?.value || '');
+        if (!chat) {
+            this.setStatus('Укажите чат для показа результатов', '#fff4e6', '#e67e22');
+            return;
+        }
         try {
             const data = await this.get('/results?chat=' + encodeURIComponent(chat));
             this.#renderResults(Array.isArray(data) ? data : []);
@@ -200,27 +208,22 @@ export class SearchModule extends ApiClient {
         }
     }
 
-    // ================= Внутренние =================
-
+    // ===== внутренние =====
     #collect() {
-        const chats = (this.dom.chats?.value || '')
-            .split('\n').map(s => s.trim()).filter(Boolean);
-
+        const chats = splitChats(this.dom.chats?.value || '');
         const lengthMode = !!this.dom.lengthMode?.checked;
         let useRegex = !!this.dom.regex?.checked;
         let wholeWord = !!this.dom.wholeWord?.checked;
-
         let keyword = (this.dom.keyword?.value || '').trim().slice(0, this.MAX_KEYWORD_LEN);
 
         if (lengthMode) {
             const L = Number(this.dom.lengthValue?.value) || 0;
             if (L < 1 || L > 30) throw new Error(`Длина слова должна быть 1–30`);
-            // Ровно L символов [A-Za-z0-9_]
+            // ровно L символов [A-Za-z0-9_]
             keyword = `(^|[^A-Za-z0-9_])[A-Za-z0-9_]{${L}}(?![A-Za-z0-9_])`;
             useRegex = true;
             wholeWord = false;
         }
-
         if (useRegex) wholeWord = false;
 
         return {
@@ -255,13 +258,7 @@ export class SearchModule extends ApiClient {
             }
         }, 1000);
     }
-
-    #endPolling() {
-        if (this._pollTimer) {
-            clearInterval(this._pollTimer);
-            this._pollTimer = null;
-        }
-    }
+    #endPolling() { if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null; } }
 
     setStatus(text, bg, color) {
         if (!this.dom.status) return;
@@ -326,39 +323,39 @@ export class SearchModule extends ApiClient {
         const arrow = this.sort.dir === 'asc' ? '▲' : '▼';
         const th = (label, key, extraCls = '') =>
             `<th data-key="${key}" class="sortable${this.sort.key === key ? ' active' : ''} ${extraCls}">
-                ${label}${this.sort.key === key ? ` <span class="sort-indicator">${arrow}</span>` : ''}
-             </th>`;
+        ${label}${this.sort.key === key ? ` <span class="sort-indicator">${arrow}</span>` : ''}
+       </th>`;
 
         const head = `
-          <thead>
-            <tr>
-              <th class="ncol">№</th>
-              ${th('Чат', 'chatTitle')}
-              ${th('Дата', 'messageDate')}
-              ${th('Время', 'messageDate')}
-              ${th('Отправитель', 'senderName')}
-              ${th('Сообщение', 'messageText')}
-            </tr>
-          </thead>`;
+      <thead>
+        <tr>
+          <th class="ncol">№</th>
+          ${th('Чат', 'chatTitle')}
+          ${th('Дата', 'messageDate')}
+          ${th('Время', 'messageDate')}
+          ${th('Отправитель', 'senderName')}
+          ${th('Сообщение', 'messageText')}
+        </tr>
+      </thead>`;
 
         const body = rows.map((r, idx) => {
             const msgHtml = esc(r.messageText).replace(/\n/g, '<br>');
             return `<tr>
-              <td class="ncol">${idx + 1}</td>
-              <td class="mono">${esc(r.chatTitle)}</td>
-              <td>${esc(r._date)}</td>
-              <td>${esc(r._time)}</td>
-              <td>${esc(r.senderName)}</td>
-              <td class="msg">${msgHtml}</td>
-            </tr>`;
+        <td class="ncol">${idx + 1}</td>
+        <td class="mono">${esc(r.chatTitle)}</td>
+        <td>${esc(r._date)}</td>
+        <td>${esc(r._time)}</td>
+        <td>${esc(r.senderName)}</td>
+        <td class="msg">${msgHtml}</td>
+      </tr>`;
         }).join('');
 
         return `<div class="results-table-wrap">
-                  <table class="results-table" aria-label="Результаты поиска">
-                    ${head}
-                    <tbody>${body}</tbody>
-                  </table>
-                </div>`;
+      <table class="results-table" aria-label="Результаты поиска">
+        ${head}
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
     }
 
     #splitDateTime(iso) {

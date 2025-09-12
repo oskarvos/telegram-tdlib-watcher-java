@@ -14,12 +14,20 @@ import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.regex.Pattern;
 
+/**
+ * Менеджер SQLite БД мониторинга.
+ * Одна БД на чат, хранение метаданных и результатов.
+ */
 @Component
 public class MonitorDbManager {
+
     private static final Logger log = LoggerFactory.getLogger(MonitorDbManager.class);
 
-    private final Path dbDir = Paths.get("tdlib", "db");
-    private final ChatResolver chatResolver;
+    private final Path dbDir = Paths.get("tdlib", "db"); // директория БД
+    private final ChatResolver chatResolver;             // для получения названий чатов
+
+    // недопустимые символы для имени файла
+    private static final Pattern INVALID = Pattern.compile("[\\\\/:*?\"<>|]");
 
     public MonitorDbManager(ChatResolver chatResolver) {
         this.chatResolver = chatResolver;
@@ -29,13 +37,12 @@ public class MonitorDbManager {
         }
     }
 
-    // --- helpers
-    private static final Pattern INVALID = Pattern.compile("[\\\\/:*?\"<>|]");
-
+    // экранирование идентификатора SQL
     private static String q(String ident) {
         return "\"" + ident.replace("\"", "\"\"") + "\"";
     }
 
+    // получение «человеческого» имени чата
     private String chatName(long chatId) {
         try {
             String t = chatResolver.getChatTitle(chatId);
@@ -45,6 +52,7 @@ public class MonitorDbManager {
         return "chat_" + Math.abs(chatId);
     }
 
+    // безопасное имя для файла БД
     private String safe(String name, long chatId) {
         if (name == null || name.isBlank()) return "unknown_chat";
         String s = INVALID.matcher(name).replaceAll("_").trim();
@@ -54,29 +62,33 @@ public class MonitorDbManager {
         return s;
     }
 
+    // путь к файлу БД (на чат)
     private Path monitorDbPath(long chatId) {
         String fn = safe("MONITOR " + chatName(chatId), chatId) + ".db";
         return dbDir.resolve(fn);
     }
 
+    // открыть соединение к БД чата
     private Connection openMonitor(long chatId) throws SQLException {
         Path p = monitorDbPath(chatId);
         try {
             Files.createDirectories(p.getParent());
-        } catch (Exception e) {
-            log.error("Cannot create parent dir for {}: {}", p.toAbsolutePath(), e.getMessage(), e);
+        } catch (Exception e) { // крит. проблема с ФС
+            log.error("Не удалось создать директорию для БД {}: {}", p.toAbsolutePath(), e.getMessage(), e);
         }
         return DriverManager.getConnection("jdbc:sqlite:" + p.toAbsolutePath());
     }
 
+    /** Убедиться, что таблица metadata существует. */
     public void ensureMonitorMetadata(long chatId) {
         try (Connection c = openMonitor(chatId); Statement s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS " + q("metadata") + " (key TEXT PRIMARY KEY, value TEXT)");
         } catch (SQLException e) {
-            log.error("MONITOR {}: cannot ensure metadata: {}", chatName(chatId), e.getMessage(), e);
+            log.error("MONITOR {}: не удалось создать metadata: {}", chatName(chatId), e.getMessage(), e);
         }
     }
 
+    /** Прочитать чекпоинт последнего сообщения. */
     public String loadMonitorCheckpoint(long chatId) {
         final String sql = "SELECT value FROM " + q("metadata") + " WHERE key=?";
         try (Connection c = openMonitor(chatId);
@@ -86,11 +98,12 @@ public class MonitorDbManager {
                 if (rs.next()) return rs.getString(1);
             }
         } catch (SQLException e) {
-            log.warn("load checkpoint err: {}", e.getMessage());
+            log.warn("Ошибка чтения чекпоинта: {}", e.getMessage());
         }
         return null;
     }
 
+    /** Сохранить чекпоинт последнего сообщения. */
     public void saveMonitorCheckpoint(long chatId, long messageId) {
         final String sql = "INSERT OR REPLACE INTO " + q("metadata") + " (key,value) VALUES(?,?)";
         try (Connection c = openMonitor(chatId);
@@ -99,10 +112,11 @@ public class MonitorDbManager {
             ps.setString(2, Long.toString(messageId));
             ps.executeUpdate();
         } catch (SQLException e) {
-            log.error("save checkpoint err: {}", e.getMessage(), e);
+            log.error("Ошибка сохранения чекпоинта: {}", e.getMessage(), e);
         }
     }
 
+    /** Сбросить чекпоинт. */
     public void resetMonitorCheckpoint(long chatId) {
         final String sql = "DELETE FROM " + q("metadata") + " WHERE key=?";
         try (Connection c = openMonitor(chatId);
@@ -110,11 +124,11 @@ public class MonitorDbManager {
             ps.setString(1, "monitor_last_message_id");
             ps.executeUpdate();
         } catch (SQLException e) {
-            log.error("reset checkpoint err: {}", e.getMessage(), e);
+            log.error("Ошибка сброса чекпоинта: {}", e.getMessage(), e);
         }
     }
 
-    // --- MONITOR schema
+    /** Создать схему таблиц результатов мониторинга. */
     public void prepareMonitorSchema(long chatId) {
         final String t = q("monitor_results");
         final String create = "CREATE TABLE IF NOT EXISTS " + t + " (" +
@@ -134,10 +148,11 @@ public class MonitorDbManager {
             s.execute(idx1);
             s.execute(idx2);
         } catch (SQLException e) {
-            log.error("MONITOR {}: schema error: {}", chatName(chatId), e.getMessage(), e);
+            log.error("MONITOR {}: ошибка создания схемы: {}", chatName(chatId), e.getMessage(), e);
         }
     }
 
+    /** Сохранить найденное попадание. */
     public void saveMonitorHit(long chatId, long messageId, LocalDateTime messageDate,
                                String keyword, String messageText, String senderId, String senderName) {
         final String sql = "INSERT INTO " + q("monitor_results") +
@@ -153,11 +168,11 @@ public class MonitorDbManager {
             ps.setString(7, LocalDateTime.now().toString());
             ps.executeUpdate();
         } catch (SQLException e) {
-            log.error("MONITOR save hit err: {}", e.getMessage(), e);
+            log.error("MONITOR: ошибка сохранения попадания: {}", e.getMessage(), e);
         }
     }
 
-    // --- clear all MONITOR *.db + reset checkpoints in all DUMP *.db
+    /** Удалить все БД мониторинга (включая -wal/-shm). */
     public void clearMonitorChatDatabases() {
         try {
             Files.createDirectories(dbDir);
@@ -165,29 +180,28 @@ public class MonitorDbManager {
         }
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "MONITOR *.db")) {
             for (Path p : ds) {
-                deleteDbWithSidecars(p);              // удаляем файл + -wal/-shm
-                log.info("Удалён файл MONITOR БД: {}", p.getFileName());
+                deleteDbWithSidecars(p); // удаляем файл + -wal/-shm
+                log.info("Удалён файл БД мониторинга: {}", p.getFileName());
             }
         } catch (Exception e) {
-            log.error("list MONITOR*.db err: {}", e.getMessage(), e);
+            log.error("Ошибка перечисления файлов БД мониторинга: {}", e.getMessage(), e);
         }
     }
 
+    // удалить БД и соседние файлы
     private void deleteDbWithSidecars(Path dbFile) {
         try {
             Files.deleteIfExists(dbFile);
-        } catch (IOException ignore) {
-        }
+        } catch (IOException ignore) {}
         try {
             Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-wal"));
-        } catch (IOException ignore) {
-        }
+        } catch (IOException ignore) {}
         try {
             Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-shm"));
-        } catch (IOException ignore) {
-        }
+        } catch (IOException ignore) {}
     }
 
+    /** Получить результаты по чату. */
     public java.util.List<com.oleg.td.monitor.model.MonitorHit> getMonitorResults(long chatId, int limit, int offset) {
         final String sql = "SELECT rowid AS id, message_id, message_date, keyword, message_text, " +
                 "sender_id, sender_name, found_date FROM " + q("monitor_results") +
@@ -213,7 +227,7 @@ public class MonitorDbManager {
                 }
             }
         } catch (SQLException e) {
-            log.error("MONITOR get results err: {}", e.getMessage(), e);
+            log.error("MONITOR: ошибка чтения результатов: {}", e.getMessage(), e);
         }
         return list;
     }

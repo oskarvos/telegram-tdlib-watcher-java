@@ -1,45 +1,57 @@
 import {ApiClient} from '../apiClient.js';
-import {Notifier} from '../components/Notifier.js';
+import {Notifier}  from '../components/Notifier.js';
+import {Logger}    from '../components/Logger.js';
+import { splitChats, normalizeChat } from '../utils.js';
 
+/** Модуль «Мониторинг» для слежения за новыми сообщениями. */
 export class MonitorModule extends ApiClient {
     constructor() {
         super('/api/monitor');
-        this.notify = new Notifier();
-        this.pollInterval = null;
+        this.notify = new Notifier(); // тосты
+        this.log = new Logger();      // логгер
+        this._timer = null;           // таймер опроса
+        this.MAX_KEYWORD_LEN = 50;    // максимум символов ключа
 
-        this.MAX_KEYWORD_LEN = 50;
-
+        // DOM
         this.dom = {
-            container: document.getElementById('monitorContainer'),
-            chats: document.getElementById('monitorChats'),
-            keyword: document.getElementById('monitorKeyword'),
-            case: document.getElementById('monitorCaseSensitive'),
-            regex: document.getElementById('monitorRegexMode'),
-            interval: document.getElementById('monitorInterval'),
-
-            // панель пресетов (как в поиске)
-            presetBar: document.querySelector('#monitorContainer .preset-bar'),
-
-            btnStart: document.getElementById('startMonitorBtn'),
-            btnStop: document.getElementById('stopMonitorBtn'),
-            btnDelDb: document.getElementById('deleteMonitorDbBtn'),
-
-            processed: document.getElementById('monitorProcessedValue'),
-            found: document.getElementById('monitorFoundValue'),
-            bar: document.getElementById('monitorProgress-bar'),
-            status: document.getElementById('monitorStatus'),
-
+            container:   document.getElementById('monitorContainer'),
+            chats:       document.getElementById('monitorChats'),
+            keyword:     document.getElementById('monitorKeyword'),
+            case:        document.getElementById('monitorCaseSensitive'),
+            regex:       document.getElementById('monitorRegexMode'),
+            interval:    document.getElementById('monitorInterval'),
+            presetBar:   document.querySelector('#monitorContainer .preset-bar'),
+            btnStart:    document.getElementById('startMonitorBtn'),
+            btnStop:     document.getElementById('stopMonitorBtn'),
+            btnDelDb:    document.getElementById('deleteMonitorDbBtn'),
+            processed:   document.getElementById('monitorProcessedValue'),
+            found:       document.getElementById('monitorFoundValue'),
+            bar:         document.getElementById('monitorProgress-bar'),
+            status:      document.getElementById('monitorStatus'),
             resultsChat: document.getElementById('monitorResultsChat'),
-            btnLoadRes: document.getElementById('loadMonitorResultsBtn'),
-            resultsBox: document.getElementById('monitorResults')
+            btnLoadRes:  document.getElementById('loadMonitorResultsBtn'),
+            resultsBox:  document.getElementById('monitorResults')
         };
 
+        this.#bind();
+        this.restoreState();
+
+        // safety: maxlength
+        if (this.dom.keyword && !this.dom.keyword.hasAttribute('maxlength')) {
+            this.dom.keyword.setAttribute('maxlength', String(this.MAX_KEYWORD_LEN));
+        }
+    }
+
+    get storageKey() { return 'td.monitor.state'; } // ключ хранилища
+
+    // привязка обработчиков
+    #bind() {
         this.dom.btnStart.addEventListener('click', () => this.start());
-        this.dom.btnStop.addEventListener('click', () => this.stop());
+        this.dom.btnStop.addEventListener('click',  () => this.stop());
         this.dom.btnDelDb.addEventListener('click', () => this.clearDb());
         this.dom.btnLoadRes.addEventListener('click', () => this.loadResults());
 
-        // Regex-пресеты: делегирование событий полностью как в SearchModule
+        // пресеты Regex
         this.dom.presetBar?.addEventListener('click', (e) => {
             const btn = e.target.closest('[data-preset-regex]');
             if (!btn) return;
@@ -56,22 +68,11 @@ export class MonitorModule extends ApiClient {
         });
 
         // Persistence
-        [this.dom.chats, this.dom.keyword]
-            .forEach(el => el.addEventListener('input', () => this.saveState()));
-        [this.dom.case, this.dom.regex, this.dom.interval]
-            .forEach(el => el.addEventListener('change', () => this.saveState()));
-        this.restoreState();
-
-        // safety: maxlength на поле ключа
-        if (this.dom.keyword && !this.dom.keyword.hasAttribute('maxlength')) {
-            this.dom.keyword.setAttribute('maxlength', String(this.MAX_KEYWORD_LEN));
-        }
+        [this.dom.chats, this.dom.keyword].forEach(el => el.addEventListener('input', () => this.saveState()));
+        [this.dom.case, this.dom.regex, this.dom.interval].forEach(el => el.addEventListener('change', () => this.saveState()));
     }
 
-    get storageKey() {
-        return 'td.monitor.state';
-    }
-
+    // ===== состояние =====
     saveState() {
         const s = this.#collect();
         localStorage.setItem(this.storageKey, JSON.stringify(s));
@@ -87,12 +88,12 @@ export class MonitorModule extends ApiClient {
             this.dom.case.checked = !!s.caseSensitive;
             this.dom.regex.checked = !!s.useRegex;
             this.dom.interval.value = s.pollInterval || '1m';
-        } catch {
-        }
+        } catch {/* ignore */}
     }
 
+    // сбор формы
     #collect() {
-        const chats = (this.dom.chats.value || '').split(/\r?\n|,|;/g).map(s => s.trim()).filter(Boolean);
+        const chats = splitChats(this.dom.chats.value || '');
         return {
             chats,
             keyword: (this.dom.keyword.value || '').trim().slice(0, this.MAX_KEYWORD_LEN),
@@ -102,51 +103,56 @@ export class MonitorModule extends ApiClient {
         };
     }
 
+    // запуск процесса мониторинга
     async start() {
         const req = this.#collect();
-        if (!req.chats.length) return this.setStatus('Ошибка: не указаны чаты', '#ffecec', '#e74c3c');
-        if (!req.keyword) return this.setStatus('Ошибка: не указано ключевое слово', '#ffecec', '#e74c3c');
+        if (!req.chats.length) { this.#setStatus('Ошибка: не указаны чаты', '#ffecec', '#e74c3c'); return; }
+        if (!req.keyword)      { this.#setStatus('Ошибка: не указано ключевое слово', '#ffecec', '#e74c3c'); return; }
 
         this.saveState();
         this.dom.bar.classList.remove('green');
-        this.setStatus('Старт мониторинга...', '#edf7ff', '#2c3e50');
-        this.setProgress(0, 0, false);
+        this.#setStatus('Старт мониторинга...', '#edf7ff', '#2c3e50');
+        this.#setProgress(0, 0, false);
 
         try {
             await this.post('/start', req);
             this.notify.info('Мониторинг запущен');
-            this.setStatus('Мониторинг выполняется...', '#edf7ff', '#2c3e50');
+            this.#setStatus('Мониторинг выполняется...', '#edf7ff', '#2c3e50');
             this.#beginPolling();
+            this.log.info('Запущен мониторинг для чатов:', req.chats);
         } catch (e) {
-            this.setStatus('Ошибка запуска: ' + e.message, '#ffecec', '#e74c3c');
+            this.#setStatus('Ошибка запуска: ' + e.message, '#ffecec', '#e74c3c');
             this.notify.error(e.message);
         }
     }
 
+    // остановка
     async stop() {
-        this.setStatus('Останавливаем мониторинг...', '#fff4e6', '#e67e22');
+        this.#setStatus('Останавливаем мониторинг...', '#fff4e6', '#e67e22');
         try {
             await this.post('/stop', {});
             this.#endPolling();
-            this.setStatus('Мониторинг остановлен', '#ffecec', '#e74c3c');
+            this.#setStatus('Мониторинг остановлен', '#ffecec', '#e74c3c');
         } catch (e) {
-            this.setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c');
+            this.#setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c');
         }
     }
 
+    // очистка БД
     async clearDb() {
         try {
             await this.del('/database');
             this.notify.ok('MONITOR-БД очищена, чекпоинты сброшены');
-            this.setStatus('База мониторинга очищена', '#e7f6ec', '#27ae60');
+            this.#setStatus('База мониторинга очищена', '#e7f6ec', '#27ae60');
             this.dom.resultsBox.innerHTML = '';
         } catch (e) {
-            this.setStatus('Ошибка удаления БД: ' + e.message, '#ffecec', '#e74c3c');
+            this.#setStatus('Ошибка удаления БД: ' + e.message, '#ffecec', '#e74c3c');
         }
     }
 
+    // загрузка результатов
     async loadResults() {
-        const chat = (this.dom.resultsChat.value || '').trim();
+        const chat = normalizeChat(this.dom.resultsChat.value || '');
         if (!chat) return;
         try {
             const list = await this.get(`/results?chat=${encodeURIComponent(chat)}&limit=200`);
@@ -156,44 +162,39 @@ export class MonitorModule extends ApiClient {
         }
     }
 
+    // ===== опрос =====
     #beginPolling() {
         this.#endPolling();
         this.#tick();
-        this.pollInterval = setInterval(() => this.#tick(), 1000);
+        this._timer = setInterval(() => this.#tick(), 1000);
     }
-
-    #endPolling() {
-        if (this.pollInterval) {
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-        }
-    }
+    #endPolling() { if (this._timer) { clearInterval(this._timer); this._timer = null; } }
 
     async #tick() {
         try {
             const p = await this.get('/progress');
             const processed = p?.processedMessages || 0;
             const found = p?.foundMessages || 0;
-            this.setProgress(processed, found, !p?.running);
+            this.#setProgress(processed, found, !p?.running);
             if (p?.running) {
-                this.setStatus(`Мониторинг... Обработано: ${processed}, Найдено: ${found}`, '#edf7ff', '#2c3e50');
+                this.#setStatus(`Мониторинг... Обработано: ${processed}, Найдено: ${found}`, '#edf7ff', '#2c3e50');
             } else {
-                this.setStatus('Мониторинг завершён', '#e7f6ec', '#27ae60');
+                this.#setStatus('Мониторинг завершён', '#e7f6ec', '#27ae60');
                 this.#endPolling();
             }
         } catch (e) {
-            this.setStatus('Ошибка запроса прогресса: ' + e.message, '#ffecec', '#e74c3c');
+            this.#setStatus('Ошибка запроса прогресса: ' + e.message, '#ffecec', '#e74c3c');
             this.#endPolling();
         }
     }
 
-    setProgress(processed, found, complete = false) {
+    // ===== отрисовка =====
+    #setProgress(processed, found, complete = false) {
         this.dom.processed.textContent = processed;
         this.dom.found.textContent = found;
         this.dom.bar.classList.toggle('green', !!complete);
     }
-
-    setStatus(text, bg, color) {
+    #setStatus(text, bg, color) {
         this.dom.status.textContent = text;
         this.dom.status.style.backgroundColor = bg;
         this.dom.status.style.color = color;
@@ -207,15 +208,15 @@ export class MonitorModule extends ApiClient {
             return;
         }
 
-        const escapeHtml = s => String(s ?? '')
-            .replace(/[&<>"']/g, m => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;'}[m]));
+        const escapeHtml = s => String(s ?? '').replace(/[&<>"']/g,
+            m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
         const fmtParts = iso => {
             try {
                 const d = new Date(iso);
                 if (!isNaN(d)) {
                     const pad = n => String(n).padStart(2, '0');
-                    const dd = pad(d.getDate()), mm = pad(d.getMonth() + 1), yyyy = d.getFullYear();
+                    const dd = pad(d.getDate()), mm = pad(d.getMonth()+1), yyyy = d.getFullYear();
                     const hh = pad(d.getHours()), mi = pad(d.getMinutes()), ss = pad(d.getSeconds());
                     return {date: `${dd}.${mm}.${yyyy}`, time: `${hh}:${mi}:${ss}`};
                 }

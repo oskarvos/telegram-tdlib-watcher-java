@@ -531,3 +531,43 @@ button {
 @media (max-width: 700px) {
     .preset-bar { justify-content: flex-start; }
 }
+
+/* ===== Страница инструментов (общие оверрайды) ===== */
+.page-tools .container { max-width: 1125px; }
+.page-tools { justify-content: flex-start; padding-top: 1cm; }
+.page-tools section[aria-label] { margin-top: 0; }
+.page-tools section[aria-label] .form-group:first-child { margin-top: 0; }
+
+/* На широких экранах — 4 колонки чекбоксов */
+@media (min-width: 1024px) {
+    .page-tools .checkbox-group { grid-template-columns: repeat(4, 1fr); }
+}
+
+/* --- Мониторинг: одна строка контролов --- */
+.page-tools .monitor-controls {
+    display: flex; align-items: center; gap: 12px; flex-wrap: nowrap;
+}
+.page-tools .monitor-controls .interval {
+    display: flex; align-items: center; gap: 8px; white-space: nowrap;
+}
+.page-tools .monitor-controls .interval select {
+    width: 120px; /* компактный селект интервала */
+}
+.page-tools .monitor-controls .cb {
+    display: flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+.page-tools .monitor-controls .preset-bar {
+    display: flex; gap: 6px; margin-left: auto; overflow-x: auto;
+    white-space: nowrap; padding: 2px 0;
+}
+/* Чекбоксы «Регистр»/«Regex» — размер как в .checkbox-item (18×18) */
+#monitorContainer .monitor-controls .cb input[type="checkbox"] {
+    width: 18px; height: 18px; margin: 0; cursor: pointer;
+}
+#monitorContainer .monitor-controls .cb label {
+    margin: 0; font-weight: 600;
+}
+@media (max-width: 700px) {
+    .preset-bar { justify-content: flex-start; }
+}
+

@@ -1,6 +1,7 @@
 // Notifier.js
+/** Тост-уведомления в правом нижнем углу. */
 export class Notifier {
-    constructor(root = document.getElementById('toasts')) { this.root = root; }
+    constructor(root = document.getElementById('toasts')) { this.root = root; } // корень контейнера
     info(msg)  { this.#push(msg, ''); }
     ok(msg)    { this.#push(msg, 'ok'); }
     error(msg) { this.#push(msg, 'error'); }
@@ -13,3 +14,4 @@ export class Notifier {
         setTimeout(() => el.remove(), 4000);
     }
 }
+
