@@ -43,6 +43,15 @@ public class MonitorCoordinator {
             intervalMs = nearestAllowed(request.getPollIntervalMs());
         }
 
+        // компилируем шаблон один раз (логика как в поиске)
+        final Pattern compiled;
+        try {
+            compiled = buildMonitorPattern(request.getKeyword(), request.isCaseSensitive(), request.isUseRegex());
+        } catch (Exception e) {
+            log.warn("Некорректный шаблон Regex '{}': {}", request.getKeyword(), e.getMessage());
+            return;
+        }
+
         // чаты
         long[] chatIds = request.getChats().stream()
                 .map(String::trim)
@@ -62,7 +71,7 @@ public class MonitorCoordinator {
             for (long chatId : chatIds) {
                 if (stopRequested) break;
 
-                // 1) читаем чекпоинт; если его нет — инициализируем на "голову" (самое новое сообщение)
+                // 1) читаем чекпоинт; если его нет — инициализируем на "голову"
                 long lastSeen = 0L;
                 try {
                     String v = db.loadMonitorCheckpoint(chatId);
@@ -127,8 +136,8 @@ public class MonitorCoordinator {
                             text = content.path("text").path("text").asText(null);
                         }
                         if (progressCb != null) progressCb.run();
-                        if (text != null && containsKeyword(text, request.getKeyword(),
-                                request.isCaseSensitive(), request.isUseRegex())) {
+
+                        if (text != null && !text.isEmpty() && compiled != null && compiled.matcher(text).find()) {
                             db.saveMonitorHit(chatId, mid, mdt, request.getKeyword(), text, senderId, senderName);
                             if (foundCb != null) foundCb.run();
                         }
@@ -152,46 +161,33 @@ public class MonitorCoordinator {
         log.info("Мониторинг остановлен");
     }
 
-    private boolean containsKeyword(String text, String keyword, boolean caseSensitive, boolean useRegex) {
-        if (text == null || keyword == null || keyword.isEmpty()) return false;
-
-        if (useRegex) {
-            try {
-                int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE;
-                return Pattern.compile(keyword, flags).matcher(text).find();
-            } catch (Exception e) {
-                log.warn("Некорректный regex '{}': {}", keyword, e.getMessage());
-                return false;
-            }
-        } else {
-            return caseSensitive ? text.contains(keyword) : text.toLowerCase().contains(keyword.toLowerCase());
-        }
+    /** Та же идея, что в поиске: флаги регистра; при не-Regex — экранированный подстрочный поиск. */
+    private Pattern buildMonitorPattern(String keyword, boolean caseSensitive, boolean useRegex) {
+        String kw = keyword == null ? "" : keyword;
+        if (kw.isEmpty()) throw new IllegalArgumentException("Ключевое слово пусто");
+        int flags = caseSensitive ? 0 : (Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+        if (useRegex) return Pattern.compile(kw, flags);
+        String quoted = Pattern.quote(kw);
+        return Pattern.compile(quoted, flags); // подстрока
     }
 
     private static long toMillisFixed(String v) {
         if (v == null) return 60_000L; // по умолчанию 1 мин
         switch (v) {
-            case "1s":
-                return 1_000L;
-            case "30s":
-                return 30_000L;
-            case "1m":
-                return 60_000L;
-            case "5m":
-                return 300_000L;
-            case "30m":
-                return 1_800_000L;
-            case "1h":
-                return 3_600_000L;
-            case "1d":
-                return 86_400_000L;
-            default:
-                return 60_000L;
+            case "1s":  return 1_000L;
+            case "15s": return 15_000L;     // NEW
+            case "30s": return 30_000L;
+            case "1m":  return 60_000L;
+            case "5m":  return 300_000L;
+            case "30m": return 1_800_000L;
+            case "1h":  return 3_600_000L;
+            case "1d":  return 86_400_000L;
+            default:    return 60_000L;
         }
     }
 
     private static final long[] ALLOWED = {
-            1_000L, 30_000L, 60_000L, 300_000L, 1_800_000L, 3_600_000L, 86_400_000L
+            1_000L, 15_000L, 30_000L, 60_000L, 300_000L, 1_800_000L, 3_600_000L, 86_400_000L
     };
 
     private static long nearestAllowed(long ms) {

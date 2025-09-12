@@ -7,6 +7,8 @@ export class MonitorModule extends ApiClient {
         this.notify = new Notifier();
         this.pollInterval = null;
 
+        this.MAX_KEYWORD_LEN = 50;
+
         this.dom = {
             container: document.getElementById('monitorContainer'),
             chats: document.getElementById('monitorChats'),
@@ -14,6 +16,9 @@ export class MonitorModule extends ApiClient {
             case: document.getElementById('monitorCaseSensitive'),
             regex: document.getElementById('monitorRegexMode'),
             interval: document.getElementById('monitorInterval'),
+
+            // панель пресетов (как в поиске)
+            presetBar: document.querySelector('#monitorContainer .preset-bar'),
 
             btnStart: document.getElementById('startMonitorBtn'),
             btnStop: document.getElementById('stopMonitorBtn'),
@@ -34,13 +39,33 @@ export class MonitorModule extends ApiClient {
         this.dom.btnDelDb.addEventListener('click', () => this.clearDb());
         this.dom.btnLoadRes.addEventListener('click', () => this.loadResults());
 
+        // Regex-пресеты: делегирование событий полностью как в SearchModule
+        this.dom.presetBar?.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-preset-regex]');
+            if (!btn) return;
+            const patt = btn.getAttribute('data-preset-regex') || '';
+            if (!patt) return;
+            if (this.dom.keyword) {
+                this.dom.keyword.value = String(patt).slice(0, this.MAX_KEYWORD_LEN);
+                this.dom.keyword.setAttribute('maxlength', String(this.MAX_KEYWORD_LEN));
+            }
+            if (this.dom.regex) this.dom.regex.checked = true;
+            this.notify.info(`Пресет: ${btn.textContent.trim()}`);
+            this.saveState();
+            this.dom.keyword?.focus();
+        });
 
-// Persistence
+        // Persistence
         [this.dom.chats, this.dom.keyword]
             .forEach(el => el.addEventListener('input', () => this.saveState()));
         [this.dom.case, this.dom.regex, this.dom.interval]
             .forEach(el => el.addEventListener('change', () => this.saveState()));
         this.restoreState();
+
+        // safety: maxlength на поле ключа
+        if (this.dom.keyword && !this.dom.keyword.hasAttribute('maxlength')) {
+            this.dom.keyword.setAttribute('maxlength', String(this.MAX_KEYWORD_LEN));
+        }
     }
 
     get storageKey() {
@@ -58,7 +83,7 @@ export class MonitorModule extends ApiClient {
             if (!raw) return;
             const s = JSON.parse(raw);
             this.dom.chats.value = (s.chats || []).join('\n');
-            this.dom.keyword.value = s.keyword || '';
+            this.dom.keyword.value = (s.keyword || '').slice(0, this.MAX_KEYWORD_LEN);
             this.dom.case.checked = !!s.caseSensitive;
             this.dom.regex.checked = !!s.useRegex;
             this.dom.interval.value = s.pollInterval || '1m';
@@ -70,7 +95,7 @@ export class MonitorModule extends ApiClient {
         const chats = (this.dom.chats.value || '').split(/\r?\n|,|;/g).map(s => s.trim()).filter(Boolean);
         return {
             chats,
-            keyword: this.dom.keyword.value.trim(),
+            keyword: (this.dom.keyword.value || '').trim().slice(0, this.MAX_KEYWORD_LEN),
             caseSensitive: this.dom.case.checked,
             useRegex: this.dom.regex.checked,
             pollInterval: this.dom.interval.value
@@ -186,7 +211,6 @@ export class MonitorModule extends ApiClient {
             .replace(/[&<>"']/g, m => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;'}[m]));
 
         const fmtParts = iso => {
-            // поддержка ISO-строки и локальных форматов
             try {
                 const d = new Date(iso);
                 if (!isNaN(d)) {
@@ -195,16 +219,13 @@ export class MonitorModule extends ApiClient {
                     const hh = pad(d.getHours()), mi = pad(d.getMinutes()), ss = pad(d.getSeconds());
                     return {date: `${dd}.${mm}.${yyyy}`, time: `${hh}:${mi}:${ss}`};
                 }
-            } catch {
-            }
-            // если пришёл уже отформатированный текст — аккуратно вернём
+            } catch {}
             return {date: escapeHtml(iso || ''), time: ''};
         };
 
         const rows = list.map((r, i) => {
             const p = fmtParts(r.messageDate);
             const sender = escapeHtml(r.senderName || r.senderId || '');
-            // аккуратно обрежем очень длинные тексты, чтобы таблица не “расползалась”
             const msg = escapeHtml(String(r.messageText || '')).slice(0, 2000);
             return `
 <tr>

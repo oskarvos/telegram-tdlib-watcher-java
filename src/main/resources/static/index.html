@@ -40,6 +40,52 @@
             margin-top: 0; /* чтобы не добавлялся +20px сверху из .container */
         }
     </style>
+
+    <!-- Мониторинг: одна строка контролов -->
+    <style>
+        /* --- Мониторинг: одна строка контролов --- */
+        .page-tools .monitor-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: nowrap;          /* держим в одну строку */
+        }
+        .page-tools .monitor-controls .interval {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
+        }
+        .page-tools .monitor-controls .interval select {
+            width: 120px;               /* компактный селект интервала */
+        }
+        .page-tools .monitor-controls .cb {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+        }
+        .page-tools .monitor-controls .preset-bar {
+            display: flex;
+            gap: 6px;
+            margin-left: auto;          /* уводим пресеты вправо */
+            overflow-x: auto;           /* если не помещается — скролл по X */
+            white-space: nowrap;
+            padding: 2px 0;
+        }
+
+        /* Мониторинг: размеры чекбоксов "Регистр" и "Regex" как у .checkbox-item */
+        #monitorContainer .monitor-controls .cb input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            margin: 0;            /* чтобы ровно по базовой линии */
+            cursor: pointer;
+        }
+        #monitorContainer .monitor-controls .cb label {
+            margin: 0;
+            font-weight: 600;
+        }
+    </style>
 </head>
 <body class="page-tools">
 <div class="container">
@@ -191,35 +237,51 @@ id: 123456789"></textarea>
             <label>Чаты (по одному в строке, @username, t.me/*, id, first:name)</label>
             <textarea id="monitorChats" rows="3" placeholder="@somechannel
 t.me/c/12345/6
-id: 123456789">
-            </textarea>
-        </div>
-        <div class="form-group">
-            <label>Ключевое слово / Regex</label>
-            <input id="monitorKeyword" type="text" placeholder="например, оплата|счёт"/>
-        </div>
-        <div class="checkbox-group">
-            <div class="checkbox-item"><input id="monitorCaseSensitive" type="checkbox"><label
-                    for="monitorCaseSensitive">Регистрозависимо</label></div>
-            <div class="checkbox-item"><input id="monitorRegexMode" type="checkbox"><label
-                    for="monitorRegexMode">Regex</label></div>
-            <div class="checkbox-item" style="align-items:center;">
-                <label for="monitorInterval">Интервал опроса</label>
-            </div>
-        </div>
-        <div class="form-group">
-            <select id="monitorInterval">
-                <option value="1s">1 сек</option>
-                <option value="30s">30 сек</option>
-                <option value="1m" selected>1 мин</option>
-                <option value="5m">5 мин</option>
-                <option value="30m">30 мин</option>
-                <option value="1h">1 час</option>
-                <option value="1d">1 день</option>
-            </select>
+id: 123456789"></textarea>
         </div>
 
-        <div class="buttons">
+        <div class="form-group">
+            <label>Ключевое слово / Regex</label>
+            <input id="monitorKeyword" type="text" maxlength="50" placeholder="например, оплата|счёт"/>
+        </div>
+
+        <!-- ВСЕ КОНТРОЛЫ В ОДНОЙ СТРОКЕ -->
+        <div class="monitor-controls">
+            <div class="interval">
+                <label for="monitorInterval">Интервал</label>
+                <select id="monitorInterval">
+                    <option value="1s">1 сек</option>
+                    <option value="15s">15 сек</option>
+                    <option value="30s">30 сек</option>
+                    <option value="1m" selected>1 мин</option>
+                    <option value="5m">5 мин</option>
+                    <option value="30m">30 мин</option>
+                    <option value="1h">1 час</option>
+                    <option value="1d">1 день</option>
+                </select>
+            </div>
+
+            <div class="cb">
+                <input id="monitorCaseSensitive" type="checkbox">
+                <label for="monitorCaseSensitive">Регистр</label>
+            </div>
+
+            <div class="cb">
+                <input id="monitorRegexMode" type="checkbox">
+                <label for="monitorRegexMode">Regex</label>
+            </div>
+
+            <!-- пресеты как в «Поиск» -->
+            <div class="preset-bar">
+                <button type="button" class="pill" data-preset-regex="[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}">Email</button>
+                <button type="button" class="pill" data-preset-regex="https?://[^\s]+">URL</button>
+                <button type="button" class="pill" data-preset-regex="(?&lt;!\d)\d+(?!\d)">Целое число</button>
+                <button type="button" class="pill" data-preset-regex="(?&lt;!\d)\d+(?:[.,]\d{2})?\s?(?:₽|руб\.?)">Сумма ₽</button>
+                <button type="button" class="pill" data-preset-regex="\b\d{2}\.\d{2}\.\d{4}\b">Дата дд.мм.гггг</button>
+            </div>
+        </div>
+
+        <div class="buttons" style="margin-top:12px;">
             <button class="btn-primary" id="startMonitorBtn">Старт мониторинга</button>
             <button class="btn-danger" id="stopMonitorBtn">Стоп</button>
         </div>
@@ -227,12 +289,9 @@ id: 123456789">
         <div class="progress-container">
             <div class="progress-label">
                 <span>Сообщений обработано</span>
-                <span><span id="monitorProcessedValue">0</span> (совпадений: <span
-                        id="monitorFoundValue">0</span>)</span>
+                <span><span id="monitorProcessedValue">0</span> (совпадений: <span id="monitorFoundValue">0</span>)</span>
             </div>
-            <div id="monitorProgress">
-                <div id="monitorProgress-bar"></div>
-            </div>
+            <div id="monitorProgress"><div id="monitorProgress-bar"></div></div>
             <div id="monitorStatus" style="margin-top:10px;">Ожидание…</div>
         </div>
 
@@ -247,10 +306,8 @@ id: 123456789">
         <div class="results-container" id="monitorResults"></div>
     </section>
 </div>
-
 <div id="toasts" class="toasts"></div>
 <div class="footer">TDLib Web • Дамп / Поиск / Мониторинг</div>
-
 <script type="module" src="/js/main.js"></script>
 </body>
 </html>
