@@ -13,20 +13,24 @@ import java.io.Console;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+/**
+ * Процесс авторизации TDLib.
+ * Машина состояний + подписка на обновления.
+ */
 @Component
 public class AuthFlow {
+
     private static final Logger log = LoggerFactory.getLogger(AuthFlow.class);
 
-    private final TdJsonClient client;
-    private final TdlibProperties td;
-    private final AppProperties app;
-    private final AuthRuntimeStore authStore;
+    private final TdJsonClient client;             // TDLib клиент
+    private final TdlibProperties td;              // настройки TDLib
+    private final AppProperties app;               // настройки приложения
+    private final AuthRuntimeStore authStore;      // хранилище ввода
+    private final UpdateRouter router;             // маршрутизатор обновлений
 
-    private final UpdateRouter router;
-
-    private final AtomicBoolean authorized = new AtomicBoolean(false);
-    private final AtomicReference<String> stateRef = new AtomicReference<>(null);
-    private boolean wired = false;
+    private final AtomicBoolean authorized = new AtomicBoolean(false);  // авторизован?
+    private final AtomicReference<String> stateRef = new AtomicReference<>(null); // текущее состояние TDLib
+    private boolean wired = false;                 // подключён к роутеру?
 
     public AuthFlow(TdJsonClient client, TdlibProperties td, AppProperties app, UpdateRouter router, AuthRuntimeStore authStore) {
         this.client = client;
@@ -36,27 +40,25 @@ public class AuthFlow {
         this.authStore = authStore;
     }
 
-
-    /**
-     * Подписывается на обновления авторизации.
-     */
+    // подключение слушателя к UpdateRouter
     public void wireInto() {
         if (wired) {
-            log.info("AuthFlow уже подключен");
+            log.info("AuthFlow уже подключён");
             return;
         }
-        log.info("Подключение AuthFlow к UpdateRouter...");
+        log.info("Подключаю AuthFlow к UpdateRouter...");
 
         router.add(n -> {
-            final String type = n.path("@type").asText();
+            String type = n.path("@type").asText();
             if ("updateAuthorizationState".equals(type)) {
                 var authState = n.path("authorization_state");
                 String state = authState.path("@type").asText();
                 stateRef.set(state);
-                log.info("ОТЛАДКА АВТОРИЗАЦИИ: состояние = {}", state);
+                log.info("Состояние авторизации: {}", state);
+
                 if ("authorizationStateReady".equals(state)) {
                     authorized.set(true);
-                    log.info("Авторизация прошла успешно!");
+                    log.info("Авторизация завершена успешно");
                 } else if ("authorizationStateClosed".equals(state)) {
                     authorized.set(false);
                     log.info("Авторизация закрыта");
@@ -65,17 +67,15 @@ public class AuthFlow {
         });
 
         wired = true;
-        log.info("AuthFlow успешно подключен");
+        log.info("AuthFlow подключён");
         client.send(Utils.obj("getAuthorizationState"), TdJsonClient.Channel.AUTH);
     }
 
-    /**
-     * Блокирующая машина состояний. Однопоточная: мы обрабатываем получение данных внутри этого цикла.
-     */
+    // блокирующая авторизация по состояниям TDLib
     public void authorizeBlocking() {
-        if (!wired) throw new IllegalStateException("AuthFlow не инициализирован. Сначала вызовите wireInto()");
+        if (!wired) throw new IllegalStateException("AuthFlow не инициализирован. Вызовите wireInto()");
 
-        log.info("Начало процесса авторизации...");
+        log.info("Запуск процесса авторизации...");
         client.send(Utils.obj("getAuthorizationState"), TdJsonClient.Channel.AUTH);
 
         String last = null;
@@ -83,7 +83,7 @@ public class AuthFlow {
         long timeoutMs = 180_000L;
 
         while (!authorized.get() && (System.currentTimeMillis() - startTime) < timeoutMs) {
-            client.pumpOnce(1.5); // получает ровно одно обновление (если есть) в этом потоке
+            client.pumpOnce(1.5); // один цикл получения обновлений
 
             String state = stateRef.get();
             if (state == null) {
@@ -95,28 +95,29 @@ public class AuthFlow {
                 sleep(100);
                 continue;
             }
-            log.info("Текущее состояние авторизации: {}", state);
+            log.info("Текущее состояние: {}", state);
 
             try {
                 switch (state) {
                     case "authorizationStateWaitTdlibParameters" -> sendTdParams();
-                    case "authorizationStateWaitPhoneNumber" -> sendPhoneNumber();
-                    case "authorizationStateWaitCode" -> sendCodeWithRetry();
-                    case "authorizationStateWaitPassword" -> sendPassword();
-                    case "authorizationStateReady" -> authorized.set(true);
-                    case "authorizationStateClosed" -> throw new RuntimeException("Авторизация закрыта");
-                    case "authorizationStateLoggingOut" -> throw new RuntimeException("Выход из системы");
-                    default -> sleep(300);
+                    case "authorizationStateWaitPhoneNumber"     -> sendPhoneNumber();
+                    case "authorizationStateWaitCode"            -> sendCodeWithRetry();
+                    case "authorizationStateWaitPassword"        -> sendPassword();
+                    case "authorizationStateReady"               -> authorized.set(true);
+                    case "authorizationStateClosed"              -> throw new RuntimeException("Авторизация закрыта");
+                    case "authorizationStateLoggingOut"          -> throw new RuntimeException("Выход из системы");
+                    default                                      -> sleep(300);
                 }
             } catch (Exception e) {
-                log.error("Ошибка обработки состояния {}: {}", state, e.getMessage(), e);
-                throw new RuntimeException("Ошибка авторизации в состоянии: " + state, e);
+                log.error("Ошибка авторизации в состоянии {}: {}", state, e.getMessage(), e);
+                throw new RuntimeException("Ошибка авторизации: " + state, e);
             }
             last = state;
         }
-        if (!authorized.get()) throw new RuntimeException("Таймаут авторизации после " + timeoutMs + " мс");
+        if (!authorized.get()) throw new RuntimeException("Таймаут авторизации: " + timeoutMs + " мс");
     }
 
+    // отправка параметров TDLib
     private void sendTdParams() {
         ObjectNode p = Utils.obj("setTdlibParameters");
 
@@ -126,7 +127,7 @@ public class AuthFlow {
 
         String phoneDigits = authStore.get().getPhone() != null
                 ? authStore.get().getPhone().replaceAll("\\D", "")
-                : "unknown";
+                : "unknown"; // очищает от нецифр
         String suffix = td.getApiId() + "_" + phoneDigits;
 
         p.put("use_test_dc", app.getUseTestDc());
@@ -146,11 +147,12 @@ public class AuthFlow {
         p.put("ignore_file_names", true);
         p.put("database_encryption_key", "");
 
-        log.info("ОТЛАДКА setTdlibParameters JSON --> {}", p.toString());
+        log.info("Параметры TDLib подготовлены");
         client.send(p, TdJsonClient.Channel.AUTH);
         log.info("Параметры TDLib отправлены");
     }
 
+    // отправка номера телефона
     private void sendPhoneNumber() {
         String phone = authStore.get().getPhone() != null
                 ? authStore.get().getPhone().trim()
@@ -168,13 +170,13 @@ public class AuthFlow {
         if ("error".equals(resp.path("@type").asText())) {
             int code = resp.path("code").asInt();
             String msg = resp.path("message").asText();
-            log.error("ОШИБКА АВТОРИЗАЦИИ при отправке номера: код={} сообщение={}", code, msg);
+            log.error("Ошибка при отправке номера: код={} сообщение={}", code, msg);
         } else {
-            log.info("ОТЛАДКА АВТОРИЗАЦИИ: номер телефона отправлен");
-            log.info("Номер телефона отправлен: {}", phone);
+            log.info("Номер телефона отправлен");
         }
     }
 
+    // отправка кода с повтором при неверном вводе
     private void sendCodeWithRetry() {
         while (true) {
             String code = authStore.get().getCode() != null
@@ -185,9 +187,11 @@ public class AuthFlow {
             req.put("code", code);
             ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.AUTH);
 
-            if ("error".equals(resp.path("@type").asText())
+            boolean codeError = "error".equals(resp.path("@type").asText())
                     && resp.path("code").asInt() == 400
-                    && resp.path("message").asText().toLowerCase().contains("code")) {
+                    && resp.path("message").asText("").toLowerCase().contains("code"); // проверяет текст ошибки
+
+            if (codeError) {
                 authStore.get().setCode(null);
                 log.warn("Неверный код, попробуйте снова");
                 continue;
@@ -197,6 +201,7 @@ public class AuthFlow {
         }
     }
 
+    // отправка 2FA пароля
     private void sendPassword() {
         String password = authStore.get().getPass() != null
                 ? authStore.get().getPass().trim()
@@ -207,6 +212,7 @@ public class AuthFlow {
         log.info("Пароль отправлен");
     }
 
+    // чтение строки из консоли/STDIN
     private String readValue(String prompt) {
         Console console = System.console();
         if (console != null) {
@@ -224,14 +230,8 @@ public class AuthFlow {
     }
 
     private static void sleep(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-        }
+        try { Thread.sleep(ms); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
     }
 
-    public boolean isAuthorized() {
-        return authorized.get();
-    }
+    public boolean isAuthorized() { return authorized.get(); }
 }

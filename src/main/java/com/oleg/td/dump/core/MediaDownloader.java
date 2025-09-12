@@ -11,74 +11,67 @@ import org.springframework.stereotype.Component;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Простая синхронная загрузка через TDLib:
- * - downloadFile(..., synchronous=true) -> TDLib блочно вернёт "file" с локальным путём
- * - кэш по file_id, чтобы не качать одно и то же
+ * Синхронный загрузчик файлов через TDLib с простым кэшем.
+ * Возвращает локальный путь либо null.
  */
 @Component
 public class MediaDownloader {
     private static final Logger log = LoggerFactory.getLogger(MediaDownloader.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final TdJsonClient client;
-    private final ConcurrentHashMap<Integer, String> cache = new ConcurrentHashMap<>();
+    private final TdJsonClient client;                       // TDLib-клиент
+    private final ConcurrentHashMap<Integer, String> cache = new ConcurrentHashMap<>(); // кэш путей
 
     public MediaDownloader(TdJsonClient client) {
         this.client = client;
     }
 
-    /**
-     * Скачивает файл и возвращает локальный путь (или null, если не удалось).
-     * Блокирующая, но быстрая — без ожидания updateFile.
-     */
+    // блокирующее скачивание файла по file_id; возвращает локальный путь
     public String downloadBlocking(int fileId) {
         if (fileId <= 0) return null;
 
-        // кэш
-        String cached = cache.get(fileId);
-        if (cached != null && !cached.isBlank()) {
-            return cached;
-        }
+        String cached = cache.get(fileId);                   // кэш хита
+        if (cached != null && !cached.isBlank()) return cached;
 
         try {
-            // 1) Синхронная загрузка
+            // первичная попытка — downloadFile(synchronous=true)
             ObjectNode dl = MAPPER.createObjectNode();
             dl.put("@type", "downloadFile");
             dl.put("file_id", fileId);
-            dl.put("priority", 32);   // максимум
+            dl.put("priority", 32);
             dl.put("offset", 0);
-            dl.put("limit", 0);       // 0 = целиком
+            dl.put("limit", 0);
             dl.put("synchronous", true);
 
             ObjectNode resp = client.requestWithFloodWaitSyncLimited(dl, 300, TdJsonClient.Channel.MAIN);
             if (!"file".equals(resp.path("@type").asText())) {
-                log.warn("downloadFile: неожиданный ответ: {}", resp.path("@type").asText());
+                log.warn("downloadFile: неожиданный ответ TDLib: {}", resp.path("@type").asText());
                 return null;
             }
 
             JsonNode local = resp.path("local");
             String path = local.path("path").asText(null);
-            boolean completed = local.path("is_downloading_completed").asBoolean(false);
+            boolean done = local.path("is_downloading_completed").asBoolean(false);
 
-            if (completed && path != null && !path.isBlank()) {
+            if (done && path != null && !path.isBlank()) {
                 cache.putIfAbsent(fileId, path);
                 log.debug("file_id={} скачан: {}", fileId, path);
                 return path;
             }
 
-            // 2) На всякий случай уточним состояние через getFile
+            // уточняем через getFile, если что-то пошло не так
             ObjectNode gf = MAPPER.createObjectNode();
             gf.put("@type", "getFile");
             gf.put("file_id", fileId);
-            ObjectNode resp2 = client.requestWithFloodWaitSyncLimited(gf, 120, TdJsonClient.Channel.MAIN);
 
+            ObjectNode resp2 = client.requestWithFloodWaitSyncLimited(gf, 120, TdJsonClient.Channel.MAIN);
             JsonNode local2 = resp2.path("local");
             String path2 = local2.path("path").asText(null);
-            boolean completed2 = local2.path("is_downloading_completed").asBoolean(false);
+            boolean done2 = local2.path("is_downloading_completed").asBoolean(false);
 
-            if (completed2 && path2 != null && !path2.isBlank()) {
+            if (done2 && path2 != null && !path2.isBlank()) {
                 cache.putIfAbsent(fileId, path2);
-                log.debug("file_id={} скачан (через getFile): {}", fileId, path2);
+                log.debug("file_id={} скачан (getFile): {}", fileId, path2);
                 return path2;
             }
 

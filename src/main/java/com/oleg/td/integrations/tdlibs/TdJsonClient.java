@@ -14,29 +14,31 @@ import org.springframework.stereotype.Component;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
+/**
+ * Обёртка над tdjson (JNA).
+ * Отправка запросов и синхронное ожидание ответов.
+ */
 @Component
 public class TdJsonClient {
+
     private static final Logger log = LoggerFactory.getLogger(TdJsonClient.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private final Object recvLock = new Object();
 
-    public enum Channel {AUTH, MAIN}
+    public enum Channel { AUTH, MAIN }
 
     private interface TdLib extends Library {
         Pointer td_json_client_create();
-
         void td_json_client_send(Pointer client, String request);
-
         String td_json_client_receive(Pointer client, double timeout);
-
         void td_json_client_destroy(Pointer client);
     }
 
-    private final UpdateRouter router;
-    private final AppProperties appProps;
-    private final AtomicLong extraId = new AtomicLong();
-    private final Pointer client;
-    private final TdLib tdLib;
+    private final UpdateRouter router;         // маршрутизатор обновлений
+    private final AppProperties appProps;      // конфиг приложения
+    private final AtomicLong extraId = new AtomicLong(); // счётчик @extra
+    private final Pointer client;              // указатель TDLib клиента
+    private final TdLib tdLib;                 // биндинги JNA
+    private final Object recvLock = new Object(); // монитор приёма TDLib
 
     public TdJsonClient(@Lazy UpdateRouter router, AppProperties appProps) {
         this.router = router;
@@ -44,23 +46,24 @@ public class TdJsonClient {
 
         String libPath = appProps.getLibPath();
         if (libPath != null && !libPath.isEmpty()) {
-            log.info("Loading TDLib from: {}", libPath);
+            log.info("Загрузка TDLib из: {}", libPath);
             this.tdLib = Native.load(libPath, TdLib.class);
         } else {
-            log.info("Loading TDLib from system library 'tdjson'");
+            log.info("Загрузка системной библиотеки 'tdjson'");
             this.tdLib = Native.load("tdjson", TdLib.class);
         }
         this.client = tdLib.td_json_client_create();
-        log.info("Create client {}", System.identityHashCode(this.client));
+        log.info("TDLib клиент создан [{}]", System.identityHashCode(this.client));
         initTdlibLogging();
-        log.info("Поток получения обновлений TDLib запущен (single-threaded pump)");
+        log.info("Приём обновлений TDLib запущен (single-threaded pump)");
     }
 
+    // инициализация логирования TDLib
     private void initTdlibLogging() {
-        ObjectNode verbosity = MAPPER.createObjectNode();
-        verbosity.put("@type", "setLogVerbosityLevel");
-        verbosity.put("new_verbosity_level", 1);
-        send(verbosity);
+        ObjectNode lvl = MAPPER.createObjectNode();
+        lvl.put("@type", "setLogVerbosityLevel");
+        lvl.put("new_verbosity_level", 1);
+        send(lvl);
 
         ObjectNode setLogStream = MAPPER.createObjectNode();
         setLogStream.put("@type", "setLogStream");
@@ -73,25 +76,23 @@ public class TdJsonClient {
         send(setLogStream);
     }
 
+    // отправка JSON-строкой
     public void send(String request) {
         tdLib.td_json_client_send(client, request);
     }
 
+    // перегрузка с каналом (для совместимости)
     public void send(String request, Channel channel) {
         send(request);
     }
 
-    public void send(ObjectNode req) {
-        send(req.toString());
-    }
+    // отправка ObjectNode
+    public void send(ObjectNode req) { send(req.toString()); }
 
-    public void send(ObjectNode req, Channel channel) {
-        send(req.toString(), channel);
-    }
+    // отправка ObjectNode c каналом
+    public void send(ObjectNode req, Channel channel) { send(req.toString(), channel); }
 
-    /**
-     * Single-threaded pump: receive once and dispatch updates (without @extra).
-     */
+    // однократный приём и маршрутизация обновления (без @extra)
     public void pumpOnce(double timeoutSeconds) {
         String raw;
         synchronized (recvLock) {
@@ -100,16 +101,14 @@ public class TdJsonClient {
         if (raw == null || raw.isBlank()) return;
         try {
             ObjectNode node = (ObjectNode) MAPPER.readTree(raw);
-            if (node.has("@extra")) return; // response to a request; handled where awaited
+            if (node.has("@extra")) return; // ответ на запрос, обрабатывается в ожидании
             router.handleUpdate(node);
         } catch (Exception e) {
-            log.error("Ошибка при обработке апдейта TDLib", e);
+            log.error("Ошибка обработки обновления TDLib", e);
         }
     }
 
-    /**
-     * Waits for reply to req (by @extra). Routes other updates synchronously.
-     */
+    // отправка запроса с ожиданием ответа по @extra и ограничением по FLOOD_WAIT
     public ObjectNode requestWithFloodWaitSyncLimited(ObjectNode req, int limitSeconds, Channel channel) {
         int remaining = Math.max(limitSeconds, 0);
         String extra = "req-" + extraId.incrementAndGet();
@@ -118,54 +117,58 @@ public class TdJsonClient {
         while (true) {
             send(req, channel);
             long start = System.currentTimeMillis();
+
             while (true) {
                 String raw;
                 synchronized (recvLock) {
                     raw = tdLib.td_json_client_receive(client, 2.0);
                 }
                 if (raw == null || raw.isBlank()) {
+                    // ждём не дольше 120 секунд ответа конкретно на этот @extra
                     if (System.currentTimeMillis() - start > 120_000L) {
                         ObjectNode timeout = MAPPER.createObjectNode();
                         timeout.put("@type", "error");
                         timeout.put("code", 408);
-                        timeout.put("message", "Request timeout waiting for @extra=" + extra);
+                        timeout.put("message", "Таймаут ожидания ответа для @extra=" + extra);
                         return timeout;
                     }
                     continue;
                 }
+
                 try {
                     ObjectNode node = (ObjectNode) MAPPER.readTree(raw);
+
                     if (extra.equals(node.path("@extra").asText(null))) {
-                        if ("error".equals(node.path("@type").asText()) && node.path("code").asInt() == 429) {
+                        boolean floodWait = "error".equals(node.path("@type").asText())
+                                && node.path("code").asInt() == 429;
+                        if (floodWait) {
                             int waitSec = extractFloodWait(node.path("message").asText());
-                            if (waitSec <= 0) return node;
+                            if (waitSec <= 0) return node; // нераспознанный FLOOD_WAIT
                             if (waitSec > remaining) {
                                 sleep(remaining * 1000L);
                                 remaining = 0;
-                                break; // one more send then return next response
+                                break; // повторная отправка и возврат следующего ответа
                             }
                             sleep(waitSec * 1000L);
                             remaining -= waitSec;
-                            break; // resend
+                            break; // повторная отправка
                         }
-                        return node; // success or non-429 error
+                        return node; // успех или ошибка не 429
                     }
-                    if (!node.has("@extra")) router.handleUpdate(node); // broadcast true updates
+
+                    if (!node.has("@extra")) router.handleUpdate(node); // сторонние апдейты
                 } catch (Exception e) {
-                    log.error("Ошибка парсинга TDLib JSON", e);
+                    log.error("Ошибка парсинга JSON TDLib", e);
                 }
             }
         }
     }
 
+    // извлекает секунды из сообщения FLOOD_WAIT
     public static int extractFloodWait(String message) {
-        // simple greedy parse of integer seconds anywhere in message
         var m = Pattern.compile("(\\d+)").matcher(message == null ? "" : message);
         if (m.find()) {
-            try {
-                return Integer.parseInt(m.group(1));
-            } catch (NumberFormatException ignored) {
-            }
+            try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException ignored) {}
         }
         return -1;
     }
@@ -178,10 +181,6 @@ public class TdJsonClient {
     }
 
     private static void sleep(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-        }
+        try { Thread.sleep(ms); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
     }
 }

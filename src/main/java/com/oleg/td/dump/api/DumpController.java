@@ -5,57 +5,40 @@ import com.oleg.td.dump.persistence.DumpDbManager;
 import org.springframework.web.bind.annotation.*;
 
 /**
- * Контроллер для управления процессом дампа данных из Telegram
- * Предоставляет REST API для запуска, остановки, получения прогресса и очистки БД
+ * REST-контроллер для управления дампом Telegram.
+ * Старт/стоп, прогресс и очистка БД/файлов.
  */
 @RestController
 @RequestMapping("/api/dump")
 public class DumpController {
 
-    private final DumpService dumpService;
-    private final DumpDbManager dbManager;
+    private final DumpService dumpService;     // сервис дампа
+    private final DumpDbManager dbManager;     // менеджер БД дампа
 
-    /**
-     * Конструктор контроллера
-     * @param dumpService сервис запуска/остановки дампа
-     * @param dbManager менеджер работы с БД дампа
-     */
     public DumpController(DumpService dumpService, DumpDbManager dbManager) {
         this.dumpService = dumpService;
         this.dbManager = dbManager;
     }
 
-    /**
-     * Запуск процесса дампа по указанным параметрам
-     * POST /api/dump/start
-     */
+    // запуск процесса дампа по указанным параметрам
     @PostMapping("/start")
     public void start(@RequestBody DumpRequest request) {
         dumpService.startDump(request);
     }
 
-    /**
-     * Остановка текущего процесса дампа
-     * POST /api/dump/stop
-     */
+    // остановка текущего процесса дампа
     @PostMapping("/stop")
     public void stop() {
         dumpService.stopDump();
     }
 
-    /**
-     * Получение текущего прогресса дампа
-     * GET /api/dump/progress
-     */
+    // получение текущего прогресса
     @GetMapping("/progress")
     public DumpProgress progress() {
         return dumpService.getProgress();
     }
 
-    /**
-     * Очистка всех баз данных дампа и скачанных файлов
-     * DELETE /api/dump/database
-     */
+    // очистка всех DUMP-БД и скачанных файлов
     @DeleteMapping("/database")
     public void deleteDatabaseAndFiles() {
         dumpService.stopDump();
