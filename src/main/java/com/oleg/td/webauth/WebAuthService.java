@@ -145,34 +145,35 @@ public class WebAuthService {
         }
     }
 
-
     public AuthStatusResponse verify(VerifyCodeRequest req) {
         try {
-            if (req.getPassword() != null && !req.getPassword().isBlank()) {
-                ObjectNode pass = M.createObjectNode();
-                pass.put("@type", "checkAuthenticationPassword");
-                pass.put("password", req.getPassword().trim());
-                ObjectNode resp = client.requestWithFloodWaitSyncLimited(pass, 60, TdJsonClient.Channel.AUTH);
-                if ("error".equals(resp.path("@type").asText())) {
-                    return AuthStatusResponse.error("Неверный пароль 2FA: " + resp.path("message").asText());
-                }
-                return mapAuthState();
-            }
+            // Проверяем состояние ПЕРЕД отправкой кода
+            String currentState = currentAuthType();
+            log.info("Текущее состояние: {}", currentState);
 
-            if (req.getCode() == null || req.getCode().isBlank()) {
-                return AuthStatusResponse.error("Не задан ни код, ни пароль");
+            if (!"authorizationStateWaitCode".equals(currentState)) {
+                log.error("ОШИБКА: Неверное состояние для кода: {}", currentState);
+                return AuthStatusResponse.error("Неверное состояние: " + currentState);
             }
 
             ObjectNode code = M.createObjectNode();
             code.put("@type", "checkAuthenticationCode");
             code.put("code", req.getCode().trim());
+
+            log.info("Отправляем код: {}", req.getCode());
             ObjectNode resp = client.requestWithFloodWaitSyncLimited(code, 60, TdJsonClient.Channel.AUTH);
+
+            log.info("ОТВЕТ TDLib: {}", resp.toString()); // Это ключевое!
+
             if ("error".equals(resp.path("@type").asText())) {
-                return AuthStatusResponse.error("Ошибка кода: " + resp.path("message").asText());
+                String errorMsg = resp.path("message").asText();
+                log.error("Ошибка от TDLib: {}", errorMsg);
+                return AuthStatusResponse.error("TDLib ошибка: " + errorMsg);
             }
+
             return mapAuthState();
         } catch (Exception e) {
-            log.error("webauth.verify error", e);
+            log.error("Исключение в verify()", e);
             return AuthStatusResponse.error("Исключение: " + e.getMessage());
         }
     }
@@ -233,7 +234,6 @@ public class WebAuthService {
         String nested = s.path("authorization_state").path("@type").asText();
         return (nested != null && !nested.isBlank()) ? nested : "UNKNOWN";
     }
-
 
     private static String digitsOnly(String s) {
         return s == null ? "" : s.replaceAll("\\D+", "");

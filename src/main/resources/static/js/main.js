@@ -18,6 +18,7 @@ function safeRedirect(url) {
 }
 
 async function ensureAuthorizedOrRedirect() {
+    await new Promise(resolve => setTimeout(resolve, 1000));
     try {
         const r  = await fetch('/api/webauth/status', { headers: { 'Content-Type': 'application/json' } });
         const st = await r.json();

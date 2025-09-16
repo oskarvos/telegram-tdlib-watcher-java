@@ -6,13 +6,33 @@ const PATHS = { APP: '/', AUTH: '/auth.html' };
 const READY_STATES = new Set(['READY', 'AUTHORIZED', 'LOGGED_IN']);
 
 let __redirecting = false;
+
 function safeRedirect(url) {
     if (__redirecting) return;
     __redirecting = true;
-    try { window.location.replace(url); } catch {}
-    try { window.location.href = url; } catch {}
-    setTimeout(() => { try { window.location.assign(url); } catch {} }, 150);
+
+    // Очищаем таймер опроса перед редиректом
+    if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+    }
+
+    try {
+        window.location.replace(url);
+    } catch {
+        setTimeout(() => {
+            try {
+                window.location.href = url;
+            } catch {}
+        }, 150);
+    }
+
+    // Сброс флага через время на случай неудачи
+    setTimeout(() => {
+        __redirecting = false;
+    }, 3000);
 }
+
 
 
 // простой клиент REST
@@ -102,29 +122,30 @@ let pollTimer = null;
 // цикл опроса статуса авторизации до READY
 function pollStatus() {
     clearInterval(pollTimer);
+
     pollTimer = setInterval(async () => {
+        if (__redirecting) {
+            clearInterval(pollTimer);
+            return;
+        }
+
         try {
             const st = await api.get('/api/webauth/status');
             if (!st?.ok) return;
 
-            if (st.state === 'WAIT_CODE') {
-                s2.status.textContent = 'Ожидаем код';
-                s2.pwdWrap.classList.add('hidden');
-            } else if (st.state === 'WAIT_PASSWORD') {
-                s2.status.textContent = 'Требуется пароль 2FA';
-                s2.pwdWrap.classList.remove('hidden');
-            } else if (READY_STATES.has(st.state)) {
+            if (READY_STATES.has(st.state)) {
                 s2.status.textContent = 'Готово! Переход...';
                 clearInterval(pollTimer);
-                safeRedirect(PATHS.APP);
-            } else {
-                s2.status.textContent = 'Статус: ' + st.state;
+                // Добавляем задержку для стабилизации
+                setTimeout(() => safeRedirect(PATHS.APP), 500);
             }
-        } catch {
-            // молча продолжаем опрос
+            // ... остальная логика
+        } catch (error) {
+            console.warn('Ошибка опроса статуса:', error);
         }
-    }, 1000);
+    }, 1500); // Увеличиваем интервал до 1.5 секунд
 }
+
 
 // шаг 1 — отправка кода
 s1.btn.addEventListener('click', async () => {
@@ -208,3 +229,15 @@ s2.btn.addEventListener('click', async () => {
         if (st.ok && READY_STATES.has(st.state)) safeRedirect(PATHS.APP);
     } catch {}
 })();
+
+document.getElementById('btnClearDb').addEventListener('click', async () => {
+    if (confirm('Очистить базу TDLib? Это поможет при ошибках авторизации.')) {
+        try {
+            // Остановите приложение и удалите папку tdlib/ вручную
+            alert('Остановите сервер и удалите папку tdlib/ в корне проекта');
+        } catch (e) {
+            alert('Ошибка: ' + e.message);
+        }
+    }
+});
+
