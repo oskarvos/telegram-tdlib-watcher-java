@@ -10,7 +10,7 @@ public class SearchRequest {
     public SearchRequest() {
     }
 
-    public SearchRequest(String chat,  // изменено
+    public SearchRequest(String chat,
                          String keyword,
                          boolean caseSensitive,
                          boolean useRegex,
@@ -22,11 +22,11 @@ public class SearchRequest {
         this.wholeWord = wholeWord;
     }
 
-    public String getChat() {  // изменено
+    public String getChat() {
         return chat;
     }
 
-    public void setChat(String chat) {  // изменено
+    public void setChat(String chat) {
         this.chat = chat;
     }
 

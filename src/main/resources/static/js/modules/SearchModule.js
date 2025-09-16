@@ -226,7 +226,7 @@ export class SearchModule extends ApiClient {
         if (useRegex) wholeWord = false;
 
         return {
-            chat,  // изменено (было chats)
+            chat,
             keyword,
             caseSensitive: !!this.dom.case?.checked,
             useRegex,

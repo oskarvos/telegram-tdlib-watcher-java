@@ -60,7 +60,6 @@ public class SearchCoordinator {
     public void searchChats(SearchRequest request, Runnable progressCallback, Runnable foundCallback) {
         stopRequested = false;
 
-        // заранее компилируем паттерн
         final Pattern compiledPattern;
         try {
             compiledPattern = buildSearchPattern(request);
@@ -75,10 +74,10 @@ public class SearchCoordinator {
 
         db.prepareSearchSchema(chatId);
 
-        long fromMessageId = 0L;        // старт с самых новых
+        long fromMessageId = 0L;
         boolean reachedEnd = false;
         int totalMessagesProcessed = 0;
-        final int MAX_MESSAGES = 300_000; // страховка
+        final int MAX_MESSAGES = 300_000;
 
         while (!stopRequested && !reachedEnd && totalMessagesProcessed < MAX_MESSAGES) {
             ObjectNode req = MAPPER.createObjectNode();
