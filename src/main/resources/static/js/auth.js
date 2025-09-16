@@ -2,7 +2,7 @@
 /** Скрипт страницы авторизации через TDLib: старт, подтверждение кода, редирект при READY. */
 
 // маршруты и «готовые» статусы
-const PATHS = { APP: '/', AUTH: '/auth.html' };
+const PATHS = {APP: '/', AUTH: '/auth.html'};
 const READY_STATES = new Set(['READY', 'AUTHORIZED', 'LOGGED_IN']);
 
 let __redirecting = false;
@@ -23,7 +23,8 @@ function safeRedirect(url) {
         setTimeout(() => {
             try {
                 window.location.href = url;
-            } catch {}
+            } catch {
+            }
         }, 150);
     }
 
@@ -34,19 +35,25 @@ function safeRedirect(url) {
 }
 
 
-
 // простой клиент REST
 class Api {
     async request(url, opt = {}) {
-        const r  = await fetch(url, {headers: {'Content-Type': 'application/json'}, ...opt});
+        const r = await fetch(url, {headers: {'Content-Type': 'application/json'}, ...opt});
         const ct = r.headers.get('content-type') || '';
         const data = await (ct.includes('application/json') ? r.json() : r.text()).catch(() => null);
         if (!r.ok) throw new Error(typeof data === 'string' ? data : (data?.message || r.statusText));
         return data;
     }
-    get(url)           { return this.request(url, {method: 'GET'}); }
-    post(url, body)    { return this.request(url, {method: 'POST', body: JSON.stringify(body || {})}); }
+
+    get(url) {
+        return this.request(url, {method: 'GET'});
+    }
+
+    post(url, body) {
+        return this.request(url, {method: 'POST', body: JSON.stringify(body || {})});
+    }
 }
+
 const api = new Api();
 
 // DOM
@@ -118,40 +125,39 @@ function hydrateFromStorage() {
     }
 }
 
-let pollTimer = null;
-// цикл опроса статуса авторизации до READY
+let isRedirecting = false;
+
 function pollStatus() {
     clearInterval(pollTimer);
 
     pollTimer = setInterval(async () => {
-        if (__redirecting) {
-            clearInterval(pollTimer);
-            return;
-        }
+        if (isRedirecting) return; // Защита от повторных редиректов
 
         try {
             const st = await api.get('/api/webauth/status');
             if (!st?.ok) return;
 
             if (READY_STATES.has(st.state)) {
+                isRedirecting = true;
                 s2.status.textContent = 'Готово! Переход...';
                 clearInterval(pollTimer);
-                // Добавляем задержку для стабилизации
-                setTimeout(() => safeRedirect(PATHS.APP), 500);
+                safeRedirect(PATHS.APP);
             }
-            // ... остальная логика
         } catch (error) {
+            if (error.name === 'TypeError' && error.message.includes('network')) {
+                console.warn('Проблемы с сетью, повторяем запрос...');
+                return;
+            }
             console.warn('Ошибка опроса статуса:', error);
         }
-    }, 1500); // Увеличиваем интервал до 1.5 секунд
+    }, 1500);
 }
-
 
 // шаг 1 — отправка кода
 s1.btn.addEventListener('click', async () => {
-    const apiId    = parseInt((s1.apiId.value || '').trim(), 10);
-    const apiHash  = (s1.apiHash.value || '').trim();
-    const phone    = (s1.phone.value || '').trim();
+    const apiId = parseInt((s1.apiId.value || '').trim(), 10);
+    const apiHash = (s1.apiHash.value || '').trim();
+    const phone = (s1.phone.value || '').trim();
     const useTestDc = !!s1.useTestDc.checked;
 
     // проверяет заполнение полей
@@ -198,13 +204,12 @@ s2.btn.addEventListener('click', async () => {
     s2.btn.disabled = true;
     s2.status.textContent = 'Подтверждаем...';
     try {
-        const res = await api.post('/api/webauth/verify', { code, password });
+        const res = await api.post('/api/webauth/verify', {code, password});
         if (!res.ok) throw new Error(res.message || 'Ошибка');
 
         // если сразу READY — уходим в приложение
         if (READY_STATES.has(res.state)) {
             clearInterval(pollTimer);
-            safeRedirect(PATHS.APP);
             return;
         }
 
@@ -227,7 +232,8 @@ s2.btn.addEventListener('click', async () => {
         hydrateFromStorage();
         const st = await api.get('/api/webauth/status');
         if (st.ok && READY_STATES.has(st.state)) safeRedirect(PATHS.APP);
-    } catch {}
+    } catch {
+    }
 })();
 
 document.getElementById('btnClearDb').addEventListener('click', async () => {

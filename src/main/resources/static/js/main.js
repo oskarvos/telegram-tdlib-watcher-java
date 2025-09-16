@@ -12,9 +12,26 @@ const PATHS = { APP: '/', AUTH: '/auth.html' };
 const READY_STATES = new Set(['READY', 'AUTHORIZED', 'LOGGED_IN']);
 
 function safeRedirect(url) {
-    try { window.location.replace(url); } catch {}
-    try { window.location.href = url; } catch {}
-    setTimeout(() => { try { window.location.assign(url); } catch {} }, 150);
+    if (isRedirecting) return;
+    isRedirecting = true;
+
+    // Добавляем небольшую задержку для стабилизации
+    setTimeout(() => {
+        try {
+            window.location.replace(url);
+        } catch {
+            try {
+                window.location.href = url;
+            } catch {
+                // Фолбэк на случай ошибок
+                setTimeout(() => {
+                    try {
+                        window.location.assign(url);
+                    } catch {}
+                }, 150);
+            }
+        }
+    }, 300);
 }
 
 async function ensureAuthorizedOrRedirect() {
