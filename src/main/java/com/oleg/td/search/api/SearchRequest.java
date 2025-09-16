@@ -1,9 +1,7 @@
 package com.oleg.td.search.api;
 
-import java.util.List;
-
 public class SearchRequest {
-    private List<String> chats;
+    private String chat;  // изменено с List<String> на String
     private String keyword;
     private boolean caseSensitive;
     private boolean useRegex;
@@ -12,24 +10,24 @@ public class SearchRequest {
     public SearchRequest() {
     }
 
-    public SearchRequest(List<String> chats,
+    public SearchRequest(String chat,  // изменено
                          String keyword,
                          boolean caseSensitive,
                          boolean useRegex,
                          boolean wholeWord) {
-        this.chats = chats;
+        this.chat = chat;
         this.keyword = keyword;
         this.caseSensitive = caseSensitive;
         this.useRegex = useRegex;
         this.wholeWord = wholeWord;
     }
 
-    public List<String> getChats() {
-        return chats;
+    public String getChat() {  // изменено
+        return chat;
     }
 
-    public void setChats(List<String> chats) {
-        this.chats = chats;
+    public void setChat(String chat) {  // изменено
+        this.chat = chat;
     }
 
     public String getKeyword() {

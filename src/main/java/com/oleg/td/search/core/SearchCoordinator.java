@@ -46,12 +46,13 @@ public class SearchCoordinator {
      * - Пишет совпадения в SEARCH-БД (таблица search_results).
      */
     // SearchCoordinator.java
+
     /**
      * Поиск по всей истории выбранных чатов.
      * - Поддерживает подстроку/regex/целое слово (регистрозависимость опциональна).
      * - Ищет в тексте сообщений и в caption медиасообщений.
      * - Пишет совпадения в SEARCH-БД (таблица search_results).
-     *
+     * <p>
      * Исправление: корректный переход по истории TDLib:
      * после пакета используем from_message_id = oldestMessageId - 1,
      * иначе TDLib будет возвращать тот же пакет бесконечно.
@@ -68,103 +69,97 @@ public class SearchCoordinator {
             return;
         }
 
-        for (String chatRef : request.getChats()) {
-            if (stopRequested) {
-                log.info("Поиск прерван пользователем");
+        long chatId = resolver.resolveFlexible(request.getChat().trim());  // изменено
+        String chatName = resolver.getChatTitle(chatId);
+        log.info("Начинаем поиск в чате '{}' по ключу: {}", chatName, request.getKeyword());
+
+        db.prepareSearchSchema(chatId);
+
+        long fromMessageId = 0L;        // старт с самых новых
+        boolean reachedEnd = false;
+        int totalMessagesProcessed = 0;
+        final int MAX_MESSAGES = 300_000; // страховка
+
+        while (!stopRequested && !reachedEnd && totalMessagesProcessed < MAX_MESSAGES) {
+            ObjectNode req = MAPPER.createObjectNode();
+            req.put("@type", "getChatHistory");
+            req.put("chat_id", chatId);
+            req.put("from_message_id", fromMessageId);
+            req.put("offset", 0);
+            req.put("limit", 100);
+            req.put("only_local", false);
+
+            ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.MAIN);
+            if (!"messages".equals(resp.path("@type").asText())) {
+                log.warn("Ответ TDLib отличен от 'messages': {}", resp.path("@type").asText());
                 break;
             }
 
-            long chatId = resolver.resolveFlexible(chatRef.trim());
-            String chatName = resolver.getChatTitle(chatId);
-            log.info("Начинаем поиск в чате '{}' по ключу: {}", chatName, request.getKeyword());
-
-            db.prepareSearchSchema(chatId);
-
-            long fromMessageId = 0L;        // старт с самых новых
-            boolean reachedEnd = false;
-            int totalMessagesProcessed = 0;
-            final int MAX_MESSAGES = 300_000; // страховка
-
-            while (!stopRequested && !reachedEnd && totalMessagesProcessed < MAX_MESSAGES) {
-                ObjectNode req = MAPPER.createObjectNode();
-                req.put("@type", "getChatHistory");
-                req.put("chat_id", chatId);
-                req.put("from_message_id", fromMessageId);
-                req.put("offset", 0);
-                req.put("limit", 100);
-                req.put("only_local", false);
-
-                ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.MAIN);
-                if (!"messages".equals(resp.path("@type").asText())) {
-                    log.warn("Ответ TDLib отличен от 'messages': {}", resp.path("@type").asText());
-                    break;
-                }
-
-                ArrayNode messages = (ArrayNode) resp.path("messages");
-                if (messages == null || messages.size() == 0) {
-                    log.info("Чат '{}': достигнут край истории (сообщений больше нет)", chatName);
-                    reachedEnd = true;
-                    break;
-                }
-
-                long oldestMessageId = Long.MAX_VALUE;
-
-                for (JsonNode msg : messages) {
-                    if (stopRequested) break;
-                    if (totalMessagesProcessed >= MAX_MESSAGES) break;
-
-                    try {
-                        processMessageForSearch(chatId, chatName, msg, request, foundCallback, compiledPattern);
-                    } catch (Exception ex) {
-                        long mid = msg.path("id").asLong();
-                        log.error("Ошибка обработки сообщения {} из чата '{}': {}", mid, chatName, ex.getMessage(), ex);
-                    } finally {
-                        totalMessagesProcessed++;
-                        if (progressCallback != null) progressCallback.run();
-                    }
-
-                    long mid = msg.path("id").asLong();
-                    if (mid < oldestMessageId) oldestMessageId = mid;
-                }
-
-                // КЛЮЧЕВАЯ ПРАВКА: смещаемся на oldest - 1, а не на oldest.
-                if (!reachedEnd) {
-                    if (oldestMessageId != Long.MAX_VALUE) {
-                        long nextFrom = oldestMessageId;
-
-                        // Гвард 1: если дошли до начала (id <= 0), считаем, что история закончилась
-                        if (nextFrom <= 0L) {
-                            reachedEnd = true;
-                        } else {
-                            // Гвард 2: если TDLib по какой-то причине вернул тот же fromMessageId (например, при редких аномалиях),
-                            // принудительно завершаем, чтобы не зациклиться.
-                            if (fromMessageId == nextFrom) {
-                                log.warn("Зафиксирован повтор from_message_id={} в чате '{}'. Прерываем, чтобы избежать цикла.",
-                                        nextFrom, chatName);
-                                reachedEnd = true;
-                            } else {
-                                fromMessageId = nextFrom;
-                            }
-                        }
-                    } else {
-                        // Если по какой-то причине не вычислили oldestMessageId, заканчиваем
-                        reachedEnd = true;
-                    }
-
-                    try {
-                        Thread.sleep(100); // щадящая пауза
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
+            ArrayNode messages = (ArrayNode) resp.path("messages");
+            if (messages == null || messages.size() == 0) {
+                log.info("Чат '{}': достигнут край истории (сообщений больше нет)", chatName);
+                reachedEnd = true;
+                break;
             }
 
-            log.info("Поиск в чате '{}' завершён. Обработано сообщений: {}", chatName, totalMessagesProcessed);
+            long oldestMessageId = Long.MAX_VALUE;
+
+            for (JsonNode msg : messages) {
+                if (stopRequested) break;
+                if (totalMessagesProcessed >= MAX_MESSAGES) break;
+
+                try {
+                    processMessageForSearch(chatId, chatName, msg, request, foundCallback, compiledPattern);
+                } catch (Exception ex) {
+                    long mid = msg.path("id").asLong();
+                    log.error("Ошибка обработки сообщения {} из чата '{}': {}", mid, chatName, ex.getMessage(), ex);
+                } finally {
+                    totalMessagesProcessed++;
+                    if (progressCallback != null) progressCallback.run();
+                }
+
+                long mid = msg.path("id").asLong();
+                if (mid < oldestMessageId) oldestMessageId = mid;
+            }
+
+            // КЛЮЧЕВАЯ ПРАВКА: смещаемся на oldest - 1, а не на oldest.
+            if (!reachedEnd) {
+                if (oldestMessageId != Long.MAX_VALUE) {
+                    long nextFrom = oldestMessageId;
+
+                    // Гвард 1: если дошли до начала (id <= 0), считаем, что история закончилась
+                    if (nextFrom <= 0L) {
+                        reachedEnd = true;
+                    } else {
+                        // Гвард 2: если TDLib по какой-то причине вернул тот же fromMessageId (например, при редких аномалиях),
+                        // принудительно завершаем, чтобы не зациклиться.
+                        if (fromMessageId == nextFrom) {
+                            log.warn("Зафиксирован повтор from_message_id={} в чате '{}'. Прерываем, чтобы избежать цикла.",
+                                    nextFrom, chatName);
+                            reachedEnd = true;
+                        } else {
+                            fromMessageId = nextFrom;
+                        }
+                    }
+                } else {
+                    // Если по какой-то причине не вычислили oldestMessageId, заканчиваем
+                    reachedEnd = true;
+                }
+
+                try {
+                    Thread.sleep(100); // щадящая пауза
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
         }
+        log.info("Поиск в чате '{}' завершён. Обработано сообщений: {}", chatName, totalMessagesProcessed);
     }
 
-    /** Проверка одного сообщения: текст + подписи у медиа (c wholeWord/regex логикой) */
+    /**
+     * Проверка одного сообщения: текст + подписи у медиа (c wholeWord/regex логикой)
+     */
     private void processMessageForSearch(long chatId, String chatTitle, JsonNode msg,
                                          SearchRequest request, Runnable foundCallback,
                                          Pattern compiledPattern) {
@@ -238,7 +233,9 @@ public class SearchCoordinator {
         }
     }
 
-    /** Отображаемое имя отправителя */
+    /**
+     * Отображаемое имя отправителя
+     */
     private String getSenderName(String senderIdJson) {
         if (senderIdJson == null || senderIdJson.isBlank()) return "";
 
@@ -261,9 +258,9 @@ public class SearchCoordinator {
                 ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.MAIN);
                 if ("user".equals(resp.path("@type").asText())) {
                     String first = resp.path("first_name").asText("");
-                    String last  = resp.path("last_name").asText("");
+                    String last = resp.path("last_name").asText("");
                     String uname = resp.path("username").asText("");
-                    String name  = (first + " " + last).trim();
+                    String name = (first + " " + last).trim();
                     if (name.isEmpty()) name = uname.isEmpty() ? String.valueOf(uid) : "@" + uname;
 
                     userNameCache.put(uid, name);
@@ -291,7 +288,8 @@ public class SearchCoordinator {
                     return title;
                 }
             }
-        } catch (Exception ignore) { }
+        } catch (Exception ignore) {
+        }
 
         // Фолбэк — как было
         return senderIdJson;
@@ -299,9 +297,9 @@ public class SearchCoordinator {
 
     /**
      * Собирает паттерн с учётом:
-     *  - useRegex: пользовательский RegEx (wholeWord игнорируется)
-     *  - wholeWord: совпадение только целого слова (Unicode-границы)
-     *  - caseSensitive: учитывать регистр или нет
+     * - useRegex: пользовательский RegEx (wholeWord игнорируется)
+     * - wholeWord: совпадение только целого слова (Unicode-границы)
+     * - caseSensitive: учитывать регистр или нет
      */
     private Pattern buildSearchPattern(SearchRequest req) {
         String kw = req.getKeyword() == null ? "" : req.getKeyword();
@@ -331,7 +329,9 @@ public class SearchCoordinator {
         }
     }
 
-    /** Внешний запрос на остановку */
+    /**
+     * Внешний запрос на остановку
+     */
     public void stop() {
         stopRequested = true;
     }

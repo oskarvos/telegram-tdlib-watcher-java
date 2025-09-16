@@ -30,19 +30,15 @@ public class SearchController {
         this.databaseManager = databaseManager;
     }
 
-    // SearchController.java
     @PostMapping("/start")
     public Map<String, Object> start(@RequestBody SearchRequest req) {
         Map<String, Object> resp = new HashMap<>();
         try {
-            if (req.getChats() == null || req.getChats().isEmpty()) {
-                throw new IllegalArgumentException("Не переданы чаты для поиска");
+            if (req.getChat() == null || req.getChat().isEmpty()) {
+                throw new IllegalArgumentException("Не передан чат для поиска");
             }
-            // (опц.) провалидируем чаты сразу — чтобы не падать в фоне:
-            for (String ref : req.getChats()) {
-                chatResolver.resolveFlexible(ref.trim()); // если невалидно — кинет ошибку здесь
-            }
-            // не ограничиваем длину keyword — UI может слать regex
+            chatResolver.resolveFlexible(req.getChat().trim());
+
             searchService.startSearch(req);
             resp.put("started", true);
             resp.put("message", "Поиск запущен");
@@ -52,7 +48,6 @@ public class SearchController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
     }
-
 
     @PostMapping("/stop")
     public void stop() {

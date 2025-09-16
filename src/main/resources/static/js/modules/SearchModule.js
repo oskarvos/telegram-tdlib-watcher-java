@@ -133,8 +133,8 @@ export class SearchModule extends ApiClient {
             return;
         }
 
-        if (!req.chats.length) {
-            this.setStatus('Ошибка: не указаны чаты', '#ffecec', '#e74c3c');
+        if (!req.chat) {
+            this.setStatus('Ошибка: не указан чат', '#ffecec', '#e74c3c');
             return;
         }
         if (!req.useRegex && req.keyword.length > this.MAX_KEYWORD_LEN) {
@@ -154,7 +154,7 @@ export class SearchModule extends ApiClient {
 
         try {
             this.setStatus('Готовим статистику…', '#edf7ff', '#2c3e50');
-            this.baselineFoundTotal = await this.#computeBaselineTotal(req.chats);
+            this.baselineFoundTotal = await this.#computeBaselineTotal(req.chat);
 
             await this.post('/start', req);
             this.notify.info('Поиск запущен');
@@ -210,7 +210,7 @@ export class SearchModule extends ApiClient {
 
     // ===== внутренние =====
     #collect() {
-        const chats = splitChats(this.dom.chats?.value || '');
+        const chat = normalizeChat(this.dom.chats?.value || '');  // изменено
         const lengthMode = !!this.dom.lengthMode?.checked;
         let useRegex = !!this.dom.regex?.checked;
         let wholeWord = !!this.dom.wholeWord?.checked;
@@ -219,7 +219,6 @@ export class SearchModule extends ApiClient {
         if (lengthMode) {
             const L = Number(this.dom.lengthValue?.value) || 0;
             if (L < 1 || L > 30) throw new Error(`Длина слова должна быть 1–30`);
-            // ровно L символов [A-Za-z0-9_]
             keyword = `(^|[^A-Za-z0-9_])[A-Za-z0-9_]{${L}}(?![A-Za-z0-9_])`;
             useRegex = true;
             wholeWord = false;
@@ -227,7 +226,7 @@ export class SearchModule extends ApiClient {
         if (useRegex) wholeWord = false;
 
         return {
-            chats,
+            chat,  // изменено (было chats)
             keyword,
             caseSensitive: !!this.dom.case?.checked,
             useRegex,
@@ -407,12 +406,10 @@ export class SearchModule extends ApiClient {
         this.dom.kwLenHint.textContent = `${len}/${this.MAX_KEYWORD_LEN}`;
     }
 
-    async #computeBaselineTotal(chats) {
+    async #computeBaselineTotal(chat) {
         try {
-            const lists = await Promise.all(
-                chats.map(c => this.get('/results?chat=' + encodeURIComponent(c)).catch(() => []))
-            );
-            return lists.reduce((sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0), 0);
+            const arr = await this.get('/results?chat=' + encodeURIComponent(chat)).catch(() => []);
+            return Array.isArray(arr) ? arr.length : 0;
         } catch { return 0; }
     }
 
