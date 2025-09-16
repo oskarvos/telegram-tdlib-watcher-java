@@ -130,7 +130,7 @@ public class SearchCoordinator {
                 // КЛЮЧЕВАЯ ПРАВКА: смещаемся на oldest - 1, а не на oldest.
                 if (!reachedEnd) {
                     if (oldestMessageId != Long.MAX_VALUE) {
-                        long nextFrom = oldestMessageId - 1L;
+                        long nextFrom = oldestMessageId;
 
                         // Гвард 1: если дошли до начала (id <= 0), считаем, что история закончилась
                         if (nextFrom <= 0L) {
