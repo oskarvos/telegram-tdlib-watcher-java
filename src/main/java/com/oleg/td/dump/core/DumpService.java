@@ -2,9 +2,7 @@ package com.oleg.td.dump.core;
 
 import com.oleg.td.dump.api.DumpProgress;
 import com.oleg.td.dump.api.DumpRequest;
-import com.oleg.td.dump.persistence.DumpDbManager;
 import com.oleg.td.integrations.tdlibs.AuthFlow;
-import com.oleg.td.integrations.telegram.ChatResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -34,22 +32,16 @@ public class DumpService {
 
     private final ConcurrentHashMap<String, AtomicInteger> docsByExt = new ConcurrentHashMap<>(); // счётчик по расширениям
 
-    private final AuthFlow authFlow;                     // авторизация TDLib
-    private final ChatDumpCoordinator coordinator;       // координатор дампа
-    private final ChatResolver resolver;                 // резолвер чатов
-    private final DumpDbManager db;                      // менеджер БД
+    private final AuthFlow authFlow;               // авторизация TDLib
+    private final ChatDumpCoordinator coordinator; // координатор дампа
 
     public DumpService(AuthFlow authFlow,
-                       ChatDumpCoordinator coordinator,
-                       ChatResolver resolver,
-                       DumpDbManager db) {
+                       ChatDumpCoordinator coordinator) {
         this.authFlow = authFlow;
         this.coordinator = coordinator;
-        this.resolver = resolver;
-        this.db = db;
     }
 
-    // старт дампа (без повторного запуска при уже работающем процессе)
+    /** Старт дампа (без повторного запуска при уже работающем процессе). */
     public synchronized void startDump(DumpRequest request) {
         if (running.get()) { log.warn("Дамп уже выполняется"); return; }
 
@@ -65,19 +57,9 @@ public class DumpService {
 
         new Thread(() -> {
             try {
-                if (!authFlow.isAuthorized()) { // проверяет статус авторизации
+                if (!authFlow.isAuthorized()) {
                     log.error("Авторизация не выполнена — дамп прерван");
                     return;
-                }
-
-                // заранее проверим/подготовим схему БД для всех чатов
-                for (String ref : request.getChats()) {
-                    try {
-                        long chatId = resolver.resolveFlexible(ref);
-                        db.prepareSchema(chatId);
-                    } catch (Exception ex) {
-                        log.error("Не удалось подготовить схему для '{}': {}", ref, ex.getMessage(), ex);
-                    }
                 }
 
                 log.info("Запуск дампа чатов…");
@@ -105,13 +87,13 @@ public class DumpService {
         }, "dump-thread").start();
     }
 
-    // запрос на остановку
+    /** Запрос на остановку. */
     public void stopDump() {
         coordinator.stop();
         log.info("Получен сигнал остановки дампа");
     }
 
-    // получить сводку прогресса
+    /** Получить сводку прогресса. */
     public DumpProgress getProgress() {
         DumpProgress dp = new DumpProgress(processed.get(), running.get());
         dp.setSavedMessages(savedMessages.get());
@@ -129,9 +111,7 @@ public class DumpService {
         return dp;
     }
 
-    public boolean isRunning() { return running.get(); }
-
-    // мягкая остановка с ожиданием
+    /** Мягкая остановка с ожиданием. */
     public void stopAndAwait(long timeoutMs) {
         coordinator.stop();
         long until = System.currentTimeMillis() + timeoutMs;

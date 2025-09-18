@@ -10,7 +10,6 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
-
 /**
  * // Класс выполняет инициализацию приложения после старта Spring Boot.
  * // Подключает слушатели TDLib и запускает авторизацию (если заданы параметры).

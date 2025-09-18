@@ -1,3 +1,4 @@
+// src/main/java/com/oleg/td/dump/persistence/DumpDbManager.java
 package com.oleg.td.dump.persistence;
 
 import com.oleg.td.integrations.telegram.ChatResolver;
@@ -9,13 +10,10 @@ import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.sql.*;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.regex.Pattern;
 
 /**
  * Менеджер DUMP-БД: схема, сессии, сохранение и очистка.
- * Логика сохранена, код упорядочен и русифицирован.
  */
 @Component
 public class DumpDbManager {
@@ -26,12 +24,12 @@ public class DumpDbManager {
 
     private final Path dbDir    = Paths.get("tdlib", "db");    // каталог БД
     private final Path filesDir = Paths.get("tdlib", "files"); // каталог файлов
-    private final ChatResolver chatResolver;                   // заголовки чатов
+    private final ChatResolver chatResolver;                               // заголовки чатов
 
     public DumpDbManager(ChatResolver chatResolver) {
         this.chatResolver = chatResolver;
-        try { Files.createDirectories(dbDir); }   catch (Exception ignore) {}   // создаём каталог БД
-        try { Files.createDirectories(filesDir);} catch (Exception ignore) {}   // создаём каталог файлов
+        try { Files.createDirectories(dbDir); }   catch (Exception ignore) {}
+        try { Files.createDirectories(filesDir);} catch (Exception ignore) {}
     }
 
     // открывает сессию для чата
@@ -47,8 +45,8 @@ public class DumpDbManager {
         return new DbSession(chatId, c);
     }
 
-    // гарантирует таблицу metadata
-    public void ensureDumpMetadata(long chatId) {
+    // гарантирует таблицу metadata (внутренний помощник)
+    private void ensureDumpMetadata(long chatId) {
         try (Connection c = openDump(chatId); Statement s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS " + q("metadata") + " (key TEXT PRIMARY KEY, value TEXT)");
         } catch (SQLException e) {
@@ -146,101 +144,6 @@ public class DumpDbManager {
     public long getLastSavedDocumentId(long chatId) { try (Connection c = openDump(chatId)) { return maxOf(c, "documents"); } catch (SQLException e) { log.warn("Последний documents: {}", e.getMessage()); return 0L; } }
     public long getLastSavedLinkId(long chatId)     { try (Connection c = openDump(chatId)) { return maxOf(c, "links");     } catch (SQLException e) { log.warn("Последний links: {}", e.getMessage());     return 0L; } }
 
-    // совместимый одноразовый save сообщения
-    public void saveMessage(long chatId, long messageId, long date, String senderId, Long replyTo, String text) {
-        final String sql = "INSERT OR IGNORE INTO messages(message_id,date,sender_id,reply_to,text) VALUES(?,?,?,?,?)";
-        try (Connection c = openDump(chatId); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setLong(1, messageId);
-            ps.setLong(2, date);
-            ps.setString(3, senderId);
-            if (replyTo == null) ps.setNull(4, Types.BIGINT); else ps.setLong(4, replyTo);
-            ps.setString(5, text);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            log.error("Ошибка сохранения сообщения: {}", e.getMessage(), e);
-        }
-    }
-
-    // совместимый одноразовый save фото
-    public void savePhoto(long chatId, long messageId, Integer fileId, String remoteId, Integer w, Integer h, String caption, String filePath) {
-        final String sql = "INSERT OR IGNORE INTO photos(message_id,file_id,remote_id,width,height,caption,file_path) VALUES(?,?,?,?,?,?,?)";
-        try (Connection c = openDump(chatId); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setLong(1, messageId);
-            if (fileId == null) ps.setNull(2, Types.INTEGER); else ps.setInt(2, fileId);
-            ps.setString(3, remoteId);
-            if (w == null) ps.setNull(4, Types.INTEGER); else ps.setInt(4, w);
-            if (h == null) ps.setNull(5, Types.INTEGER); else ps.setInt(5, h);
-            ps.setString(6, caption);
-            ps.setString(7, filePath);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            log.error("Ошибка сохранения фото: {}", e.getMessage(), e);
-        }
-    }
-
-    // совместимый одноразовый save видео
-    public void saveVideo(long chatId, long messageId, Integer fileId, String remoteId, Integer duration, Integer w, Integer h, String caption, String filePath) {
-        final String sql = "INSERT OR IGNORE INTO videos(message_id,file_id,remote_id,duration,width,height,caption,file_path) VALUES(?,?,?,?,?,?,?,?)";
-        try (Connection c = openDump(chatId); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setLong(1, messageId);
-            if (fileId == null) ps.setNull(2, Types.INTEGER); else ps.setInt(2, fileId);
-            ps.setString(3, remoteId);
-            if (duration == null) ps.setNull(4, Types.INTEGER); else ps.setInt(4, duration);
-            if (w == null) ps.setNull(5, Types.INTEGER); else ps.setInt(5, w);
-            if (h == null) ps.setNull(6, Types.INTEGER); else ps.setInt(6, h);
-            ps.setString(7, caption);
-            ps.setString(8, filePath);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            log.error("Ошибка сохранения видео: {}", e.getMessage(), e);
-        }
-    }
-
-    // совместимый одноразовый save аудио
-    public void saveAudio(long chatId, long messageId, Integer fileId, String remoteId, Integer duration, String mime, String filePath) {
-        final String sql = "INSERT OR IGNORE INTO audio(message_id,file_id,remote_id,duration,mime,file_path) VALUES(?,?,?,?,?,?)";
-        try (Connection c = openDump(chatId); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setLong(1, messageId);
-            if (fileId == null) ps.setNull(2, Types.INTEGER); else ps.setInt(2, fileId);
-            ps.setString(3, remoteId);
-            if (duration == null) ps.setNull(4, Types.INTEGER); else ps.setInt(4, duration);
-            ps.setString(5, mime);
-            ps.setString(6, filePath);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            log.error("Ошибка сохранения аудио: {}", e.getMessage(), e);
-        }
-    }
-
-    // совместимый одноразовый save документа
-    public void saveDocument(long chatId, long messageId, Integer fileId, String remoteId, String fileName, String mimeType, String filePath) {
-        final String sql = "INSERT OR IGNORE INTO documents(message_id,file_id,remote_id,file_name,mime_type,file_path) VALUES(?,?,?,?,?,?)";
-        try (Connection c = openDump(chatId); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setLong(1, messageId);
-            if (fileId == null) ps.setNull(2, Types.INTEGER); else ps.setInt(2, fileId);
-            ps.setString(3, remoteId);
-            ps.setString(4, fileName);
-            ps.setString(5, mimeType);
-            ps.setString(6, filePath);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            log.error("Ошибка сохранения документа: {}", e.getMessage(), e);
-        }
-    }
-
-    // совместимый одноразовый save ссылки
-    public void saveLink(long chatId, long messageId, String url, String context) {
-        final String sql = "INSERT OR IGNORE INTO links(message_id,url,context) VALUES(?,?,?)";
-        try (Connection c = openDump(chatId); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setLong(1, messageId);
-            ps.setString(2, url);
-            ps.setString(3, context);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            log.error("Ошибка сохранения ссылки: {}", e.getMessage(), e);
-        }
-    }
-
     // удаляет все DUMP-БД и очищает tdlib/files/*
     public void clearDumpDatabasesAndDeleteFiles() {
         try { Files.createDirectories(dbDir); } catch (Exception ignore) {}
@@ -254,7 +157,7 @@ public class DumpDbManager {
         }
 
         try { Files.createDirectories(filesDir); } catch (Exception ignore) {}
-        if (!Files.isDirectory(filesDir)) { // проверяет наличие каталога
+        if (!Files.isDirectory(filesDir)) {
             log.warn("Каталог tdlib/files не найден — очистка пропущена");
             return;
         }
@@ -265,7 +168,7 @@ public class DumpDbManager {
                     deleteDirectoryContents(sub);
                     log.info("Очищено содержимое {}", sub);
                 } else {
-                    try { Files.deleteIfExists(sub); } // удаляет одиночный файл
+                    try { Files.deleteIfExists(sub); }
                     catch (Exception ex) { log.warn("Не удалось удалить файл {}: {}", sub, ex.getMessage()); }
                 }
             }
@@ -275,21 +178,21 @@ public class DumpDbManager {
     }
 
     public final class DbSession implements AutoCloseable {
-        private static final int BATCH_LIMIT = 1000;            // размер батча
+        private static final int BATCH_LIMIT = 1000;
 
-        private final long chatId;                              // чат
-        private final Connection c;                             // соединение
+        private final long chatId;
+        private final Connection c;
 
-        private final PreparedStatement insMsg;                 // stmt сообщения
-        private final PreparedStatement insPhoto;               // stmt фото
-        private final PreparedStatement insVideo;               // stmt видео
-        private final PreparedStatement insAudio;               // stmt аудио
-        private final PreparedStatement insDoc;                 // stmt документы
-        private final PreparedStatement insLink;                // stmt ссылки
-        private final PreparedStatement selMeta;                // stmt select meta
-        private final PreparedStatement upsertMeta;             // stmt upsert meta
+        private final PreparedStatement insMsg;
+        private final PreparedStatement insPhoto;
+        private final PreparedStatement insVideo;
+        private final PreparedStatement insAudio;
+        private final PreparedStatement insDoc;
+        private final PreparedStatement insLink;
+        private final PreparedStatement selMeta;
+        private final PreparedStatement upsertMeta;
 
-        private int pendingOps = 0;                             // счётчик до коммита
+        private int pendingOps = 0;
 
         private DbSession(long chatId, Connection c) throws SQLException {
             this.chatId = chatId;
@@ -306,14 +209,13 @@ public class DumpDbManager {
             upsertMeta = c.prepareStatement("INSERT OR REPLACE INTO " + q("metadata") + " (key,value) VALUES(?,?)");
         }
 
-        // инкрементирует счётчик и коммитит по достижении лимита
         private void bumpAndMaybeCommit() throws SQLException {
             if (++pendingOps >= BATCH_LIMIT) { c.commit(); pendingOps = 0; }
         }
 
-        // явный коммит
         public void commit() throws SQLException {
-            if (pendingOps > 0) { c.commit(); pendingOps = 0; } else { c.commit(); }
+            c.commit();
+            pendingOps = 0;
         }
 
         // чтение метаданных
@@ -343,7 +245,7 @@ public class DumpDbManager {
             }
         }
 
-        // сохранение сообщения
+        // сохранение сущностей
         public void saveMessage(long messageId, long date, String senderId, Long replyTo, String text) {
             try {
                 insMsg.clearParameters();
@@ -359,7 +261,6 @@ public class DumpDbManager {
             }
         }
 
-        // сохранение фото
         public void savePhoto(long messageId, Integer fileId, String remoteId,
                               Integer w, Integer h, String caption, String filePath) {
             try {
@@ -378,7 +279,6 @@ public class DumpDbManager {
             }
         }
 
-        // сохранение видео
         public void saveVideo(long messageId, Integer fileId, String remoteId,
                               Integer duration, Integer w, Integer h, String caption, String filePath) {
             try {
@@ -398,7 +298,6 @@ public class DumpDbManager {
             }
         }
 
-        // сохранение аудио
         public void saveAudio(long messageId, Integer fileId, String remoteId,
                               Integer duration, String mime, String filePath) {
             try {
@@ -416,7 +315,6 @@ public class DumpDbManager {
             }
         }
 
-        // сохранение документа
         public void saveDocument(long messageId, Integer fileId, String remoteId,
                                  String fileName, String mimeType, String filePath) {
             try {
@@ -434,7 +332,6 @@ public class DumpDbManager {
             }
         }
 
-        // сохранение ссылки
         public void saveLink(long messageId, String url, String context) {
             try {
                 insLink.clearParameters();
@@ -492,7 +389,7 @@ public class DumpDbManager {
 
     // очищает содержимое каталога, но не сам корень
     private void deleteDirectoryContents(Path dir) throws IOException {
-        if (!Files.exists(dir)) return; // проверяет наличие каталога
+        if (!Files.exists(dir)) return;
         Files.walkFileTree(dir, new SimpleFileVisitor<>() {
             @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
                 Files.deleteIfExists(file);
@@ -518,9 +415,9 @@ public class DumpDbManager {
     private String safe(String name, long chatId) {
         if (name == null || name.isBlank()) return "unknown_chat";
         String s = INVALID.matcher(name).replaceAll("_").trim();
-        while (s.endsWith(".")) s = s.substring(0, s.length() - 1).trim();   // срезает точки в конце
+        while (s.endsWith(".")) s = s.substring(0, s.length() - 1).trim();
         if (s.isEmpty()) s = "chat_" + Math.abs(chatId);
-        if (s.length() > 100) s = s.substring(0, 100);                       // ограничение длины
+        if (s.length() > 100) s = s.substring(0, 100);
         return s;
     }
 
@@ -532,27 +429,12 @@ public class DumpDbManager {
 
     // открывает соединение SQLite чата
     private Connection openDump(long chatId) throws SQLException {
-        try { Files.createDirectories(dbDir); } catch (Exception ignore) {} // проверяет/создаёт каталог
+        try { Files.createDirectories(dbDir); } catch (Exception ignore) {}
         return DriverManager.getConnection("jdbc:sqlite:" + dumpDbPath(chatId));
     }
 
     // SQL-квотирование идентификатора
     private static String q(String ident) {
         return "\"" + ident.replace("\"", "\"\"") + "\"";
-    }
-
-    @SuppressWarnings("unused")
-    private void dropAllUserTables(Connection c) throws SQLException {
-        List<String> tables = new ArrayList<>();
-        try (PreparedStatement ps = c.prepareStatement("SELECT name FROM sqlite_master WHERE type='table'");
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                String n = rs.getString(1);
-                if (!"sqlite_sequence".equalsIgnoreCase(n)) tables.add(n);
-            }
-        }
-        try (Statement s = c.createStatement()) {
-            for (String t : tables) s.execute("DROP TABLE IF EXISTS " + q(t));
-        }
     }
 }

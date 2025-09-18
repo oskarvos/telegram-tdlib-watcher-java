@@ -131,7 +131,13 @@ public class ChatDumpCoordinator {
                     reqNode.put("limit", 100);
                     reqNode.put("only_local", false);
 
+                    long t0 = System.nanoTime();
                     ObjectNode resp = client.requestWithFloodWaitSyncLimited(reqNode, 60, TdJsonClient.Channel.MAIN);
+                    long ms = (System.nanoTime() - t0) / 1_000_000L;
+                    if (ms > 2000) {
+                        log.warn("getChatHistory took {} ms (possible flood-wait)", ms);
+                    }
+
                     if (!"messages".equals(resp.path("@type").asText())) {
                         log.warn("Ответ TDLib не 'messages': {}", resp.path("@type").asText());
                         break;
@@ -238,7 +244,7 @@ public class ChatDumpCoordinator {
                 listener.onSavedMessage();
             }
             if (request.isLinks() && messageId > lastSavedLinkId) {
-                int cnt = extractLinksFromFormattedText(session, chatId, ft);
+                int cnt = extractLinksFromFormattedText(session, messageId, ft);
                 if (cnt > 0) listener.onSavedLinks(cnt);
             }
         } else {
@@ -269,7 +275,7 @@ public class ChatDumpCoordinator {
             listener.onSavedPhoto();
 
             if (request.isLinks() && messageId > lastSavedLinkId) {
-                int cnt = extractLinksFromFormattedText(session, chatId, captionFT);
+                int cnt = extractLinksFromFormattedText(session, messageId, captionFT);
                 if (cnt > 0) listener.onSavedLinks(cnt);
             }
         }
@@ -293,7 +299,7 @@ public class ChatDumpCoordinator {
             listener.onSavedVideo();
 
             if (request.isLinks() && messageId > lastSavedLinkId) {
-                int cnt = extractLinksFromFormattedText(session, chatId, content.path("caption"));
+                int cnt = extractLinksFromFormattedText(session, messageId, content.path("caption"));
                 if (cnt > 0) listener.onSavedLinks(cnt);
             }
         }
@@ -335,7 +341,7 @@ public class ChatDumpCoordinator {
             JsonNode captionFT = content.path("caption");
 
             if (request.isLinks() && messageId > lastSavedLinkId) {
-                int cnt = extractLinksFromFormattedText(session, chatId, captionFT);
+                int cnt = extractLinksFromFormattedText(session, messageId, captionFT);
                 if (cnt > 0) listener.onSavedLinks(cnt);
             }
 
