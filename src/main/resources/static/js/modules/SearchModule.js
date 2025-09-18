@@ -1,8 +1,8 @@
+// /js/modules/SearchModule.js
 import {ApiClient} from '../apiClient.js';
 import {Notifier}  from '../components/Notifier.js';
 import {Logger}    from '../components/Logger.js';
 import { splitChats, normalizeChat } from '../utils.js';
-
 
 /** Модуль «Поиск» для индексации и поиска сообщений. */
 export class SearchModule extends ApiClient {
@@ -20,7 +20,8 @@ export class SearchModule extends ApiClient {
         this.sort = { key: 'messageDate', dir: 'desc' };// текущая сортировка
         this.baselineFoundTotal = 0;                    // базовый found до старта
 
-        // DOM
+        this._lastNewCount = 0;
+
         this.dom = {
             container:      document.getElementById('searchContainer'),
             chats:          document.getElementById('searchChats'),
@@ -52,6 +53,8 @@ export class SearchModule extends ApiClient {
             wrap.innerHTML = ', новых: <span class="num-new">0</span>';
             statsRight.appendChild(wrap);
             this.dom.newValue = wrap.querySelector('.num-new');
+        } else {
+            this.dom.newValue = statsRight?.querySelector('.num-new') || null;
         }
 
         // защита на maxlength
@@ -145,6 +148,9 @@ export class SearchModule extends ApiClient {
 
         this.saveState();
         this.dom.bar?.classList.remove('green');
+        // сбрасываем «новых» для нового запуска
+        this._lastNewCount = 0;
+
         if (req.keyword.length === 0 && !req.useRegex) {
             this.setStatus('Пустой ключ: индексируем все непустые сообщения/подписи', '#edf7ff', '#2c3e50');
         } else {
@@ -186,6 +192,7 @@ export class SearchModule extends ApiClient {
             this.resultsData = [];
             this.resultsDataRaw = [];
             this.baselineFoundTotal = 0;
+            this._lastNewCount = 0;
             if (this.dom.newValue) this.dom.newValue.textContent = '0';
             this.setProgress(0, 0, false);
         } catch (e) {
@@ -210,7 +217,7 @@ export class SearchModule extends ApiClient {
 
     // ===== внутренние =====
     #collect() {
-        const chat = normalizeChat(this.dom.chats?.value || '');  // изменено
+        const chat = normalizeChat(this.dom.chats?.value || '');
         const lengthMode = !!this.dom.lengthMode?.checked;
         let useRegex = !!this.dom.regex?.checked;
         let wholeWord = !!this.dom.wholeWord?.checked;
@@ -243,11 +250,19 @@ export class SearchModule extends ApiClient {
                 const found = Number(p?.foundMessages ?? p?.found ?? 0);
                 const running = !!(p?.running ?? true);
 
+                // верхняя строка статистики и прогресс-бар
                 this.setProgress(processed, found, !running);
+
+                // total — это база (что было до старта) + найденные в этом запуске
                 const total = (this.baselineFoundTotal || 0) + found;
+
                 if (running) {
+                    // Пока идёт: «новых» == found
+                    this._lastNewCount = found; // поддерживаем актуальным
                     this.setStatus(`Поиск… Обработано: ${processed}, найдено: ${total}, новых: ${found}`, '#edf7ff', '#2c3e50');
                 } else {
+                    // Завершено: фиксируем итоговое Z (новых) так же, как в нижнем сообщении
+                    this._lastNewCount = found;
                     this.dom.bar?.classList.add('green');
                     this.setStatus(`Поиск завершён. Обработано: ${processed}, найдено: ${total}, новых: ${found}`, '#e7f6ec', '#27ae60');
                 }
@@ -266,11 +281,15 @@ export class SearchModule extends ApiClient {
         if (color) this.dom.status.style.color = color;
     }
 
+    /** Верхняя «Статистика …»: processed / найдено: total, новых: fresh */
     setProgress(processed, newFound, complete) {
-        if (this.dom.processedValue) this.dom.processedValue.textContent = String(processed);
-        const total = (this.baselineFoundTotal || 0) + (newFound || 0);
-        if (this.dom.foundValue) this.dom.foundValue.textContent = String(total);
-        if (this.dom.newValue) this.dom.newValue.textContent = String(newFound || 0);
+        const fresh = Number(newFound || 0);
+        const total = (this.baselineFoundTotal || 0) + fresh;
+
+        if (this.dom.processedValue) this.dom.processedValue.textContent = String(processed ?? 0);
+        if (this.dom.foundValue)     this.dom.foundValue.textContent     = String(total);
+        if (this.dom.newValue)       this.dom.newValue.textContent       = String(fresh);
+
         if (this.dom.bar) this.dom.bar.style.width = complete ? '100%' : '0%';
     }
 

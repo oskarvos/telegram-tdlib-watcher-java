@@ -10,7 +10,7 @@ COPY . .
 RUN gradle bootJar --no-daemon
 
 # ===== 2) Сборка TDLib (Ubuntu, glibc) =====
-FROM ubuntu:22.04 AS tdlib-build
+FROM ubuntu:24.04 AS tdlib-build
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git cmake g++ make \

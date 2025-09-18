@@ -1,4 +1,4 @@
-// apiClient
+// /js/apiClient.js
 /** Клиент для HTTP-запросов к backend API. */
 export class ApiClient {
     constructor(baseUrl = '') {
@@ -28,4 +28,3 @@ export class ApiClient {
     post(endpoint, d) { return this.request(endpoint, { method: 'POST', body: JSON.stringify(d || {}) }); } // POST
     del(endpoint) { return this.request(endpoint, { method: 'DELETE' }); }        // DELETE
 }
-
