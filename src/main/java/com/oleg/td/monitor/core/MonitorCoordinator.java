@@ -15,6 +15,8 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
@@ -27,7 +29,11 @@ public class MonitorCoordinator {
     private static final Logger log = LoggerFactory.getLogger(MonitorCoordinator.class);
     private static final ObjectMapper M = new ObjectMapper();
 
-    private final TdJsonClient client;  // TDLib клиент
+    // КЭШИ человекочитаемых имён (как в поиске)
+    private final Map<Long, String> userNameCache = new ConcurrentHashMap<>();
+    private final Map<Long, String> chatTitleCache = new ConcurrentHashMap<>();
+
+    private final TdJsonClient client;   // TDLib клиент
     private final ChatResolver resolver; // резолвер чатов
     private final MonitorDbManager db;   // менеджер БД мониторинга
 
@@ -46,7 +52,7 @@ public class MonitorCoordinator {
         // интервал опроса
         long intervalMs = toMillisFixed(request.getPollInterval());
         if (request.getPollInterval() == null && request.getPollIntervalMs() != null) {
-            intervalMs = nearestAllowed(request.getPollIntervalMs()); // выравнивание к допустимым значениям
+            intervalMs = nearestAllowed(request.getPollIntervalMs()); // выравнивание к допустимым
         }
 
         // компилируем шаблон один раз
@@ -83,8 +89,7 @@ public class MonitorCoordinator {
                 try {
                     String v = db.loadMonitorCheckpoint(chatId);
                     if (v != null && !v.isBlank()) lastSeen = Long.parseLong(v.trim());
-                } catch (Exception ignore) { // безопасный парс
-                }
+                } catch (Exception ignore) { /* safe */ }
 
                 if (lastSeen == 0L) {
                     // получить id самого нового сообщения
@@ -138,18 +143,15 @@ public class MonitorCoordinator {
                                 ZoneId.systemDefault());
 
                         String senderId = msg.path("sender_id").isMissingNode() ? null : msg.path("sender_id").toString();
-                        String senderName = senderId; // при необходимости можно обогащать
+                        String senderName = resolveSenderName(senderId); // ← ЧЕЛОВЕКОЧИТАЕМОЕ ИМЯ
 
-                        String text = null;
-                        JsonNode content = msg.path("content");
-                        if ("messageText".equals(content.path("@type").asText())) {
-                            text = content.path("text").path("text").asText(null);
-                        }
+                        // Текст сообщения + подпись (если медиа)
+                        String aggregatedText = extractTextAndCaption(msg.path("content"));
 
                         if (progressCb != null) progressCb.run();
 
-                        if (text != null && !text.isEmpty() && compiled.matcher(text).find()) {
-                            db.saveMonitorHit(chatId, mid, mdt, request.getKeyword(), text, senderId, senderName);
+                        if (aggregatedText != null && !aggregatedText.isEmpty() && compiled.matcher(aggregatedText).find()) {
+                            db.saveMonitorHit(chatId, mid, mdt, request.getKeyword(), aggregatedText, senderId, senderName);
                             if (foundCb != null) foundCb.run();
                         }
 
@@ -164,13 +166,111 @@ public class MonitorCoordinator {
 
             try {
                 Thread.sleep(intervalMs);
-            } catch (InterruptedException ie) { // прерывание при остановке
+            } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 break;
             }
         }
 
         log.info("Мониторинг остановлен");
+    }
+
+    /** Собрать текст сообщения + подпись к медиа, если есть. */
+    private String extractTextAndCaption(JsonNode content) {
+        if (content == null || content.isMissingNode()) return null;
+        String ctype = content.path("@type").asText();
+        StringBuilder sb = new StringBuilder();
+
+        if ("messageText".equals(ctype)) {
+            String text = content.path("text").path("text").asText(null);
+            if (text != null) sb.append(text);
+        }
+        appendCaptionIfAny(ctype, content, sb);
+
+        String s = sb.toString();
+        return s.isBlank() ? null : s;
+    }
+
+    /** Если у медиа есть caption.text — добавляем. */
+    private static void appendCaptionIfAny(String ctype, JsonNode content, StringBuilder sb) {
+        switch (ctype) {
+            case "messagePhoto":
+            case "messageVideo":
+            case "messageDocument":
+            case "messageAudio":
+                JsonNode captionNode = content.path("caption");
+                if (!captionNode.isMissingNode()) {
+                    String c = captionNode.path("text").asText(null);
+                    if (c != null && !c.isEmpty()) {
+                        if (sb.length() > 0) sb.append('\n');
+                        sb.append(c);
+                    }
+                }
+                break;
+            default:
+                // другие типы нам не важны
+        }
+    }
+
+    /** Человекочитаемое имя отправителя из sender_id JSON. */
+    private String resolveSenderName(String senderIdJson) {
+        if (senderIdJson == null || senderIdJson.isBlank()) return "";
+
+        try {
+            JsonNode n = M.readTree(senderIdJson);
+            String type = n.path("@type").asText();
+
+            // Пользователь
+            if ("messageSenderUser".equals(type)) {
+                long uid = n.path("user_id").asLong(0);
+                if (uid == 0) return senderIdJson;
+
+                String cached = userNameCache.get(uid);
+                if (cached != null) return cached;
+
+                ObjectNode req = M.createObjectNode();
+                req.put("@type", "getUser");
+                req.put("user_id", uid);
+
+                ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.MAIN);
+                if ("user".equals(resp.path("@type").asText())) {
+                    String first = resp.path("first_name").asText("");
+                    String last  = resp.path("last_name").asText("");
+                    String uname = resp.path("username").asText("");
+                    String name  = (first + " " + last).trim();
+                    if (name.isEmpty()) name = uname.isEmpty() ? String.valueOf(uid) : "@" + uname;
+
+                    userNameCache.put(uid, name);
+                    return name;
+                }
+            }
+
+            // Канал/чат как отправитель
+            if ("messageSenderChat".equals(type)) {
+                long cid = n.path("chat_id").asLong(0);
+                if (cid == 0) return senderIdJson;
+
+                String cached = chatTitleCache.get(cid);
+                if (cached != null) return cached;
+
+                ObjectNode req = M.createObjectNode();
+                req.put("@type", "getChat");
+                req.put("chat_id", cid);
+
+                ObjectNode resp = client.requestWithFloodWaitSyncLimited(req, 60, TdJsonClient.Channel.MAIN);
+                if ("chat".equals(resp.path("@type").asText())) {
+                    String title = resp.path("title").asText("");
+                    if (title == null || title.isBlank()) title = "chat_" + Math.abs(cid);
+                    chatTitleCache.put(cid, title);
+                    return title;
+                }
+            }
+        } catch (Exception ignore) {
+            // глушим, отдадим фолбэк
+        }
+
+        // Фолбэк — как пришло
+        return senderIdJson;
     }
 
     /** Построение шаблона поиска: регистр и безопасный подстрочный поиск без Regex. */
@@ -188,7 +288,7 @@ public class MonitorCoordinator {
         if (v == null) return 60_000L; // по умолчанию 1 мин
         switch (v) {
             case "1s":  return 1_000L;
-            case "15s": return 15_000L; // NEW
+            case "15s": return 15_000L;
             case "30s": return 30_000L;
             case "1m":  return 60_000L;
             case "5m":  return 300_000L;
