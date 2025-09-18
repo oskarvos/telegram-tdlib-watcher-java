@@ -1,37 +1,36 @@
 package com.oleg.td.auth.web;
 
-import com.oleg.td.integrations.tdlibs.AuthFlow;
+import com.oleg.td.webauth.WebAuthService;
+import com.oleg.td.webauth.dto.AuthStatusResponse;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 
 /**
- * // Web-контроллер для маршрутизации стартовой страницы.
- * // Если авторизация выполнена — отдаём основной интерфейс, иначе — мастер авторизации.
+ * Маршрутизация стартовых точек.
+ * Проверка авторизации синхронизирована с /api/webauth/status.
  */
 @Controller
 public class HomeController {
-    private final AuthFlow authFlow;
+    private final WebAuthService web;
 
-    public HomeController(AuthFlow authFlow) {
-        this.authFlow = authFlow;
+    public HomeController(WebAuthService web) {
+        this.web = web;
     }
 
-    /**
-     * // GET /
-     * // Корневой маршрут: редирект на index.html (если авторизованы) или на auth.html (если нет).
-     */
+    private boolean isReady() {
+        AuthStatusResponse st = web.status();
+        return st != null && st.isOk() && "READY".equals(st.getState());
+    }
+
+    /** Корень: если авторизованы — приложение; иначе — мастер авторизации. */
     @GetMapping("/")
     public String root() {
-        // если уже авторизованы — сразу основной экран, иначе мастер авторизации
-        return authFlow.isAuthorized() ? "forward:/index.html" : "forward:/auth.html";
+        return isReady() ? "forward:/index.html" : "forward:/auth.html";
     }
 
-    /**
-     * // GET /app
-     * // При прямом заходе/обновлении /app: если не авторизованы — уходим на / (авторизация).
-     */
+    /** Прямой заход на /app — то же поведение. */
     @GetMapping("/app")
     public String app() {
-        return authFlow.isAuthorized() ? "forward:/index.html" : "redirect:/";
+        return isReady() ? "forward:/index.html" : "redirect:/auth.html";
     }
 }

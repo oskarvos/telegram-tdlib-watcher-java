@@ -51,7 +51,7 @@ export class SearchModule extends ApiClient {
             wrap.style.marginLeft = '6px';
             wrap.innerHTML = ', новых: <span class="num-new">0</span>';
             statsRight.appendChild(wrap);
-            this.dom.newValue = wrap.querySelector('.num-new'); // число новых
+            this.dom.newValue = wrap.querySelector('.num-new');
         }
 
         // защита на maxlength
