@@ -1,7 +1,7 @@
 import {ApiClient} from '../apiClient.js';
-import {Notifier}  from '../components/Notifier.js';
-import {Logger}    from '../components/Logger.js';
-import { splitChats } from '../utils.js';
+import {Notifier} from '../components/Notifier.js';
+import {Logger} from '../components/Logger.js';
+import {splitChats} from '../utils.js';
 
 
 /** Модуль «Дамп» для выгрузки контента из чатов. */
@@ -15,25 +15,25 @@ export class DumpModule extends ApiClient {
 
         // DOM-ссылки
         this.dom = {
-            container:  document.getElementById('dumpContainer'),
-            chkTextDocs:document.getElementById('textDocuments'),
-            extBlock:   document.querySelector('.text-document-extensions'),
-            extInput:   document.getElementById('textExtensions'),
+            container: document.getElementById('dumpContainer'),
+            chkTextDocs: document.getElementById('textDocuments'),
+            extBlock: document.querySelector('.text-document-extensions'),
+            extInput: document.getElementById('textExtensions'),
 
-            chats:      document.getElementById('chats'),
-            photos:     document.getElementById('photos'),
-            videos:     document.getElementById('videos'),
-            links:      document.getElementById('links'),
-            messages:   document.getElementById('messages'),
-            audio:      document.getElementById('audio'),
+            chats: document.getElementById('chats'),
+            photos: document.getElementById('photos'),
+            videos: document.getElementById('videos'),
+            links: document.getElementById('links'),
+            messages: document.getElementById('messages'),
+            audio: document.getElementById('audio'),
 
-            btnStart:   document.getElementById('startBtn'),
-            btnStop:    document.getElementById('stopBtn'),
-            btnDelDb:   document.getElementById('deleteDumpDbBtn'),
+            btnStart: document.getElementById('startBtn'),
+            btnStop: document.getElementById('stopBtn'),
+            btnDelDb: document.getElementById('deleteDumpDbBtn'),
 
-            bar:        document.getElementById('progress-bar'),
-            label:      document.getElementById('progress-value'),
-            status:     document.getElementById('status'),
+            bar: document.getElementById('progress-bar'),
+            label: document.getElementById('progress-value'),
+            status: document.getElementById('status'),
         };
 
         this.#bind();
@@ -42,13 +42,18 @@ export class DumpModule extends ApiClient {
     }
 
     // ключ хранилища
-    get storageKey() { return 'td.dump.state.v2'; }
+    get storageKey() {
+        return 'td.dump.state.v2';
+    }
 
     // привязка обработчиков
     #bind() {
-        this.dom.chkTextDocs.addEventListener('change', () => { this.#toggleTextDocumentExtensions(); this.saveState(); });
+        this.dom.chkTextDocs.addEventListener('change', () => {
+            this.#toggleTextDocumentExtensions();
+            this.saveState();
+        });
         this.dom.btnStart.addEventListener('click', () => this.start());
-        this.dom.btnStop.addEventListener('click',  () => this.stop());
+        this.dom.btnStop.addEventListener('click', () => this.stop());
         this.dom.btnDelDb?.addEventListener('click', () => this.clearDbAndFiles());
 
         [this.dom.chats, this.dom.extInput].forEach(el => el.addEventListener('input', () => this.saveState()));
@@ -67,12 +72,12 @@ export class DumpModule extends ApiClient {
         const chats = splitChats(this.dom.chats.value || '');
         return {
             chats,
-            photos:  this.dom.photos.checked,
-            videos:  this.dom.videos.checked,
-            links:   this.dom.links.checked,
-            messages:this.dom.messages.checked,
+            photos: this.dom.photos.checked,
+            videos: this.dom.videos.checked,
+            links: this.dom.links.checked,
+            messages: this.dom.messages.checked,
             textDocuments: this.dom.chkTextDocs.checked,
-            audio:   this.dom.audio.checked,
+            audio: this.dom.audio.checked,
             textDocumentExtensions: (this.dom.extInput.value || '').trim() || null
         };
     }
@@ -113,8 +118,8 @@ export class DumpModule extends ApiClient {
         this.#setStatus('Останавливаем...', '#fff4e6', '#e67e22');
         try {
             await this.post('/stop', {});
-            this.#endPolling();
-            this.#setStatus('Остановлено', '#ffecec', '#e74c3c');
+            this.#setStatus('Жду завершения фонового потока...', '#fff4e6', '#e67e22');
+            if (!this._timer) this.#beginPolling();
         } catch (e) {
             this.#setStatus('Ошибка: ' + e.message, '#ffecec', '#e74c3c');
         }
@@ -140,8 +145,12 @@ export class DumpModule extends ApiClient {
         this.#pollOnce();
         this._timer = setInterval(() => this.#pollOnce(), 1000);
     }
+
     #endPolling() {
-        if (this._timer) { clearInterval(this._timer); this._timer = null; }
+        if (this._timer) {
+            clearInterval(this._timer);
+            this._timer = null;
+        }
     }
 
     async #pollOnce() {
@@ -170,10 +179,10 @@ export class DumpModule extends ApiClient {
         const rows = [];
         rows.push(`<div>Обработано сообщений: <b>${p?.processed ?? 0}</b></div>`);
         if (req.messages) rows.push(`<div>Сообщения: <b>${p?.savedMessages ?? 0}</b></div>`);
-        if (req.photos)   rows.push(`<div>Фото: <b>${p?.savedPhotos ?? 0}</b></div>`);
-        if (req.videos)   rows.push(`<div>Видео: <b>${p?.savedVideos ?? 0}</b></div>`);
-        if (req.audio)    rows.push(`<div>Аудио: <b>${p?.savedAudio ?? 0}</b></div>`);
-        if (req.links)    rows.push(`<div>Ссылки: <b>${p?.savedLinks ?? 0}</b></div>`);
+        if (req.photos) rows.push(`<div>Фото: <b>${p?.savedPhotos ?? 0}</b></div>`);
+        if (req.videos) rows.push(`<div>Видео: <b>${p?.savedVideos ?? 0}</b></div>`);
+        if (req.audio) rows.push(`<div>Аудио: <b>${p?.savedAudio ?? 0}</b></div>`);
+        if (req.links) rows.push(`<div>Ссылки: <b>${p?.savedLinks ?? 0}</b></div>`);
 
         if (req.textDocuments) {
             const totalDocs = p?.savedDocuments ?? 0;
@@ -218,7 +227,8 @@ export class DumpModule extends ApiClient {
             this.dom.audio.checked = !!s.audio;
             this.dom.chkTextDocs.checked = !!s.textDocuments;
             this.dom.extInput.value = s.textDocumentExtensions || '';
-        } catch {/* ignore */}
+        } catch {/* ignore */
+        }
     }
 
     // ===== low-level UI =====
@@ -227,11 +237,13 @@ export class DumpModule extends ApiClient {
         this.dom.label.textContent = String(processed);
         this.dom.bar.classList.toggle('green', !!complete);
     }
+
     #setStatus(text, bg, color) {
         this.dom.status.textContent = text;
         this.dom.status.style.backgroundColor = bg;
         this.dom.status.style.color = color;
     }
+
     #setStatusHtml(html, bg, color) {
         this.dom.status.innerHTML = html;
         this.dom.status.style.backgroundColor = bg;

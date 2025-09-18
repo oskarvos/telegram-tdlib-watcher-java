@@ -26,16 +26,30 @@ public class MediaDownloader {
         this.client = client;
     }
 
+    public void clearCache() { cache.clear(); }
+
     // блокирующее скачивание файла по file_id; возвращает локальный путь
     public String downloadBlocking(int fileId) {
         if (fileId <= 0) return null;
 
-        String cached = cache.get(fileId);                   // кэш хита
-        if (cached != null && !cached.isBlank()) return cached;
+        // 1) Проверяем кэш, но доверяем только если файл действительно существует
+        String cached = cache.get(fileId);
+        if (cached != null && !cached.isBlank()) {
+            try {
+                var p = java.nio.file.Paths.get(cached);
+                if (java.nio.file.Files.exists(p)) {
+                    return cached; // валидный кэш
+                } else {
+                    cache.remove(fileId); // инвалидируем «битый» кэш
+                }
+            } catch (Exception ignore) {
+                cache.remove(fileId);
+            }
+        }
 
         try {
-            // первичная попытка — downloadFile(synchronous=true)
-            ObjectNode dl = MAPPER.createObjectNode();
+            // 2) Первая попытка: downloadFile(synchronous=true)
+            var dl = MAPPER.createObjectNode();
             dl.put("@type", "downloadFile");
             dl.put("file_id", fileId);
             dl.put("priority", 32);
@@ -43,42 +57,69 @@ public class MediaDownloader {
             dl.put("limit", 0);
             dl.put("synchronous", true);
 
-            ObjectNode resp = client.requestWithFloodWaitSyncLimited(dl, 300, TdJsonClient.Channel.MAIN);
+            var resp = client.requestWithFloodWaitSyncLimited(dl, 300, TdJsonClient.Channel.MAIN);
             if (!"file".equals(resp.path("@type").asText())) {
                 log.warn("downloadFile: неожиданный ответ TDLib: {}", resp.path("@type").asText());
                 return null;
             }
 
-            JsonNode local = resp.path("local");
+            var local = resp.path("local");
             String path = local.path("path").asText(null);
             boolean done = local.path("is_downloading_completed").asBoolean(false);
 
-            if (done && path != null && !path.isBlank()) {
-                cache.putIfAbsent(fileId, path);
-                log.debug("file_id={} скачан: {}", fileId, path);
+            if (done && path != null && !path.isBlank() && fileExists(path)) {
+                cache.put(fileId, path);
                 return path;
             }
 
-            // уточняем через getFile, если что-то пошло не так
-            ObjectNode gf = MAPPER.createObjectNode();
+            // 3) Уточняем через getFile (вдруг TDLib уже знает новый путь/статус)
+            var gf = MAPPER.createObjectNode();
             gf.put("@type", "getFile");
             gf.put("file_id", fileId);
 
-            ObjectNode resp2 = client.requestWithFloodWaitSyncLimited(gf, 120, TdJsonClient.Channel.MAIN);
-            JsonNode local2 = resp2.path("local");
+            var resp2 = client.requestWithFloodWaitSyncLimited(gf, 120, TdJsonClient.Channel.MAIN);
+            var local2 = resp2.path("local");
             String path2 = local2.path("path").asText(null);
             boolean done2 = local2.path("is_downloading_completed").asBoolean(false);
 
-            if (done2 && path2 != null && !path2.isBlank()) {
-                cache.putIfAbsent(fileId, path2);
-                log.debug("file_id={} скачан (getFile): {}", fileId, path2);
+            if (done2 && path2 != null && !path2.isBlank() && fileExists(path2)) {
+                cache.put(fileId, path2);
                 return path2;
             }
 
-            log.warn("Не удалось получить путь после downloadFile/getFile (file_id={})", fileId);
+            // 4) Защитная повторная попытка принудительной докачки
+            // (на случай рассинхронизации статуса TDLib после ручного удаления файлов)
+            var dl2 = MAPPER.createObjectNode();
+            dl2.put("@type", "downloadFile");
+            dl2.put("file_id", fileId);
+            dl2.put("priority", 32);
+            dl2.put("offset", 0);
+            dl2.put("limit", 0);
+            dl2.put("synchronous", true);
+
+            var resp3 = client.requestWithFloodWaitSyncLimited(dl2, 300, TdJsonClient.Channel.MAIN);
+            if ("file".equals(resp3.path("@type").asText())) {
+                String path3 = resp3.path("local").path("path").asText(null);
+                boolean done3 = resp3.path("local").path("is_downloading_completed").asBoolean(false);
+                if (done3 && path3 != null && !path3.isBlank() && fileExists(path3)) {
+                    cache.put(fileId, path3);
+                    return path3;
+                }
+            }
+
+            log.warn("Не удалось получить локальный путь для file_id={} после повторных попыток", fileId);
         } catch (Exception e) {
             log.warn("Ошибка скачивания file_id={}: {}", fileId, e.toString());
         }
         return null;
+    }
+
+    private boolean fileExists(String path) {
+        try {
+            var p = java.nio.file.Paths.get(path);
+            return java.nio.file.Files.exists(p);
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

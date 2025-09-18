@@ -238,7 +238,7 @@ public class ChatDumpCoordinator {
                 listener.onSavedMessage();
             }
             if (request.isLinks() && messageId > lastSavedLinkId) {
-                int cnt = extractLinksFromFormattedText(session, chatId, messageId, ft);
+                int cnt = extractLinksFromFormattedText(session, chatId, ft);
                 if (cnt > 0) listener.onSavedLinks(cnt);
             }
         } else {
@@ -269,7 +269,7 @@ public class ChatDumpCoordinator {
             listener.onSavedPhoto();
 
             if (request.isLinks() && messageId > lastSavedLinkId) {
-                int cnt = extractLinksFromFormattedText(session, chatId, messageId, captionFT);
+                int cnt = extractLinksFromFormattedText(session, chatId, captionFT);
                 if (cnt > 0) listener.onSavedLinks(cnt);
             }
         }
@@ -293,7 +293,7 @@ public class ChatDumpCoordinator {
             listener.onSavedVideo();
 
             if (request.isLinks() && messageId > lastSavedLinkId) {
-                int cnt = extractLinksFromFormattedText(session, chatId, messageId, content.path("caption"));
+                int cnt = extractLinksFromFormattedText(session, chatId, content.path("caption"));
                 if (cnt > 0) listener.onSavedLinks(cnt);
             }
         }
@@ -335,7 +335,7 @@ public class ChatDumpCoordinator {
             JsonNode captionFT = content.path("caption");
 
             if (request.isLinks() && messageId > lastSavedLinkId) {
-                int cnt = extractLinksFromFormattedText(session, chatId, messageId, captionFT);
+                int cnt = extractLinksFromFormattedText(session, chatId, captionFT);
                 if (cnt > 0) listener.onSavedLinks(cnt);
             }
 
@@ -400,7 +400,7 @@ public class ChatDumpCoordinator {
     }
 
     // сохранение ссылок из форматированного текста; возвращает кол-во сохранённых
-    private int extractLinksFromFormattedText(DbSession session, long chatId, long messageId, JsonNode formattedText) {
+    private int extractLinksFromFormattedText(DbSession session, long messageId, JsonNode formattedText) {
         if (formattedText == null || formattedText.isMissingNode()) return 0;
 
         String full = formattedText.path("text").asText("");
@@ -470,4 +470,9 @@ public class ChatDumpCoordinator {
                 .sorted()
                 .collect(Collectors.joining(","));
     }
+
+    public void clearDownloaderCache() {
+        try { downloader.clearCache(); } catch (Exception ignore) {}
+    }
+
 }

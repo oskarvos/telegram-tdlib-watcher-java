@@ -128,4 +128,21 @@ public class DumpService {
         dp.setDocumentsByExtension(byExt);
         return dp;
     }
+
+    public boolean isRunning() { return running.get(); }
+
+    // мягкая остановка с ожиданием
+    public void stopAndAwait(long timeoutMs) {
+        coordinator.stop();
+        long until = System.currentTimeMillis() + timeoutMs;
+        while (running.get() && System.currentTimeMillis() < until) {
+            try { Thread.sleep(100); } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt(); break;
+            }
+        }
+    }
+
+    public void clearDownloaderCache() {
+        coordinator.clearDownloaderCache();
+    }
 }
