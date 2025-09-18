@@ -6,7 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.oleg.td.dump.api.DumpRequest;
 import com.oleg.td.dump.persistence.DumpDbManager;
-import com.oleg.td.dump.persistence.DumpDbManager.DbSession;
+import com.oleg.td.dump.persistence.DumpDbSession;
 import com.oleg.td.integrations.tdlibs.TdJsonClient;
 import com.oleg.td.integrations.telegram.ChatResolver;
 import org.slf4j.Logger;
@@ -89,7 +89,7 @@ public class ChatDumpCoordinator {
             db.prepareSchema(chatId);
 
             // одна сессия подключения на чат
-            try (DbSession session = db.openSession(chatId)) {
+            try (DumpDbSession session = db.openSession(chatId)) {
                 // границы уже сохранённого по типам
                 long lastMsgId   = request.isMessages()      ? db.getLastSavedMessageId(chatId)   : Long.MAX_VALUE;
                 long lastPhotoId = request.isPhotos()        ? db.getLastSavedPhotoId(chatId)     : Long.MAX_VALUE;
@@ -206,7 +206,7 @@ public class ChatDumpCoordinator {
     }
 
     // обработка одного сообщения; сохраняем только «новые» по типам
-    private void processMessage(DbSession session,
+    private void processMessage(DumpDbSession session,
                                 long chatId,
                                 JsonNode msg,
                                 DumpRequest request,
@@ -406,7 +406,7 @@ public class ChatDumpCoordinator {
     }
 
     // сохранение ссылок из форматированного текста; возвращает кол-во сохранённых
-    private int extractLinksFromFormattedText(DbSession session, long messageId, JsonNode formattedText) {
+    private int extractLinksFromFormattedText(DumpDbSession session, long messageId, JsonNode formattedText) {
         if (formattedText == null || formattedText.isMissingNode()) return 0;
 
         String full = formattedText.path("text").asText("");
