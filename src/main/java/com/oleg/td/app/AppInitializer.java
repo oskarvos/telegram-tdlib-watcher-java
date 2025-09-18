@@ -10,10 +10,8 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
-/**
- * // Класс выполняет инициализацию приложения после старта Spring Boot.
- * // Подключает слушатели TDLib и запускает авторизацию (если заданы параметры).
- */
+/** Класс выполняет инициализацию приложения после старта Spring Boot.
+ * Подключает слушатели TDLib и запускает авторизацию (если заданы параметры). */
 @Component
 public class AppInitializer {
     private static final Logger log = LoggerFactory.getLogger("com.oleg.td.App");
@@ -31,10 +29,8 @@ public class AppInitializer {
         this.authStore = authStore;
     }
 
-    /**
-     * // Метод вызывается после полной готовности приложения.
-     * // Логирует ключевые настройки и запускает авторизацию при наличии параметров.
-     */
+    /** Метод вызывается после полной готовности приложения.
+     * Логирует ключевые настройки и запускает авторизацию при наличии параметров. */
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {
         log.info("НАСТРОЙКИ TDLib: api_id={}, есть_api_hash={}, db_dir={}, files_dir={}, регистр-независимый-поиск={}",

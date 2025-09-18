@@ -14,14 +14,12 @@ public class TdlibProperties {
     private String apiHash;
     private String databaseDirectory = "tdlib";
     private String filesDirectory = "tdlib/files";
-    private String systemLanguageCode = "en";
+    private String systemLanguageCode = "ru";
     private String deviceModel = "Java";
     private String systemVersion;
     private String applicationVersion = "1.0.4-debug";
 
-    public int getApiId() {
-        return apiId;
-    }
+    public int getApiId() { return apiId; }
 
     public void setApiId(int apiId) {
         this.apiId = apiId;

@@ -3,17 +3,19 @@ package com.oleg.td.app.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
-/** // Общие свойства приложения из префикса td.* (кроме td.tdlib.*).
- * // Используется для путей, флагов и текстов UI. */
+/**
+ * // Общие свойства приложения из префикса td.* (кроме td.tdlib.*).
+ * // Используется для путей, флагов и текстов UI.
+ */
 @Component
 @ConfigurationProperties(prefix = "td")
 public class AppProperties {
 
-    private String libPath;
-    private String botUsername;
-    private String welcomeMessage;
-    private boolean useTestDc = false;
-    private boolean caseInsensitive = true;
+    private String libPath;                // Путь к директории с библиотекой TDLib
+    private String botUsername;            // Имя бота для регистронезависимого сравнения
+    private String welcomeMessage;         // Приветственное сообщение для пользователей
+    private boolean useTestDc = false;     // Флаг использования тестового датацентра Telegram
+    private boolean caseInsensitive = true;// Флаг регистронезависимой обработки команд
 
     public String getLibPath() {
         return libPath;
