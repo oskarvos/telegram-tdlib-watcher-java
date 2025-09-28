@@ -121,7 +121,7 @@ public class DumpDbManager {
             s.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_documents_mid ON documents(message_id)");
             s.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_links_mid_url ON links(message_id, url)");
         } catch (SQLException e) {
-            log.error("DUMP {}: ошибка подготовки схемы: {}", chatName(chatId), e.getMessage(), e);
+            log.error("DUMP {}: ошибка подготовки схемы: {}", chatId, e.getMessage(), e);
         }
     }
 
@@ -141,7 +141,7 @@ public class DumpDbManager {
     // ===== очистка БД и файлов =====
     public void clearDumpDatabasesAndDeleteFiles() {
         try { Files.createDirectories(dbDir); } catch (Exception ignore) {}
-        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "DUMP *.db")) {
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "DUMP_*.db")) {
             for (Path p : ds) {
                 deleteDbWithSidecars(p);
                 log.info("Удалён файл DUMP-БД: {}", p.getFileName());
@@ -176,7 +176,7 @@ public class DumpDbManager {
         try (Connection c = openDump(chatId); Statement s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS " + q("metadata") + " (key TEXT PRIMARY KEY, value TEXT)");
         } catch (SQLException e) {
-            log.error("DUMP {}: ошибка создания таблицы metadata: {}", chatName(chatId), e.getMessage(), e);
+            log.error("DUMP {}: ошибка создания таблицы metadata: {}", chatId, e.getMessage(), e);
         }
     }
 
@@ -216,25 +216,9 @@ public class DumpDbManager {
         });
     }
 
-    private String chatName(long chatId) {
-        try {
-            String t = chatResolver.getChatTitle(chatId);
-            if (t != null && !t.trim().isEmpty()) return t.trim();
-        } catch (Exception ignore) {}
-        return "chat_" + Math.abs(chatId);
-    }
-
-    private String safe(String name, long chatId) {
-        if (name == null || name.isBlank()) return "unknown_chat";
-        String s = INVALID.matcher(name).replaceAll("_").trim();
-        while (s.endsWith(".")) s = s.substring(0, s.length() - 1).trim();
-        if (s.isEmpty()) s = "chat_" + Math.abs(chatId);
-        if (s.length() > 100) s = s.substring(0, 100);
-        return s;
-    }
-
     private Path dumpDbPath(long chatId) {
-        String fn = safe("DUMP " + chatName(chatId), chatId) + ".db";
+        // Используем только chatId для имени файла
+        String fn = "DUMP_" + chatId + ".db";
         return dbDir.resolve(fn);
     }
 

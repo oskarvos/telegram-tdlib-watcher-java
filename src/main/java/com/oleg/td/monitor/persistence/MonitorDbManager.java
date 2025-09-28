@@ -1,6 +1,5 @@
 package com.oleg.td.monitor.persistence;
 
-import com.oleg.td.integrations.telegram.ChatResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -12,7 +11,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.*;
 import java.time.LocalDateTime;
-import java.util.regex.Pattern;
 
 /**
  * Менеджер SQLite БД мониторинга.
@@ -24,13 +22,8 @@ public class MonitorDbManager {
     private static final Logger log = LoggerFactory.getLogger(MonitorDbManager.class);
 
     private final Path dbDir = Paths.get("tdlib", "db"); // директория БД
-    private final ChatResolver chatResolver;             // для получения названий чатов
 
-    // недопустимые символы для имени файла
-    private static final Pattern INVALID = Pattern.compile("[\\\\/:*?\"<>|]");
-
-    public MonitorDbManager(ChatResolver chatResolver) {
-        this.chatResolver = chatResolver;
+    public MonitorDbManager() {
         try {
             Files.createDirectories(dbDir);
         } catch (Exception ignored) {
@@ -42,29 +35,9 @@ public class MonitorDbManager {
         return "\"" + ident.replace("\"", "\"\"") + "\"";
     }
 
-    // получение «человеческого» имени чата
-    private String chatName(long chatId) {
-        try {
-            String t = chatResolver.getChatTitle(chatId);
-            if (t != null && !t.trim().isEmpty()) return t.trim();
-        } catch (Exception ignored) {
-        }
-        return "chat_" + Math.abs(chatId);
-    }
-
-    // безопасное имя для файла БД
-    private String safe(String name, long chatId) {
-        if (name == null || name.isBlank()) return "unknown_chat";
-        String s = INVALID.matcher(name).replaceAll("_").trim();
-        while (s.endsWith(".")) s = s.substring(0, s.length() - 1).trim();
-        if (s.isEmpty()) s = "chat_" + Math.abs(chatId);
-        if (s.length() > 100) s = s.substring(0, 100);
-        return s;
-    }
-
-    // путь к файлу БД (на чат)
+    // путь к файлу БД (по chatId)
     private Path monitorDbPath(long chatId) {
-        String fn = safe("MONITOR " + chatName(chatId), chatId) + ".db";
+        String fn = "MONITOR_" + chatId + ".db";
         return dbDir.resolve(fn);
     }
 
@@ -73,22 +46,26 @@ public class MonitorDbManager {
         Path p = monitorDbPath(chatId);
         try {
             Files.createDirectories(p.getParent());
-        } catch (Exception e) { // крит. проблема с ФС
+        } catch (Exception e) {
             log.error("Не удалось создать директорию для БД {}: {}", p.toAbsolutePath(), e.getMessage(), e);
         }
         return DriverManager.getConnection("jdbc:sqlite:" + p.toAbsolutePath());
     }
 
-    /** Убедиться, что таблица metadata существует. */
+    /**
+     * Убедиться, что таблица metadata существует.
+     */
     public void ensureMonitorMetadata(long chatId) {
         try (Connection c = openMonitor(chatId); Statement s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS " + q("metadata") + " (key TEXT PRIMARY KEY, value TEXT)");
         } catch (SQLException e) {
-            log.error("MONITOR {}: не удалось создать metadata: {}", chatName(chatId), e.getMessage(), e);
+            log.error("MONITOR {}: не удалось создать metadata: {}", chatId, e.getMessage(), e);
         }
     }
 
-    /** Прочитать чекпоинт последнего сообщения. */
+    /**
+     * Прочитать чекпоинт последнего сообщения.
+     */
     public String loadMonitorCheckpoint(long chatId) {
         final String sql = "SELECT value FROM " + q("metadata") + " WHERE key=?";
         try (Connection c = openMonitor(chatId);
@@ -103,7 +80,9 @@ public class MonitorDbManager {
         return null;
     }
 
-    /** Сохранить чекпоинт последнего сообщения. */
+    /**
+     * Сохранить чекпоинт последнего сообщения.
+     */
     public void saveMonitorCheckpoint(long chatId, long messageId) {
         final String sql = "INSERT OR REPLACE INTO " + q("metadata") + " (key,value) VALUES(?,?)";
         try (Connection c = openMonitor(chatId);
@@ -116,7 +95,9 @@ public class MonitorDbManager {
         }
     }
 
-    /** Сбросить чекпоинт. */
+    /**
+     * Сбросить чекпоинт.
+     */
     public void resetMonitorCheckpoint(long chatId) {
         final String sql = "DELETE FROM " + q("metadata") + " WHERE key=?";
         try (Connection c = openMonitor(chatId);
@@ -128,7 +109,9 @@ public class MonitorDbManager {
         }
     }
 
-    /** Создать схему таблиц результатов мониторинга. */
+    /**
+     * Создать схему таблиц результатов мониторинга.
+     */
     public void prepareMonitorSchema(long chatId) {
         final String t = q("monitor_results");
         final String create = "CREATE TABLE IF NOT EXISTS " + t + " (" +
@@ -148,11 +131,13 @@ public class MonitorDbManager {
             s.execute(idx1);
             s.execute(idx2);
         } catch (SQLException e) {
-            log.error("MONITOR {}: ошибка создания схемы: {}", chatName(chatId), e.getMessage(), e);
+            log.error("MONITOR {}: ошибка создания схемы: {}", chatId, e.getMessage(), e);
         }
     }
 
-    /** Сохранить найденное попадание. */
+    /**
+     * Сохранить найденное попадание.
+     */
     public void saveMonitorHit(long chatId, long messageId, LocalDateTime messageDate,
                                String keyword, String messageText, String senderId, String senderName) {
         final String sql = "INSERT INTO " + q("monitor_results") +
@@ -168,19 +153,21 @@ public class MonitorDbManager {
             ps.setString(7, LocalDateTime.now().toString());
             ps.executeUpdate();
         } catch (SQLException e) {
-            log.error("MONITOR: ошибка сохранения попадания: {}", e.getMessage(), e);
+            log.error("MONITOR {}: ошибка сохранения попадания: {}", chatId, e.getMessage(), e);
         }
     }
 
-    /** Удалить все БД мониторинга (включая -wal/-shm). */
+    /**
+     * Удалить все БД мониторинга.
+     */
     public void clearMonitorChatDatabases() {
         try {
             Files.createDirectories(dbDir);
         } catch (Exception ignore) {
         }
-        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "MONITOR *.db")) {
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "MONITOR_*.db")) {
             for (Path p : ds) {
-                deleteDbWithSidecars(p); // удаляем файл + -wal/-shm
+                deleteDbWithSidecars(p);
                 log.info("Удалён файл БД мониторинга: {}", p.getFileName());
             }
         } catch (Exception e) {
@@ -188,20 +175,21 @@ public class MonitorDbManager {
         }
     }
 
-    // удалить БД и соседние файлы
     private void deleteDbWithSidecars(Path dbFile) {
         try {
             Files.deleteIfExists(dbFile);
-        } catch (IOException ignore) {}
+        } catch (IOException ignore) {
+        }
         try {
             Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-wal"));
-        } catch (IOException ignore) {}
+        } catch (IOException ignore) {
+        }
         try {
             Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-shm"));
-        } catch (IOException ignore) {}
+        } catch (IOException ignore) {
+        }
     }
 
-    /** Получить результаты по чату. */
     public java.util.List<com.oleg.td.monitor.model.MonitorHit> getMonitorResults(long chatId, int limit, int offset) {
         final String sql = "SELECT rowid AS id, message_id, message_date, keyword, message_text, " +
                 "sender_id, sender_name, found_date FROM " + q("monitor_results") +
@@ -215,7 +203,7 @@ public class MonitorDbManager {
                     com.oleg.td.monitor.model.MonitorHit h = new com.oleg.td.monitor.model.MonitorHit();
                     h.setId(rs.getLong("id"));
                     h.setChatId(chatId);
-                    h.setChatTitle(chatName(chatId));
+                    h.setChatTitle("chat_" + chatId);
                     h.setMessageId(rs.getLong("message_id"));
                     h.setMessageDate(java.time.LocalDateTime.parse(rs.getString("message_date")));
                     h.setKeyword(rs.getString("keyword"));
@@ -227,7 +215,7 @@ public class MonitorDbManager {
                 }
             }
         } catch (SQLException e) {
-            log.error("MONITOR: ошибка чтения результатов: {}", e.getMessage(), e);
+            log.error("MONITOR {}: ошибка чтения результатов: {}", chatId, e.getMessage(), e);
         }
         return list;
     }

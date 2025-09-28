@@ -1,6 +1,5 @@
 package com.oleg.td.search.persistence;
 
-import com.oleg.td.integrations.telegram.ChatResolver;
 import com.oleg.td.search.model.SearchResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,56 +14,30 @@ import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
 
 @Component
 public class SearchDbManager {
     private static final Logger log = LoggerFactory.getLogger(SearchDbManager.class);
 
     private final Path dbDir = Paths.get("tdlib", "db");
-    private final ChatResolver chatResolver;
 
-    public SearchDbManager(ChatResolver chatResolver) {
-        this.chatResolver = chatResolver;
+    public SearchDbManager() {
         try {
             Files.createDirectories(dbDir);
         } catch (Exception ignored) {
         }
     }
 
-    // --- helpers
-    private static final Pattern INVALID = Pattern.compile("[\\\\/:*?\"<>|]");
-
     private static String q(String ident) {
         return "\"" + ident.replace("\"", "\"\"") + "\"";
     }
 
-    private String chatName(long chatId) {
-        try {
-            String t = chatResolver.getChatTitle(chatId);
-            if (t != null && !t.trim().isEmpty()) return t.trim();
-        } catch (Exception ignored) {
-        }
-        return "chat_" + Math.abs(chatId);
-    }
-
-    private String safe(String name, long chatId) {
-        if (name == null || name.isBlank()) return "unknown_chat";
-        String s = INVALID.matcher(name).replaceAll("_").trim();
-        while (s.endsWith(".")) s = s.substring(0, s.length() - 1).trim();
-        if (s.isEmpty()) s = "chat_" + Math.abs(chatId);
-        if (s.length() > 100) s = s.substring(0, 100);
-        return s;
-    }
-
     private Path dumpDbPath(long chatId) {
-        String fn = safe("DUMP " + chatName(chatId), chatId) + ".db";
-        return dbDir.resolve(fn);
+        return dbDir.resolve("DUMP_" + chatId + ".db");
     }
 
     private Path searchDbPath(long chatId) {
-        String fn = safe("SEARCH " + chatName(chatId), chatId) + ".db";
-        return dbDir.resolve(fn);
+        return dbDir.resolve("SEARCH_" + chatId + ".db");
     }
 
     private Connection openDump(long chatId) throws SQLException {
@@ -75,12 +48,12 @@ public class SearchDbManager {
         return DriverManager.getConnection("jdbc:sqlite:" + searchDbPath(chatId));
     }
 
-    // --- DUMP metadata (хранит чекпоинт поиска)
+    // --- DUMP metadata
     public void ensureDumpMetadata(long chatId) {
         try (Connection c = openDump(chatId); Statement s = c.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS " + q("metadata") + " (key TEXT PRIMARY KEY, value TEXT)");
         } catch (SQLException e) {
-            log.error("DUMP {}: cannot ensure metadata: {}", chatName(chatId), e.getMessage(), e);
+            log.error("DUMP {}: cannot ensure metadata: {}", chatId, e.getMessage(), e);
         }
     }
 
@@ -135,20 +108,15 @@ public class SearchDbManager {
                 "found_date TEXT," +
                 "UNIQUE(message_id, keyword) ON CONFLICT IGNORE" +
                 ")";
-        final String idx1 = "CREATE INDEX IF NOT EXISTS search_keyword_idx ON " + t + "(keyword)";
-        final String idx2 = "CREATE INDEX IF NOT EXISTS search_date_idx ON " + t + "(message_date)";
         try (Connection c = openSearch(chatId); Statement s = c.createStatement()) {
             s.execute(create);
-            s.execute(idx1);
-            s.execute(idx2);
+            s.execute("CREATE INDEX IF NOT EXISTS search_keyword_idx ON " + t + "(keyword)");
+            s.execute("CREATE INDEX IF NOT EXISTS search_date_idx ON " + t + "(message_date)");
         } catch (SQLException e) {
-            log.error("SEARCH {}: schema error: {}", chatName(chatId), e.getMessage(), e);
+            log.error("SEARCH {}: schema error: {}", chatId, e.getMessage(), e);
         }
     }
 
-    /**
-     * Возвращает true, если вставлен НОВЫЙ результат (а не проигнорирован дубликат).
-     */
     public boolean saveSearchResult(long chatId, long messageId, LocalDateTime messageDate,
                                     String keyword, String messageText, String senderId, String senderName) {
         final String sql = "INSERT OR IGNORE INTO " + q("search_results") +
@@ -162,28 +130,25 @@ public class SearchDbManager {
             ps.setString(5, senderId);
             ps.setString(6, senderName);
             ps.setString(7, LocalDateTime.now().toString());
-            int affected = ps.executeUpdate();
-            return affected > 0;
+            return ps.executeUpdate() > 0;
         } catch (SQLException e) {
-            log.error("SEARCH save result err: {}", e.getMessage(), e);
+            log.error("SEARCH {} save result err: {}", chatId, e.getMessage(), e);
             return false;
         }
     }
 
-    // === УДАЛЕНИЕ ОДНОЙ SEARCH БД (по chatId) ===
     public void clearSearchDatabase(long chatId) {
         Path p = searchDbPath(chatId);
         deleteDbWithSidecars(p);
         log.info("Удалён файл SEARCH БД: {}", p.getFileName());
     }
 
-    // === УДАЛЕНИЕ ВСЕХ SEARCH БД ===
     public void clearSearchChatDatabases() {
         try {
             Files.createDirectories(dbDir);
         } catch (Exception ignore) {
         }
-        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "SEARCH *.db")) {
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dbDir, "SEARCH_*.db")) {
             for (Path dbFile : ds) {
                 deleteDbWithSidecars(dbFile);
                 log.info("Удалён файл SEARCH БД: {}", dbFile.getFileName());
@@ -193,42 +158,10 @@ public class SearchDbManager {
         }
     }
 
-    // --- helper: удалить *.db + побочные файлы WAL/SHM
     private void deleteDbWithSidecars(Path dbFile) {
-        try {
-            Files.deleteIfExists(dbFile);
-        } catch (IOException e) {
-            log.warn("Не удалось удалить {}: {}", dbFile, e.getMessage());
-        }
-        try {
-            Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-wal"));
-        } catch (IOException ignore) {
-        }
-        try {
-            Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-shm"));
-        } catch (IOException ignore) {
-        }
-    }
-
-    // --- helpers -------------
-    private void ensureTable(Connection c, String name) throws SQLException {
-        try (Statement s = c.createStatement()) {
-            s.execute("CREATE TABLE IF NOT EXISTS " + q(name) + " (key TEXT PRIMARY KEY, value TEXT)");
-        }
-    }
-
-    private void dropAllUserTables(Connection c) throws SQLException {
-        List<String> tables = new ArrayList<>();
-        try (PreparedStatement ps = c.prepareStatement("SELECT name FROM sqlite_master WHERE type='table'");
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                String n = rs.getString(1);
-                if (!"sqlite_sequence".equalsIgnoreCase(n)) tables.add(n);
-            }
-        }
-        try (Statement s = c.createStatement()) {
-            for (String t : tables) s.execute("DROP TABLE IF EXISTS " + q(t));
-        }
+        try { Files.deleteIfExists(dbFile); } catch (IOException ignore) {}
+        try { Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-wal")); } catch (IOException ignore) {}
+        try { Files.deleteIfExists(dbFile.resolveSibling(dbFile.getFileName().toString() + "-shm")); } catch (IOException ignore) {}
     }
 
     public List<SearchResult> getSearchResults(long chatId, int limit, int offset) {
@@ -244,7 +177,7 @@ public class SearchDbManager {
                     SearchResult r = new SearchResult();
                     r.setId(rs.getLong("id"));
                     r.setChatId(chatId);
-                    r.setChatTitle(chatName(chatId));
+                    r.setChatTitle("chat_" + chatId);
                     r.setMessageId(rs.getLong("message_id"));
                     r.setMessageDate(LocalDateTime.parse(rs.getString("message_date")));
                     r.setKeyword(rs.getString("keyword"));
@@ -256,7 +189,7 @@ public class SearchDbManager {
                 }
             }
         } catch (SQLException e) {
-            log.error("SEARCH get results err: {}", e.getMessage(), e);
+            log.error("SEARCH {} get results err: {}", chatId, e.getMessage(), e);
         }
         return list;
     }

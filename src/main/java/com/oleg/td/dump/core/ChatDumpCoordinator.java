@@ -80,11 +80,14 @@ public class ChatDumpCoordinator {
         log.info("Используемые расширения текстовых документов: {}", normalizedCurrentExts);
 
         for (String chatRef : request.getChats()) {
-            if (stopRequested) { log.info("Дамп прерван пользователем"); break; }
+            if (stopRequested) {
+                log.info("Дамп прерван пользователем");
+                break;
+            }
 
             long chatId = resolver.resolveFlexible(chatRef.trim());
             String chatName = resolver.getChatTitle(chatId);
-            log.info("Начинаем дамп чата '{}'", chatName);
+            log.info("Начинаем дамп чата '{}' (ID: {})", chatName, chatId); // изменено
 
             db.prepareSchema(chatId);
 
@@ -105,8 +108,8 @@ public class ChatDumpCoordinator {
                         ? (docExtChanged ? 0L : db.getLastSavedDocumentId(chatId))
                         : Long.MAX_VALUE;
                 if (docExtChanged) {
-                    log.info("Чат '{}': набор расширений изменился ( '{}' → '{}' ), документы с начала",
-                            chatName, normalizedStoredExts, normalizedCurrentExts);
+                    log.info("Чат '{}' (ID: {}): набор расширений изменился ( '{}' → '{}' ), документы с начала",
+                            chatName, chatId, normalizedStoredExts, normalizedCurrentExts);
                 }
 
                 // флаги «дошли до сохранённого»
@@ -121,7 +124,6 @@ public class ChatDumpCoordinator {
 
                 // основной цикл чтения истории
                 while (!stopRequested && !(reachedMsgs && reachedPhotos && reachedVideos && reachedAudio && reachedDocs && reachedLinks)) {
-
                     // запрос истории
                     ObjectNode reqNode = MAPPER.createObjectNode();
                     reqNode.put("@type", "getChatHistory");
@@ -135,17 +137,17 @@ public class ChatDumpCoordinator {
                     ObjectNode resp = client.requestWithFloodWaitSyncLimited(reqNode, 60, TdJsonClient.Channel.MAIN);
                     long ms = (System.nanoTime() - t0) / 1_000_000L;
                     if (ms > 2000) {
-                        log.warn("getChatHistory took {} ms (possible flood-wait)", ms);
+                        log.warn("getChatHistory для '{}' (ID: {}) занял {} ms (возможен flood-wait)", chatName, chatId, ms);
                     }
 
                     if (!"messages".equals(resp.path("@type").asText())) {
-                        log.warn("Ответ TDLib не 'messages': {}", resp.path("@type").asText());
+                        log.warn("Ответ TDLib не 'messages' для чата '{}' (ID: {}): {}", chatName, chatId, resp.path("@type").asText());
                         break;
                     }
 
                     ArrayNode messages = (ArrayNode) resp.path("messages");
                     if (messages == null || messages.size() == 0) {
-                        log.info("Чат '{}': достигнут край истории", chatName);
+                        log.info("Чат '{}' (ID: {}): достигнут край истории", chatName, chatId);
                         break;
                     }
 
@@ -168,8 +170,8 @@ public class ChatDumpCoordinator {
                             processMessage(session, chatId, msg, request, effectiveTextExts,
                                     lastMsgId, lastLinkId, lastPhotoId, lastVideoId, lastAudioId, lastDocId,
                                     listener);
-                        } catch (Exception ex) { // перехватываем, чтобы не сорвать цикл
-                            log.error("Ошибка обработки сообщения {} в чате '{}': {}", mid, chatName, ex.getMessage(), ex);
+                        } catch (Exception ex) {
+                            log.error("Ошибка обработки сообщения {} в чате '{}' (ID: {}): {}", mid, chatName, chatId, ex.getMessage(), ex);
                         }
 
                         if (mid < oldestInBatch) oldestInBatch = mid;
@@ -193,10 +195,10 @@ public class ChatDumpCoordinator {
 
                 try { session.commit(); } catch (Exception ignore) {} // финальный коммит
             } catch (Exception sessionErr) {
-                log.error("Сессия дампа для '{}' завершилась ошибкой: {}", chatName, sessionErr.getMessage(), sessionErr);
+                log.error("Сессия дампа для чата '{}' (ID: {}) завершилась ошибкой: {}", chatName, chatId, sessionErr.getMessage(), sessionErr);
             }
 
-            log.info("Дамп чата '{}' завершён", chatName);
+            log.info("Дамп чата '{}' (ID: {}) завершён", chatName, chatId);
         }
     }
 
