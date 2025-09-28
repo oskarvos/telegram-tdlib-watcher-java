@@ -25,9 +25,12 @@ RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. \
  && cmake --build . --target tdjson -j"$(nproc)"
 
 # ===== 3) Runtime: JRE + зависимости TDLib =====
-FROM eclipse-temurin:21-jre-jammy
+FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive
+
+# Устанавливаем OpenJDK 21 JRE и зависимости TDLib
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    openjdk-21-jre \
     libssl3 zlib1g libsqlite3-0 libzstd1 ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
