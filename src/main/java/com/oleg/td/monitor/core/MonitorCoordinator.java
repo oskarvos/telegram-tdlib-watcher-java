@@ -82,6 +82,13 @@ public class MonitorCoordinator {
 
         log.info("Мониторинг запущен по {} чатам, интервал опроса {} мс", chatIds.length, intervalMs);
 
+        // Уведомление в Избранное о старте
+        notifier.notifyStart(
+                request.getChats(),
+                request.getKeyword(),
+                formatInterval(intervalMs)
+        );
+
         // главный цикл
         while (!stopRequested) {
             for (long chatId : chatIds) {
@@ -156,8 +163,8 @@ public class MonitorCoordinator {
                         if (aggregatedText != null && !aggregatedText.isEmpty() && compiled.matcher(aggregatedText).find()) {
                             db.saveMonitorHit(chatId, mid, mdt, request.getKeyword(), aggregatedText, senderId, senderName);
                             if (foundCb != null) foundCb.run();
-                            // Отправка совпадения в «Избранное»
-                            notifier.notify(chatId, mid, getChatTitleCached(chatId), aggregatedText);
+                            // Уведомление в Избранное о совпадении
+                            notifier.notifyMatch(chatId, mid, getChatTitleCached(chatId), aggregatedText);
                         }
 
                         if (mid > maxSeen) maxSeen = mid;
@@ -330,6 +337,18 @@ public class MonitorCoordinator {
             chatTitleCache.put(chatId, title);
         }
         return title;
+    }
+
+    /** Форматировать интервал для уведомления. */
+    private static String formatInterval(long ms) {
+        if (ms < 1000) return ms + " мс";
+        long s = ms / 1000;
+        if (s < 60) return s + " сек";
+        long m = s / 60;
+        if (m < 60) return m + " мин";
+        long h = m / 60;
+        if (h < 24) return h + " ч";
+        return (h / 24) + " д";
     }
 
     /** Сигнал остановки мониторинга. */
