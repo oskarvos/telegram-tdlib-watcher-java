@@ -24,10 +24,16 @@ public class SavedNotifier {
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss");
 
     private final TdJsonClient client;
-    private volatile Long savedChatId = null; // кэш user_id (= chat_id «Избранного»)
+    private volatile Long targetChatId = null; // куда шлём (задаётся снаружи)
 
     public SavedNotifier(TdJsonClient client) {
         this.client = client;
+    }
+
+    /** Установить целевой чат для уведомлений (вызывает MonitorCoordinator). */
+    public void setTargetChat(long chatId) {
+        this.targetChatId = chatId;
+        log.info("SavedNotifier: цель уведомлений = chat_id {}", chatId);
     }
 
     /** Уведомление о старте мониторинга. */
@@ -64,9 +70,9 @@ public class SavedNotifier {
 
     /** Отправить текст в чат «Избранное». */
     private void send(String text) {
-        long target = resolveSavedChatId();
-        if (target == 0) {
-            log.warn("Saved Messages chat_id неизвестен — уведомление пропущено");
+        Long target = targetChatId;
+        if (target == null || target == 0) {
+            log.warn("Целевой чат для уведомлений не задан — пропуск");
             return;
         }
         try {
@@ -87,49 +93,6 @@ public class SavedNotifier {
         } catch (Exception e) {
             log.warn("Ошибка sendMessage: {}", e.getMessage());
         }
-    }
-
-    /** chat_id «Избранного» получаем через getMe → createPrivateChat(self). Кэшируем. */
-    private long resolveSavedChatId() {
-        if (savedChatId != null) return savedChatId;
-
-        try {
-            // 1) Узнаём свой user_id
-            ObjectNode me = client.requestWithFloodWaitSyncLimited(
-                    Utils.obj("getMe"), 30, TdJsonClient.Channel.MAIN);
-
-            if (!"user".equals(me.path("@type").asText())) {
-                log.warn("getMe вернул неожиданный ответ: {}", me.path("@type").asText());
-                return 0;
-            }
-
-            long myUserId = me.path("id").asLong(0);
-            if (myUserId <= 0) {
-                log.warn("getMe вернул некорректный user_id: {}", myUserId);
-                return 0;
-            }
-
-            // 2) Создаём (или получаем) приватный чат с самим собой = «Избранное»
-            ObjectNode req = Utils.obj("createPrivateChat");
-            req.put("user_id", myUserId);
-            req.put("force", false); // не форсировать пересоздание, если уже есть
-
-            ObjectNode chat = client.requestWithFloodWaitSyncLimited(
-                    req, 30, TdJsonClient.Channel.MAIN);
-
-            if ("chat".equals(chat.path("@type").asText())) {
-                long id = chat.path("id").asLong(0);
-                if (id > 0) {
-                    savedChatId = id;
-                    log.info("Saved Messages chat_id = {} (user_id={})", id, myUserId);
-                    return id;
-                }
-            }
-            log.warn("createPrivateChat не вернул chat: {}", chat.toString());
-        } catch (Exception e) {
-            log.warn("Ошибка resolveSavedChatId: {}", e.getMessage());
-        }
-        return 0;
     }
 
     /** Ссылка только для супергрупп/каналов: chat_id = -100XXXXXXXXXX. */

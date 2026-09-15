@@ -36,16 +36,18 @@ public class MonitorCoordinator {
     private final TdJsonClient client;   // TDLib клиент
     private final ChatResolver resolver; // резолвер чатов
     private final MonitorDbManager db;   // менеджер БД мониторинга
-    private final SavedNotifier notifier;// уведомления в Избранное
+    private final SavedNotifier notifier;// уведомления
+    private final AlertChannelService alertChannel; // канал алертов
 
     private volatile boolean stopRequested = false; // флаг остановки
 
     public MonitorCoordinator(TdJsonClient client, ChatResolver resolver, MonitorDbManager db,
-                              SavedNotifier notifier) {
+                              SavedNotifier notifier, AlertChannelService alertChannel) {
         this.client = client;
         this.resolver = resolver;
         this.db = db;
         this.notifier = notifier;
+        this.alertChannel = alertChannel;
     }
 
     /** Главный цикл мониторинга. */
@@ -82,7 +84,16 @@ public class MonitorCoordinator {
 
         log.info("Мониторинг запущен по {} чатам, интервал опроса {} мс", chatIds.length, intervalMs);
 
-        // Уведомление в Избранное о старте
+        // Получить/создать личный канал для уведомлений
+        long alertChatId = alertChannel.getOrCreateChannel();
+        if (alertChatId != 0) {
+            notifier.setTargetChat(alertChatId);
+            log.info("Уведомления будут идти в канал chat_id={}", alertChatId);
+        } else {
+            log.warn("Канал алертов не создан — уведомления не будут отправляться");
+        }
+
+        // Уведомление о старте
         notifier.notifyStart(
                 request.getChats(),
                 request.getKeyword(),
