@@ -21,8 +21,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 RUN git clone --depth 1 https://github.com/tdlib/td.git
 WORKDIR /src/td
+ARG TDLIB_JOBS=4
 RUN mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. \
- && cmake --build . --target tdjson -j"$(nproc)"
+ && cmake --build . --target tdjson -j"${TDLIB_JOBS}"
 
 # ===== 3) Runtime: JRE + зависимости TDLib =====
 FROM ubuntu:24.04

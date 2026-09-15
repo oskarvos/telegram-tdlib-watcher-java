@@ -36,13 +36,16 @@ public class MonitorCoordinator {
     private final TdJsonClient client;   // TDLib клиент
     private final ChatResolver resolver; // резолвер чатов
     private final MonitorDbManager db;   // менеджер БД мониторинга
+    private final SavedNotifier notifier;// уведомления в Избранное
 
     private volatile boolean stopRequested = false; // флаг остановки
 
-    public MonitorCoordinator(TdJsonClient client, ChatResolver resolver, MonitorDbManager db) {
+    public MonitorCoordinator(TdJsonClient client, ChatResolver resolver, MonitorDbManager db,
+                              SavedNotifier notifier) {
         this.client = client;
         this.resolver = resolver;
         this.db = db;
+        this.notifier = notifier;
     }
 
     /** Главный цикл мониторинга. */
@@ -153,6 +156,8 @@ public class MonitorCoordinator {
                         if (aggregatedText != null && !aggregatedText.isEmpty() && compiled.matcher(aggregatedText).find()) {
                             db.saveMonitorHit(chatId, mid, mdt, request.getKeyword(), aggregatedText, senderId, senderName);
                             if (foundCb != null) foundCb.run();
+                            // Отправка совпадения в «Избранное»
+                            notifier.notify(chatId, mid, getChatTitleCached(chatId), aggregatedText);
                         }
 
                         if (mid > maxSeen) maxSeen = mid;
@@ -314,6 +319,17 @@ public class MonitorCoordinator {
             }
         }
         return best;
+    }
+
+    /** Название чата с кэшем — чтобы не дёргать TDLib на каждое совпадение. */
+    private String getChatTitleCached(long chatId) {
+        String cached = chatTitleCache.get(chatId);
+        if (cached != null) return cached;
+        String title = resolver.getChatTitle(chatId);
+        if (title != null && !title.isBlank()) {
+            chatTitleCache.put(chatId, title);
+        }
+        return title;
     }
 
     /** Сигнал остановки мониторинга. */
